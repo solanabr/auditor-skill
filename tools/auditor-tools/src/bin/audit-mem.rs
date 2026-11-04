@@ -22,10 +22,11 @@
 //!   link, with a `.gitignore` of exactly `*`; git that cannot answer is a
 //!   refusal. The database is a regular file with one name.
 //! - `warm`, `check` and `regressions` open the store read-only and never make
-//!   it; with no store they print an empty answer. `init` makes the store: the
-//!   `.audit-memory/` directory with a plain mkdir, its `.gitignore` first, then
-//!   the database, each made exclusively and never through a link. The other
-//!   subcommands write only a store that `init` made.
+//!   it; with no store they print an empty answer, and beside a write to it that
+//!   did not finish they read nothing (`init` rolls that write back). `init` makes
+//!   the store: the `.audit-memory/` directory with a plain mkdir, its
+//!   `.gitignore` first, then the database, each made exclusively and never
+//!   through a link. The other subcommands write only a store that `init` made.
 //!
 //! Exit: 0 done (`check`: suppressed) · 1 `check`: not suppressed · 2 refused, or
 //! the store cannot be read or written.
@@ -629,10 +630,28 @@ fn make_store(wt: &Path, store: &Store) -> Result<(), Stop> {
 }
 
 /// A store error as one line: a store audit-mem refuses (`mem::Refusal`) as a
-/// refusal, naming the store; anything SQLite says as an error.
+/// refusal, naming the store; a write to it that did not finish
+/// (`mem::unfinished_write`) as an error that names the call that rolls it back,
+/// so the store is not given up; anything else SQLite says as an error.
 fn store_error(store: &Store) -> impl Fn(anyhow::Error) -> Stop + '_ {
     move |e: anyhow::Error| match e.downcast_ref::<mem::Refusal>() {
         Some(r) => refuse(format!("{}: {r}", store.shown())),
+        None if mem::unfinished_write(&e) => {
+            let db = if store.in_tree {
+                String::new()
+            } else {
+                format!(" --db {}", store.shown())
+            };
+            Stop(
+                2,
+                format!(
+                    "error: {}: a write to it did not finish (its -journal holds what that write \
+                     replaced), so it is not read; audit-mem init --contract=1{db} rolls the \
+                     write back",
+                    store.shown()
+                ),
+            )
+        }
         None => Stop(
             2,
             format!(
@@ -641,6 +660,23 @@ fn store_error(store: &Store) -> impl Fn(anyhow::Error) -> Stop + '_ {
                 shown(format!("{e:#}").as_bytes())
             ),
         ),
+    }
+}
+
+/// What `read` gives, the store opened and read anew each time: asked up to three
+/// times, 100 ms apart, while SQLite finds a write to the store unfinished, since a
+/// write that ends just as a reader looks can show so for a moment. A store error
+/// as `store_error` gives it.
+fn reading<T>(store: &Store, read: impl Fn() -> anyhow::Result<T>) -> Result<T, Stop> {
+    let mut asked = 1;
+    loop {
+        match read() {
+            Err(e) if asked < 3 && mem::unfinished_write(&e) => {
+                asked += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            answer => return answer.map_err(store_error(store)),
+        }
     }
 }
 
@@ -947,17 +983,16 @@ fn read(wt: &Path, store: &Store, pid: &str, action: &Action) -> Result<ExitCode
             store.shown()
         )));
     }
-    let failed = store_error(store);
-    let conn = match store.db {
-        Db::Sqlite => Some(mem::open_read_only(store.path()).map_err(&failed)?),
-        _ => None,
-    };
-    match (action, conn) {
-        (Action::Warm, None) => print_json(&mem::WarmContext::default())?,
-        (Action::Warm, Some(c)) => print_json(&mem::warm(&c, pid).map_err(&failed)?)?,
-        (Action::Regressions, None) => print_json(&mem::Regressions::default())?,
-        (Action::Regressions, Some(c)) => print_json(&mem::regressions(&c, pid).map_err(&failed)?)?,
-        (Action::Check { .. }, None) => {
+    let open = || mem::open_read_only(store.path());
+    let present = store.db == Db::Sqlite;
+    match (action, present) {
+        (Action::Warm, false) => print_json(&mem::WarmContext::default())?,
+        (Action::Warm, true) => print_json(&reading(store, || mem::warm(&open()?, pid))?)?,
+        (Action::Regressions, false) => print_json(&mem::Regressions::default())?,
+        (Action::Regressions, true) => {
+            print_json(&reading(store, || mem::regressions(&open()?, pid))?)?
+        }
+        (Action::Check { .. }, false) => {
             out(r#"{"suppressed":false,"store":"absent"}"#)?;
             return Ok(ExitCode::FAILURE);
         }
@@ -967,18 +1002,19 @@ fn read(wt: &Path, store: &Store, pid: &str, action: &Action) -> Result<ExitCode
                 commit,
                 site,
             },
-            Some(c),
+            true,
         ) => {
             let read = |file: &str| guard_text(wt, file);
-            let result = mem::check(
-                &c,
-                pid,
-                signature,
-                commit.as_deref(),
-                site.as_deref(),
-                &read,
-            )
-            .map_err(&failed)?;
+            let result = reading(store, || {
+                mem::check(
+                    &open()?,
+                    pid,
+                    signature,
+                    commit.as_deref(),
+                    site.as_deref(),
+                    &read,
+                )
+            })?;
             print_json(&result)?;
             if !result.suppressed {
                 return Ok(ExitCode::FAILURE);

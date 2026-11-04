@@ -303,10 +303,13 @@ fn verify_schema(conn: &Connection) -> Result<Vec<String>> {
 
 /// Opens a store that exists for reading only: read-only, through no symbolic
 /// link, never made or written (`query_only`), hardened as `harden` does. It is
-/// opened as immutable (`file:<path>?mode=ro&immutable=1`), so SQLite takes no
-/// lock and opens no `-wal`, `-shm` or `-journal` file beside it. It must hold
-/// every table of audit-mem's and nothing else. `path` is relative, of the
-/// letters, digits and `._/-` that a store's path holds.
+/// opened with no lock (`file:<path>?mode=ro&nolock=1`): SQLite takes none and
+/// makes no file beside the store; it cannot read a WAL without one, so a store
+/// in WAL mode or with a `-wal` beside it is refused; and a `-journal` that a
+/// write left unfinished, one SQLite reads as hot (`unfinished_write`), is
+/// refused, since only a writer can roll it back. It must hold every table of
+/// audit-mem's and nothing else. `path` is relative, of the letters, digits and
+/// `._/-` that a store's path holds.
 pub fn open_read_only(path: &Path) -> Result<Connection> {
     let name = path
         .to_str()
@@ -317,7 +320,7 @@ pub fn open_read_only(path: &Path) -> Result<Connection> {
         })
         .ok_or_else(|| refusal("its path cannot be written as a SQLite URI".to_string()))?;
     let conn = Connection::open_with_flags(
-        format!("file:{name}?mode=ro&immutable=1"),
+        format!("file:{name}?mode=ro&nolock=1"),
         OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_URI
             | OpenFlags::SQLITE_OPEN_NOFOLLOW
@@ -334,6 +337,21 @@ pub fn open_read_only(path: &Path) -> Result<Connection> {
         }
     }
     Ok(conn)
+}
+
+/// Whether `e` is SQLite's refusal to read a store beside a `-journal` it reads
+/// as hot (`SQLITE_READONLY_ROLLBACK`): one that a write left, unfinished, with no
+/// writer left holding the store, and that only a writer's open rolls back. A
+/// write that ends just as a reader looks can show the same for a moment (SQLite's
+/// own race, its ticket 3883), so a reader asks again before it gives up.
+pub fn unfinished_write(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<rusqlite::Error>(),
+            Some(rusqlite::Error::SqliteFailure(f, _))
+                if f.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK
+        )
+    })
 }
 
 /// How long a writer waits for the store while another writer holds it.

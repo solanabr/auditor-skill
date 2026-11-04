@@ -1634,10 +1634,10 @@ fn refuses_a_journal_that_names_a_super_journal_and_deletes_nothing() {
 }
 
 #[test]
-fn a_read_only_open_is_immutable_and_opens_nothing_beside_the_store() {
+fn a_read_only_open_reads_no_wal_and_makes_nothing_beside_the_store() {
     let wt = store();
-    // A WAL file another database wrote, planted beside the store: a plain
-    // read-only open would apply it and make a -shm file.
+    // A WAL file another database wrote, planted beside the store: a read-only
+    // open that takes locks would apply it and make a -shm file.
     let other = wt.outside().join("other.db");
     let conn = rusqlite::Connection::open(&other).expect("open");
     conn.execute_batch(
@@ -1659,14 +1659,135 @@ fn a_read_only_open_is_immutable_and_opens_nothing_beside_the_store() {
             ".audit-memory/audit.db has a -wal file beside it, which audit-mem never makes{USE_R}"
         ),
     );
-    // The open itself, with that check left out, reads the store as it is.
+    // The open itself, with that check left out, takes no lock, so SQLite cannot
+    // read a WAL: it refuses the store and makes nothing beside it.
     let db = wt.path(".audit-memory/audit.db");
-    let conn = auditor_tools::mem::open_read_only(&db).expect("open read-only");
-    let warm = auditor_tools::mem::warm(&conn, P).expect("read");
-    assert!(warm.profile.is_none());
-    drop(conn);
+    let read =
+        auditor_tools::mem::open_read_only(&db).and_then(|conn| auditor_tools::mem::warm(&conn, P));
+    let err = read.expect_err("a store with a WAL beside it is not read");
+    assert!(
+        format!("{err:#}").contains("unable to open database file"),
+        "{err:#}"
+    );
     assert!(!wt.exists(".audit-memory/audit.db-shm"), "no -shm is made");
     assert_eq!(wt.snapshot(), before, "nothing changed beside the store");
+}
+
+/// Leaves the store `db` as a write killed after its pages reached the database
+/// file leaves it: the database and its hot journal. The write, made on a copy of
+/// the store outside the tree through a cache of 4 pages, so that SQLite writes
+/// pages to the file before it commits, adds a FALSE_POSITIVE ruling for the
+/// candidate at `SITE`, anchored at C1, and 400 invariants. The copy's files are
+/// written over the store's while the write is under way; the write is then
+/// dropped.
+fn stop_a_write(wt: &Wt, db: &str) {
+    let copy = wt.outside().join("copy.db");
+    fs::copy(wt.path(db), &copy).expect("copy the store");
+    let conn = rusqlite::Connection::open(&copy).expect("open the copy");
+    conn.execute_batch("PRAGMA cache_size = 4; PRAGMA cache_spill = 1; BEGIN IMMEDIATE;")
+        .expect("begin the write");
+    let text = wt.read("src/withdraw.rs");
+    let hash = auditor_tools::mem::guard_hash(&text, 2, 2).expect("the guard's line");
+    conn.execute(
+        "INSERT INTO fp_rulings (program_id, code_signature, ruling, rationale, ruled_by, \
+         ruled_at, scope, anchor_commit, guard_file, guard_line, guard_end, guard_hash, site) \
+         VALUES (?1, ?2, 'FALSE_POSITIVE', 'uncommitted', 'auditor', '1', 'program', ?3, \
+         'src/withdraw.rs', 2, 2, ?4, ?5)",
+        rusqlite::params![P, SIG, C1, hash, SITE],
+    )
+    .expect("add the ruling");
+    for i in 0..400 {
+        conn.execute(
+            "INSERT INTO invariants (program_id, statement) VALUES (?1, ?2)",
+            rusqlite::params![P, format!("{i} {}", "x".repeat(200))],
+        )
+        .expect("add an invariant");
+    }
+    let journal = fs::read(wt.outside().join("copy.db-journal")).expect("the write's journal");
+    assert!(
+        journal.first().is_some_and(|&b| b != 0),
+        "SQLite reads the journal as hot"
+    );
+    fs::write(wt.path(db), fs::read(&copy).expect("the copy")).expect("write the store");
+    fs::write(wt.path(&format!("{db}-journal")), journal).expect("write the journal");
+    drop(conn);
+    fs::remove_file(&copy).expect("remove the copy");
+}
+
+#[test]
+fn reads_no_store_a_write_left_unfinished_and_init_rolls_the_write_back() {
+    let wt = store();
+    wt.run_dir("audit_1");
+    ok(&mem(&wt, &["init", "--db", "audit_1/audit-mem.db"]));
+    for (db, init) in [
+        (".audit-memory/audit.db", "audit-mem init --contract=1"),
+        (
+            "audit_1/audit-mem.db",
+            "audit-mem init --contract=1 --db audit_1/audit-mem.db",
+        ),
+    ] {
+        stop_a_write(&wt, db);
+        let before = wt.snapshot();
+        let why = format!(
+            "audit-mem: error: {db}: a write to it did not finish (its -journal holds what that \
+             write replaced), so it is not read; {init} rolls the write back\n"
+        );
+        for args in [
+            vec!["warm", "--db", db, "--program-id", P],
+            vec![
+                "check",
+                "--db",
+                db,
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--commit",
+                C1,
+                "--site",
+                SITE,
+            ],
+            vec!["regressions", "--db", db, "--program-id", P],
+        ] {
+            let o = mem(&wt, &args);
+            assert_eq!(o.status.code(), Some(2), "{args:?}: {}", stdout(&o));
+            assert_eq!(stdout(&o), "", "{args:?}");
+            assert_eq!(stderr(&o), why, "{args:?}");
+        }
+        assert_eq!(wt.snapshot(), before, "{db}: a read changes nothing");
+        assert_eq!(
+            ok(&mem(&wt, &["init", "--db", db])),
+            format!("initialized {db}\n")
+        );
+        assert!(!wt.exists(&format!("{db}-journal")), "{db}: rolled back");
+        let o = mem(
+            &wt,
+            &[
+                "check",
+                "--db",
+                db,
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--commit",
+                C1,
+                "--site",
+                SITE,
+            ],
+        );
+        assert_eq!(o.status.code(), Some(1), "{db}: {}", stderr(&o));
+        assert_eq!(
+            json(&o)["ruling"],
+            Value::Null,
+            "{db}: the ruling was never made"
+        );
+        assert_eq!(
+            json(&mem(&wt, &["warm", "--db", db, "--program-id", P]))["invariants"],
+            serde_json::json!([]),
+            "{db}"
+        );
+    }
 }
 
 #[test]
