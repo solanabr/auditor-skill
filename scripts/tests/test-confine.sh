@@ -648,16 +648,22 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
   LIB_PATH="$T/minpath" lib_bounded "$T/lr-out/heads/main" "$T/lr" 'CONFINE_GIT_TIME=2 hgit "$CONFINE_WT" rev-parse --verify HEAD'
   check "... also on a PATH of env, git, find, wc and cat alone" \
     refused "git has not answered within 2 s in $(shown "$T/lr"), so a file it opens there may be a named pipe or device that it would wait on for good"
-  # There the write of "done" after the limit fails aloud only when the watcher has already left, which a run
-  # may or may not see, so the case runs five times and each run must leave the refusal alone.
-  runs=0
-  while [ "$runs" -lt 5 ]; do
-    lib_bounded "$T/lr-out/heads/main" "$T/lr" 'trap "" PIPE; CONFINE_GIT_TIME=1 hgit "$CONFINE_WT" rev-parse --verify HEAD'
-    refused "git has not answered within 1 s in $(shown "$T/lr"), so a file it opens there may be a named pipe or device that it would wait on for good" || break
-    runs=$((runs + 1))
-  done
-  check "... and with SIGPIPE ignored, as GitHub's runners start their steps, the refusal is the only line on stderr in each of 5 runs" \
-    test "$runs" = 5
+  # There the write of "done" after the limit fails aloud once the watcher has left the pipe, and which side
+  # comes first changes from run to run. So a printf of the test's, which the library's calls find before
+  # the builtin, holds that one write until a byte no longer goes into the pipe: the watcher has gone, every
+  # run. It leaves a mark, so a change to the write's words fails here instead of passing by chance.
+  MARK="$T/done-held" lib_bounded "$T/lr-out/heads/main" "$T/lr" 'trap "" PIPE
+    printf() {
+      if [ "$#" -eq 1 ] && [ "$1" = "done\n" ]; then
+        : > "$MARK"
+        while builtin printf " " 2>/dev/null; do sleep 0.05; done
+      fi
+      builtin printf "$@"
+    }
+    CONFINE_GIT_TIME=1 hgit "$CONFINE_WT" rev-parse --verify HEAD'
+  check "... and with SIGPIPE ignored, as GitHub's runners start their steps, the refusal is the only line on stderr once the watcher has left" \
+    refused "git has not answered within 1 s in $(shown "$T/lr"), so a file it opens there may be a named pipe or device that it would wait on for good"
+  check "... the write of done waiting for the watcher to leave" test -e "$T/done-held"
   # The files git reads in the work tree of a repository whose history it shows, which reads take no
   # time limit: .mailmap, and .gitattributes and .gitignore in any directory. A named pipe there, or a
   # link to one, is refused; a link to a regular file passes.
