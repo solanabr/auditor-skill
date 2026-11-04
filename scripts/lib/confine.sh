@@ -675,11 +675,13 @@ confine_repo() {
 
 # confine_no_repo <status> <output>: status 0 when git, asked about a directory, answered that no
 # repository there is one it can use: it exited 128 and its output starts with its own "fatal: not a git
-# repository". Nothing else counts, and no part of the output alone: a refusal of the checks above or of
-# hgit's time limit exits 64, and git's own messages can quote a name the repository chose.
+# repository", or with "fatal: gitfile does not point to a valid repository", the words git 2.56 and later
+# use where a .git file names none (earlier versions say "not a git repository: <dir>" there). Nothing
+# else counts, and no part of the output alone: a refusal of the checks above or of hgit's time limit
+# exits 64, and git's own messages can quote a name the repository chose.
 confine_no_repo() {
   [ "$1" = 128 ] || return 1
-  case "$2" in 'fatal: not a git repository'*) return 0 ;; esac
+  case "$2" in 'fatal: not a git repository'*|'fatal: gitfile does not point to a valid repository'*) return 0 ;; esac
   return 1
 }
 

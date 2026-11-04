@@ -316,6 +316,16 @@ git init -q "$P/rn"
 run "$P/rn/programs/vault"
 check "... and a .git file naming nothing in the working directory, where git stops, does not hide the repository above" \
   above ../../.claude/skills
+# git 2.56 and later word that stop otherwise: "fatal: gitfile does not point to a valid repository: <the
+# .git file>", where earlier versions say "fatal: not a git repository: <the directory it names>". A git
+# that answers every question so, exit 128, as git 2.56 does from these two working directories, stands in.
+mkdir -p "$T/git256"
+printf '#!/bin/sh\nprintf "fatal: gitfile does not point to a valid repository: %%s/.git\\n" "$PWD" >&2\nexit 128\n' > "$T/git256/git"
+chmod +x "$T/git256/git"
+run "$P/rf/programs/vault" "PATH=$T/git256:$PATH"
+check "... git 2.56's words for a .git file naming nothing end the parents there as well" above ../../.claude/skills
+run "$P/rn/programs/vault" "PATH=$T/git256:$PATH"
+check "... and do not hide the repository above" above ../../.claude/skills
 build "$P" d:ro/inner/sub d:ro/.claude/skills
 git init -q "$P/ro" && git init -q "$P/ro/inner"
 run "$P/ro/inner/sub"
