@@ -33,10 +33,11 @@
 #                   Only regular files and directories are unpacked, with modes 0600 and 0700; every other
 #                   entry, and every name that is absolute, has a .. component or a control character, is
 #                   left out and listed, as an SC-060 hit. At most 50000 entries and 512 MiB unpacked; a
-#                   tar with more than 4 MiB of pax and GNU long-name headers, more than 128 bytes of
-#                   global pax headers, a sparse file or a size below zero, or compressed with anything
-#                   but gzip or bzip2 (xz, zstd), and a zip whose central directory takes more than 16 MiB
-#                   or with an entry compressed with anything but deflate, are refused.
+#                   tar with more than 4 MiB of pax and GNU long-name headers, more than 8 of them in a
+#                   row, more than 128 bytes of global pax headers, a sparse file or a size below zero,
+#                   or compressed with anything but gzip or bzip2 (xz, zstd), and a zip whose central
+#                   directory takes more than 16 MiB or with an entry compressed with anything but
+#                   deflate, are refused.
 #
 # Manifests. Each --manifest is a confined regular file of at most 50 MB under the working directory, named
 # as its action takes it: Cargo.lock, Cargo.toml, package.json, package-lock.json or npm-shrinkwrap.json,
@@ -759,6 +760,9 @@ FILES, BYTES = 50000, 512 * 1024 * 1024
 # What a tar may hold in pax and GNU long-name headers in all, and in global pax headers; what a zip
 # central directory may take.
 EXTENDED, GLOBAL, CENTRAL = 4 * 1024 * 1024, 128, 16 * 1024 * 1024
+# How many pax, GNU long-name and global headers may come in a row, before the member they describe (an
+# archive needs two or three).
+CHAIN = 8
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
@@ -854,12 +858,12 @@ def tar_kind(m):
 class Capped(tarfile.TarInfo):
     # tarfile reads each header of the tar through this class, which checks it before tarfile reads what it
     # announces, so what tarfile keeps for the members already read stays bounded while the caps count them:
-    # no size below zero, at most EXTENDED bytes of pax and GNU long-name headers in all, at most GLOBAL bytes
-    # of global pax headers (tarfile gives every later member its own copy of their keys, and of some of
-    # their values), and no sparse file, whose map tarfile reads from the data that follows with no bound
-    # (in the methods below that refuse one). The size field of every other header counts toward BYTES as
-    # well: tarfile reads through the data that field gives before it applies a global pax size, which can
-    # report the entry as smaller.
+    # no size below zero, at most EXTENDED bytes of pax and GNU long-name headers in all and CHAIN of them in a
+    # row (an empty one adds no bytes, and each still costs a parse), at most GLOBAL bytes of global pax
+    # headers (tarfile gives every later member its own copy of their keys, and of some of their values), and
+    # no sparse file, whose map tarfile reads from the data that follows with no bound (in the methods below
+    # that refuse one). The size field of every other header counts toward BYTES as well: tarfile reads through
+    # the data that field gives before it applies a global pax size, which can report the entry as smaller.
     HOOKS = ("_proc_member", "_proc_sparse", "_proc_gnusparse_00", "_proc_gnusparse_01", "_proc_gnusparse_10")
     EXTENSIONS = (tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK, tarfile.XHDTYPE, tarfile.XGLTYPE,
                   tarfile.SOLARIS_XHDTYPE)
@@ -868,10 +872,14 @@ class Capped(tarfile.TarInfo):
         if self.size < 0:
             fail("the artifact gives an entry a size below zero")
         if self.type in self.EXTENSIONS:
+            tf.chain = getattr(tf, "chain", 0) + 1
+            if tf.chain > CHAIN:
+                fail("the artifact holds more than %d pax and GNU long-name headers in a row" % CHAIN)
             tf.extended_bytes = getattr(tf, "extended_bytes", 0) + self.size
             if tf.extended_bytes > EXTENDED:
                 fail("the pax and GNU long-name headers of the artifact hold more than 4 MiB")
         else:
+            tf.chain = 0
             tf.data_bytes = getattr(tf, "data_bytes", 0) + self.size
             if tf.data_bytes > BYTES:
                 fail("the artifact unpacks to more than 512 MiB")

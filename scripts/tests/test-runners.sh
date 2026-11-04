@@ -1510,6 +1510,15 @@ crates["xz"] = small("xz-1.0.0/src/lib.rs", "w:xz")
 crates["zst"] = b"\x28\xb5\x2f\xfd" + b"\0" * 64
 crates["alone"] = lzma.compress(small("alone-1.0.0/src/lib.rs", "w"), format=lzma.FORMAT_ALONE)
 crates["plain"] = small("plain-1.0.0/src/lib.rs", "w")
+# A member after 8 empty pax headers in a row, and one after 9.
+def chained(name, k):
+    info = tarfile.TarInfo("././@PaxHeader")
+    info.type = tarfile.XHDTYPE
+    member = tarfile.TarInfo(name)
+    member.size = 3
+    return whole(info.tobuf(tarfile.USTAR_FORMAT) * k + member.tobuf(tarfile.USTAR_FORMAT) + b"abc" + b"\0" * 509)
+crates["chain8"] = chained("chain8-1.0.0/f", 8)
+crates["chain9"] = chained("chain9-1.0.0/f", 9)
 for name, data in crates.items():
     put("https://static.crates.io/crates/%s/%s-1.0.0.crate" % (name, name), data)
     put("https://crates.io/api/v1/crates/%s/1.0.0" % name, json.dumps({"version": {"num": "1.0.0", "crate": name, "checksum": hashlib.sha256(data).hexdigest()}}))
@@ -1648,6 +1657,14 @@ check "a wheel whose central directory takes more than 16 MiB is refused before 
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates gsize 1.0.0
 check "a file whose own header gives 600 MiB counts toward 512 MiB though a global pax size says 0, before tarfile reads through it: exit 3" \
   refused gsize-1.0.0 'the artifact unpacks to more than 512 MiB'
+# An empty pax header adds nothing to the 4 MiB, and tarfile still parses each one: at most 8 come in a row.
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates chain8 1.0.0
+n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "a member after 8 empty pax headers in a row is unpacked" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$WT/audit_1/deps/fetch-artifact-$n/files/chain8-1.0.0/f')\" = 'abc' ]"
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates chain9 1.0.0
+check "... and 9 in a row are refused: exit 3, nothing unpacked" \
+  refused chain9-1.0.0 'the artifact holds more than 8 pax and GNU long-name headers in a row'
 # Only decompressors whose memory has a fixed bound run: an xz or zstd stream chooses the window its decompressor
 # keeps, and zipfile hands bzip2 a whole read with no bound on what comes out. A stream that no magic names, as
 # one in the legacy lzma format (whose header chooses the window too), is read as a plain tar.
