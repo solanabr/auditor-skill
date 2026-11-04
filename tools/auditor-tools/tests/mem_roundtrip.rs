@@ -698,36 +698,27 @@ fn warm_and_regressions_read_a_long_history_in_time() {
     }
     tx.commit().unwrap();
 
-    // What one read of the whole history takes here: an answer may take a few,
-    // not one an item (200 items, 400,000 rows).
-    let one_read = (0..3)
-        .map(|_| {
-            let started = std::time::Instant::now();
-            let n: i64 = conn
-                .query_row(
-                    "SELECT count(*) FROM history WHERE program_id = ?1",
-                    [PROG],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(n, 400_000);
-            started.elapsed()
-        })
-        .min()
-        .unwrap();
-    let started = std::time::Instant::now();
-    let warm = mem::warm(&conn, PROG).unwrap();
-    let warm_took = started.elapsed();
-    let started = std::time::Instant::now();
-    let regs = mem::regressions(&conn, PROG).unwrap();
-    let regs_took = started.elapsed();
+    // What one read of the whole history takes: an answer may take a few, not
+    // one an item (200 items, 400,000 rows). The work is counted in the steps
+    // SQLite runs, not timed, so the host's load changes none of it.
+    let (n, one_read) = vm_steps(&conn, || {
+        conn.query_row(
+            "SELECT count(*) FROM history WHERE program_id = ?1",
+            [PROG],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+    });
+    assert_eq!(n, 400_000);
+    let (warm, warm_steps) = vm_steps(&conn, || mem::warm(&conn, PROG).unwrap());
+    let (regs, regs_steps) = vm_steps(&conn, || mem::regressions(&conn, PROG).unwrap());
     assert!(
-        warm_took < one_read * 25,
-        "warm took {warm_took:?}, one read of the history {one_read:?}"
+        warm_steps < one_read * 25,
+        "warm ran {warm_steps} steps, one read of the history {one_read}"
     );
     assert!(
-        regs_took < one_read * 25,
-        "regressions took {regs_took:?}, one read of the history {one_read:?}"
+        regs_steps < one_read * 25,
+        "regressions ran {regs_steps} steps, one read of the history {one_read}"
     );
 
     let counts: Vec<usize> = warm.invariants.iter().map(|i| i.changed.len()).collect();
@@ -737,6 +728,36 @@ fn warm_and_regressions_read_a_long_history_in_time() {
     let counts: Vec<usize> = regs.regressions.iter().map(|r| r.changed.len()).collect();
     assert_eq!(counts, [[10; 20].as_slice(), &[0; 80]].concat());
     assert_eq!(regs.truncated, 100 * 2_000 - 200);
+}
+
+/// What `f` gives, and how many steps SQLite's virtual machine runs on `conn`
+/// meanwhile, as a progress handler called at each step counts them: the work its
+/// queries do, the same on any host under any load.
+fn vm_steps<T>(conn: &rusqlite::Connection, f: impl FnOnce() -> T) -> (T, u64) {
+    use std::os::raw::{c_int, c_void};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    unsafe extern "C" fn count(steps: *mut c_void) -> c_int {
+        // SAFETY: `steps` is the counter below, alive while the handler is set.
+        unsafe { &*(steps as *const AtomicU64) }.fetch_add(1, Ordering::Relaxed);
+        0
+    }
+    let steps = AtomicU64::new(0);
+    // SAFETY: the handle is `conn`'s own, open for the whole call, and the handler
+    // is removed before `steps` goes out of scope.
+    unsafe {
+        rusqlite::ffi::sqlite3_progress_handler(
+            conn.handle(),
+            1,
+            Some(count),
+            &steps as *const AtomicU64 as *mut c_void,
+        );
+    }
+    let out = f();
+    // SAFETY: as above; no handler is set after this.
+    unsafe {
+        rusqlite::ffi::sqlite3_progress_handler(conn.handle(), 0, None, std::ptr::null_mut());
+    }
+    (out, steps.into_inner())
 }
 
 /// A store on disk, made as `audit-mem init` makes it, in a new directory.
