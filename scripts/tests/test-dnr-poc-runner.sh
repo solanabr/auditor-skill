@@ -2907,7 +2907,23 @@ case_file "$HERE/fixtures/poc-run/cases.txt" "$RUNSH" "$WT"
 rm -f "$T/shim/settings.env"
 
 # scripts/lib/isolation.sh on its own: the homes it reads, iso_run's refusal of a program path holding
-# "=", the throwaway HOME (a keypair of mode 0600) and keep-home, and the scratch directory rules.
+# "=", the throwaway HOME (a keypair of mode 0600) and keep-home, and the scratch directory rules. A refusal
+# shows a path as confine_shown does, cut after 200 bytes with ... after it, so that a long TMPDIR passes too:
+# shown200 <path> prints that; shown_as <shown> <prefix> <n>: <shown> is so a path of <prefix> and <n> bytes more.
+shown200() {
+  local LC_ALL=C
+  if [ "${#1}" -gt 200 ]; then printf '%s...' "${1:0:200}"; else printf '%s' "$1"; fi
+}
+shown_as() {
+  local LC_ALL=C whole=$((${#2} + $3))
+  if [ "$whole" -le 200 ]; then
+    [ "${#1}" = "$whole" ] && [ "${1:0:${#2}}" = "$2" ]
+  elif [ "${#2}" -ge 200 ]; then
+    [ "$1" = "${2:0:200}..." ]
+  else
+    [ "${#1}" = 203 ] && [ "${1:0:${#2}}" = "$2" ] && [ "${1:200}" = "..." ]
+  fi
+}
 for sh in "${SHELLS[@]}"; do
   out="$(cd "$WT" && env -i HOME="$T/fake-home" PATH="$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" homes)"
   account="$(python3 -I -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')"
@@ -2939,7 +2955,8 @@ for sh in "${SHELLS[@]}"; do
   [ "$out" = "home $CLEANHOME" ] && [ ! -e "$T/iso-env/home" ] && ok "iso_env keep-home ($sh): the real HOME, no throwaway one made" || bad "iso_env keep-home ($sh): '$out'"
   mkdir -p "$WT/tmp-inside"
   out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" TMPDIR="$WT/tmp-inside" "$sh" "$T/iso-driver.sh" "$ROOT" scratch 2>&1)"; rc=$?
-  [ "$rc" = 64 ] && case "$out" in "iso-driver: refused: the scratch directory $WT/tmp-inside/auditor-driver."*" lies inside the working directory; point TMPDIR outside it") true ;; *) false ;; esac \
+  shown=${out#"iso-driver: refused: the scratch directory "}; shown=${shown%" lies inside the working directory; point TMPDIR outside it"}
+  [ "$rc" = 64 ] && [ "$shown" != "$out" ] && shown_as "$shown" "$WT/tmp-inside/auditor-driver." 6 \
     && [ -z "$(ls -A "$WT/tmp-inside")" ] && ok "iso_scratch ($sh): a TMPDIR inside the working directory -> refused, and the scratch directory removed" || bad "iso_scratch ($sh) inside WT: $rc '$out'"
   rmdir "$WT/tmp-inside"
   # Where the volume folds case, a TMPDIR spelled in other letters than the names on disk is still inside
@@ -2954,7 +2971,7 @@ for sh in "${SHELLS[@]}"; do
   fi
   mkdir -p "$T/cfgparent/.cargo" "$T/cfgparent/tmp"; printf '[build]\n' > "$T/cfgparent/.cargo/config.toml"
   out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" TMPDIR="$T/cfgparent/tmp" "$sh" "$T/iso-driver.sh" "$ROOT" scratch 2>&1)"; rc=$?
-  [ "$rc" = 64 ] && case "$out" in *"would inherit $T/cfgparent/.cargo/config.toml; point TMPDIR outside any repository") true ;; *) false ;; esac \
+  [ "$rc" = 64 ] && case "$out" in *"would inherit $(shown200 "$T/cfgparent/.cargo/config.toml"); point TMPDIR outside any repository") true ;; *) false ;; esac \
     && [ -z "$(ls -A "$T/cfgparent/tmp")" ] && ok "iso_scratch ($sh): a scratch directory under a .cargo/config.toml -> refused" || bad "iso_scratch ($sh) under a cargo config: $rc '$out'"
 done
 # The Python programs isolation.sh runs hold only ASCII, an escape standing for any other character, so that
@@ -3103,11 +3120,13 @@ code="$(probe_run -- --only python3,isolation)"
 ln -sf "$(python3 -I -c 'import sys; print(sys.executable)')" "$PS/python3"
 mkdir -p "$WT/tmp-inside"
 code="$(probe_run TMPDIR="$WT/tmp-inside" --)"
-[ "$code" = 64 ] && grep -q "^probe: refused: the scratch directory $WT/tmp-inside/auditor-probe\..* lies inside the working directory; point TMPDIR outside it\$" "$T/err" \
+err="$(cat "$T/err")"; shown=${err#"probe: refused: the scratch directory "}; shown=${shown%" lies inside the working directory; point TMPDIR outside it"}
+[ "$code" = 64 ] && [ "$shown" != "$err" ] && shown_as "$shown" "$WT/tmp-inside/auditor-probe." 6 \
   && [ ! -s "$T/out" ] && [ -z "$(ls -A "$WT/tmp-inside")" ] && ok "probe.sh with TMPDIR inside the working directory -> 64, nothing left" || { bad "probe.sh TMPDIR inside WT: exit $code"; cat "$T/err" >&2; }
 rmdir "$WT/tmp-inside"
 code="$(probe_run TMPDIR="$T/cfgparent/tmp" --)"
-[ "$code" = 64 ] && grep -q "would inherit $T/cfgparent/.cargo/config.toml" "$T/err" && [ -z "$(ls -A "$T/cfgparent/tmp")" ] \
+[ "$code" = 64 ] && grep -qF "would inherit $(shown200 "$T/cfgparent/.cargo/config.toml"); point TMPDIR outside any repository" "$T/err" \
+  && [ -z "$(ls -A "$T/cfgparent/tmp")" ] \
   && ok "probe.sh with a scratch directory under a .cargo/config.toml -> 64" || { bad "probe.sh under a cargo config: exit $code"; cat "$T/err" >&2; }
 mkdir -p "$T/probe-copy"; cp "$PROBE" "$T/probe-copy/probe.sh"
 code="$( (cd "$WT" && env -i HOME="$PH" PATH="$PB:$PS" TMPDIR="$PT" /bin/bash "$T/probe-copy/probe.sh") >"$T/out" 2>"$T/err"; echo $?)"
