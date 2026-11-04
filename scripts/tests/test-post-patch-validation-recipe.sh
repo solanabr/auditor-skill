@@ -11,7 +11,10 @@
 #     two clones, git-ro.sh's bare copy into {R} and then
 #     `GIT_NO_LAZY_FETCH=1 git clone -q --no-local --no-checkout --template= <copy> <scratch>/repo`; the clone
 #     has no work tree checked out and `* !filter` in info/attributes; the runner gets `uv run --no-config`,
-#     the clone as --repo and the patch's absolute path. The worktree the stand-in runner adds, locks, unlocks,
+#     the clone as --repo, the patch's absolute path and, as --finding-summary, the text of
+#     {R}/patches/{FINDING_ID}.summary word for word, though it holds an apostrophe, quotes, $( ) and backticks
+#     or a sentence that would close the block's if and run a command, none of which runs. The worktree the
+#     stand-in runner adds, locks, unlocks,
 #     removes and prunes, and the lock file it keeps, are in the clone only; no git-lfs filter of the caller's
 #     config runs there; the client checkout gets no worktree, lock or owner file, runs no hook and stays clean;
 #   - the plan guard: a plan.json that names another repository, or no plan, stops the second block before the
@@ -23,7 +26,9 @@
 #     worktree of a clone without the attributes line runs the caller's git-lfs filter;
 #   - the rule text: one sentence on the tier effect, word for word in the five files that describe the fix
 #     tiers; the --post-patch-validation hint; the gate and the copy as /auditor:patch, patch-engineer and both
-#     rows name them, with the 11a and 11b notes; one phrase for a finding on any other tier;
+#     rows name them, with the 11a and 11b notes; one phrase for a finding on any other tier; §4 and
+#     patch-engineer have the root-cause sentence written to {R}/patches/{FINDING_ID}.summary, and §4 pastes
+#     no {ROOT_CAUSE} into the shell;
 #   - the gate's input: /auditor:intake writes the Q46 answer as one word to audit_<n>/exec-mode.
 # Without the May-2024 git fixes the copy cases are skipped with a note, and fail on CI (CI=true).
 # The real runner is never run, and nothing reaches the network.
@@ -141,9 +146,11 @@ commit=$(git -C "$C" rev-parse HEAD)
 
 # ---- the recipe, as written --------------------------------------------------------------------------------------
 # block N MODE ROOT PPV OUT: VERIFICATION.md §4's Nth bash block with its placeholders filled, written to OUT.
+# {ROOT_CAUSE}, which a template that pasted the root-cause sentence into single quotes had, gets the sentence
+# isolated() writes to the summary file ($SUMMARY), so such a template fails the summary checks below.
 block() {
-  python3 -I - "$VER" "$1" "$2" "$3" "$4" "$commit" "$5" <<'PY'
-import re, sys
+  SUMMARY="${SUMMARY-a signer check the withdraw path skips}" python3 -I - "$VER" "$1" "$2" "$3" "$4" "$commit" "$5" <<'PY'
+import os, re, sys
 doc, n, mode, root, ppv, commit, out = sys.argv[1:]
 text = open(doc, encoding="utf-8").read()
 if "\n## 4. Post-patch validation" not in text:
@@ -154,7 +161,7 @@ if len(blocks) != 2:
     sys.exit("section 4 has %d bash blocks, not 2" % len(blocks))
 b = blocks[int(n) - 1]
 for k, v in (("<auditor-skill root>", root), ("{MODE}", mode), ("{R}", "audit_1"), ("{FINDING_ID}", "F-1"),
-             ("{COMMIT}", commit), ("{ROOT_CAUSE}", "a signer check the withdraw path skips"),
+             ("{COMMIT}", commit), ("{ROOT_CAUSE}", os.environ["SUMMARY"]),
              ("{LEVEL}", "runtime"), ("{PPV}", ppv)):
     b = b.replace(k, v)
 if "{" in b.replace("${", ""):
@@ -211,11 +218,16 @@ else bad "cannot make the checkout with alternates"; fi
 
 # ---- isolated: the clone of git-ro.sh's copy is the only repository the runner touches ---------------------------
 runs=0
-isolated() { # isolated LABEL MODE ENVMODE TMPDIR
-  local label=$1 tmp=$4 plan ppv dest repo want2 first
+isolated() { # isolated LABEL MODE ENVMODE TMPDIR SUMMARY: SUMMARY is the root-cause sentence in audit_1/patches/F-1.summary
+  local label=$1 tmp=$4 plan ppv dest repo want2 first got SUMMARY=$5
   rm -f "$T/uv.log" "$T/git-lfs.log"; : > "$T/clone.log"
+  printf '%s\n' "$SUMMARY" > "$C/audit_1/patches/F-1.summary" || { bad "$label: cannot write the summary file"; return; }
   block 1 "$2" "$T/root" x "$T/a.sh" || { bad "$label: first block unreadable"; return; }
   run_block "$T/a.sh" "$tmp" "$3" "$OKLINE"
+  got=$(sed -n '/^arg=--finding-summary$/{n;s/^arg=//;p;}' "$T/uv.log" 2>/dev/null)
+  if [ "$got" = "$SUMMARY" ] && ! grep -q INJECTED-OUTSIDE-THE-GATE "$T/out"; then
+    ok "$label: the runner gets the summary file's text as --finding-summary, word for word, and none of it runs"
+  else bad "$label: --finding-summary is [$got], not the summary file's text, or a command in it ran: $(cat "$T/out")"; fi
   plan=$(sed -n 's/^post-patch validation: plan at //p' "$T/out")
   ppv=${plan%/plan/plan.json}
   case "$(cd "$ppv" 2>/dev/null && pwd -P)" in
@@ -264,8 +276,12 @@ isolated() { # isolated LABEL MODE ENVMODE TMPDIR
   fi
 }
 if [ "$copy_ok" = 1 ]; then
-  isolated "exec-mode isolated" isolated "" "$T/tmp"
-  isolated "exec-mode native, AUDITOR_EXEC_MODE isolated, TMPDIR ending in /" native isolated "$T/tmp/"
+  # The sentence comes from the target's code: an apostrophe, quotes, $( ) and backticks, then one written to end
+  # the quotes it was once pasted into, close the block's if and run a command of its own.
+  isolated "exec-mode isolated" isolated "" "$T/tmp" \
+    "the vault's withdraw path skips its \"signer\" check, so \$(echo INJECTED-OUTSIDE-THE-GATE) or \`echo INJECTED-OUTSIDE-THE-GATE\` drains it"
+  isolated "exec-mode native, AUDITOR_EXEC_MODE isolated, TMPDIR ending in /" native isolated "$T/tmp/" \
+    "x' ; fi ; echo INJECTED-OUTSIDE-THE-GATE ; if false ; then : '"
   extra=$(ls -A "$C/audit_1" | grep -v -x -e .gitignore -e exec-mode -e patches -e src.git -e src-2.git || true)
   if [ -z "$extra" ] && [ -d "$C/audit_1/src.git" ] && [ -d "$C/audit_1/src-2.git" ]; then
     ok "audit_1 holds only its own files and git-ro.sh's two copies"
@@ -381,6 +397,13 @@ if has "$sec4" 'lowered from `[FIX-VERIFIED]` to `[FIX-INSUFFICIENT]` by `check_
    && grep -qF '**Residual (if any):** {what is still open, for INSUFFICIENT or a post-patch-validation finding — else "none".}' "$VER"
 then ok "VERIFICATION.md §4: the gate with its intake.md fallback, its own placeholders, the effect record, the plan rule, the submodule and error lines; §5's Residual"
 else bad "VERIFICATION.md §4 or §5 lacks part of its wording"; fi
+# The root-cause sentence is written from the target's code, so it reaches the runner from a file, as one argument.
+if ! has "$sec4" '{ROOT_CAUSE}' && has "$sec4" 'PPV_SUMMARY="$(cat "{R}/patches/{FINDING_ID}.summary")" &&' \
+   && has "$sec4" '--finding-summary "$PPV_SUMMARY"' \
+   && has "$sec4" 'write the finding'"'"'s root cause and impact, in one sentence, to `{R}/patches/{FINDING_ID}.summary` with the Write tool' \
+   && grep -qF 'to `<R>/patches/<ID>.summary` with the Write tool first, since §4'"'"'s first block hands the runner that file'"'"'s text' "$ROOT/agents/patch-engineer.md"
+then ok "VERIFICATION.md §4 and patch-engineer write the root-cause sentence to {R}/patches/{FINDING_ID}.summary, and §4 pastes none of it into the shell"
+else bad "VERIFICATION.md §4 pastes the root-cause sentence into the shell, or §4 or patch-engineer does not say where it is written"; fi
 # The second block opens with the first block's setup and gate, word for word, before any cd or runner call.
 if python3 -I - "$VER" <<'PY'
 import re, sys

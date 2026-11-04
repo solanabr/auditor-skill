@@ -132,9 +132,11 @@ runner, which no bundled tool wraps.
 The placeholders here are this section's own. `{R}` is the run directory, `audit_<n>` or `incident_<n>`,
 relative to the working directory; `{MODE}` is the word `{R}/exec-mode` holds or, when there is no such file,
 the mode `{R}/intake.md` §8 records (for an incident, the mode in its ledger header); `{FINDING_ID}` is the
-finding or incident id; `{COMMIT}` is the commit the patch targets; `{ROOT_CAUSE}` is the finding's root cause
-and impact in one sentence, without a single quote; `{LEVEL}` is the highest evidence level the checks will
-honestly reach (`source`, `build` or `runtime`, as the skill defines them).
+finding or incident id; `{COMMIT}` is the commit the patch targets; `{LEVEL}` is the highest evidence level the
+checks will honestly reach (`source`, `build` or `runtime`, as the skill defines them). Before the first block,
+write the finding's root cause and impact, in one sentence, to `{R}/patches/{FINDING_ID}.summary` with the Write
+tool: the block hands that file's text to the runner as one argument, so the shell never reads it as code,
+whatever quotes or `$` it holds.
 
 ```bash
 ROOT="<auditor-skill root>"
@@ -154,13 +156,14 @@ elif ! PPV_SRC="$("$ROOT/scripts/git-ro.sh" copy . "{R}")"; then
   echo "post-patch validation: not run: git-ro.sh copy refused the checkout"
 else
   PPV_SRC="$(pwd -P)/$PPV_SRC" && PPV_PATCH="$(pwd -P)/{R}/patches/{FINDING_ID}.patch" &&
+    PPV_SUMMARY="$(cat "{R}/patches/{FINDING_ID}.summary")" &&
     PPV="$(mktemp -d "${TMPDIR:-/tmp}/ppv-{FINDING_ID}.XXXXXX")" &&
     cd "$PPV" &&
     GIT_NO_LAZY_FETCH=1 git clone -q --no-local --no-checkout --template= "$PPV_SRC" "$PPV/repo" &&
     mkdir -p "$PPV/repo/.git/info" && printf '* !filter\n' > "$PPV/repo/.git/info/attributes" &&
     mkdir "$PPV/plan" &&
     uv run --no-config "$PPV_RUNNER" scaffold --repo "$PPV/repo" --base-ref {COMMIT} \
-      --patch-file "$PPV_PATCH" --finding-id {FINDING_ID} --finding-summary '{ROOT_CAUSE}' \
+      --patch-file "$PPV_PATCH" --finding-id {FINDING_ID} --finding-summary "$PPV_SUMMARY" \
       --evidence-level {LEVEL} --output "$PPV/plan/plan.json" &&
     echo "post-patch validation: plan at $PPV/plan/plan.json"
 fi
