@@ -78,11 +78,13 @@ bumps the `schema` string to `auditor-incidents/2`.
   until it is known: `templates/poc/run.sh --crate incident_<n>/poc/INC-<n>.<k>` reads
   it, stops (exit 3) when this file, the incident or its class cannot be read, and
   holds a `supply_chain_or_ci` incident to isolated mode on its dumped bytes
-  (`OUTPUT-RULES.md` Rule 11a). In native mode neither `run.sh --crate` nor `target.sh`
-  builds anything of the working directory, for an audit run or an incident run, while
-  this file records a `supply_chain_or_ci` incident or cannot be read, since any PoC or
-  target build there can build the target's crates; a run directory without this file,
-  or whose file records no incident, counts for nothing.
+  (`OUTPUT-RULES.md` Rule 11a). And natively neither `run.sh --crate` nor `target.sh`
+  builds anything, whatever run directory it is given, an audit's included, while the
+  `INCIDENTS.json` of any `incident_*` directory in the working directory records a
+  `supply_chain_or_ci` incident or cannot be read: every `target.sh --src` is that tree
+  or a copy of it, and any PoC crate can build its crates. A run without the file, or
+  whose file records no incident, counts for nothing; only the `incident_*` directories
+  at the top of the working directory the runner starts in count (Rule 11a).
 - **Where entries go.** Only `confirmed_exploited` and `suspected` belong in
   `incidents[]`; `attempted_not_vulnerable` and `benign` are filed in
   `ruled_out[]`. The one subtlety:
