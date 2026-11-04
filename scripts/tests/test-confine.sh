@@ -480,6 +480,22 @@ LIB_PATH="$T/fg-quoted:$PATH" lib "$T/norepo/d" 'confine_tracked x; printf "[%s]
 check "... but those words inside another message of git's for not telling (2)" out_is '[2]'
 LIB_PATH="$T/fg-status:$PATH" lib "$T/norepo/d" 'confine_tracked x; printf "[%s]" "$?"'
 check "... and git's own words with another exit status for not telling (2)" out_is '[2]'
+# On Linux an LD_PRELOAD that names no library makes the loader print a line on stderr in each program
+# started with it, ahead of anything that program writes. env, which sets git's environment, starts with
+# an empty one (exec -c), so git's answer still comes first. The env here prints that line, as glibc's
+# loader does, when it starts with such an LD_PRELOAD.
+mkdir -p "$T/ldenv"
+cat > "$T/ldenv/env" <<EOF
+#!/bin/sh
+if [ -n "\${LD_PRELOAD-}" ] && [ ! -e "\$LD_PRELOAD" ]; then
+  printf "ERROR: ld.so: object '%s' from LD_PRELOAD cannot be preloaded (cannot open shared object file): ignored.\n" "\$LD_PRELOAD" >&2
+fi
+exec $(command -v env) "\$@"
+EOF
+chmod +x "$T/ldenv/env"
+LD_PRELOAD="$T/no-such.so" LIB_PATH="$T/ldenv:$PATH" lib "$T/norepo/d" 'confine_tracked x; printf "[%s]" "$?"'
+check "... and the caller's LD_PRELOAD naming no library, whose loader line would come first, still leaves nothing tracked" \
+  test "$RC:$(cat "$T/out")" = '0:[0]'
 if [ "$(id -u)" -ne 0 ]; then
   chmod 000 "$RW/.git/index"
   lib "$RW" 'confine_tracked audit_9; printf "[%s]" "$?"'

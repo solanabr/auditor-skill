@@ -397,19 +397,20 @@ confine_git_limit() {
   case "$CONFINE_LIMIT" in *[!0-9]*) CONFINE_LIMIT=10 ;; esac
 }
 
-# confine_timed <seconds> <dir> <command>...: the command (hgit's git), with this shell's standard input
-# and output; when it has not ended after <seconds> (0: no limit) it is killed and the call refused, so a
-# named pipe or device the checks above do not see ends in a refusal, not a wait. Built from the shell
-# alone: one side of a pipe starts git in the background, sends its process id, waits for it and sends
-# "done"; the other reads the id, then waits up to the limit for "done" (read -t), and kills git when it
-# does not come. bash's own note of a job ended by a signal is kept off stderr; the status says it. So is
-# the write of "done" once the limit has passed and the other side has gone: where SIGPIPE is ignored, as
-# GitHub's runners start their steps, that write fails with a message instead of ending this side quietly.
+# confine_timed <seconds> <dir> <command>...: the command (hgit's git), run in a child of this shell (so it
+# may start with exec) with this shell's standard input and output; when it has not ended after <seconds>
+# (0: no limit) it is killed and the call refused, so a named pipe or device the checks above do not see
+# ends in a refusal, not a wait. Built from the shell alone: one side of a pipe starts git in the
+# background, sends its process id, waits for it and sends "done"; the other reads the id, then waits up
+# to the limit for "done" (read -t), and kills git when it does not come. bash's own note of a job ended
+# by a signal is kept off stderr; the status says it. So is the write of "done" once the limit has passed
+# and the other side has gone: where SIGPIPE is ignored, as GitHub's runners start their steps, that write
+# fails with a message instead of ending this side quietly.
 confine_timed() {
   local t=$1 d=$2
   local -a st
   shift 2
-  if [ "$t" -eq 0 ]; then "$@"; return; fi
+  if [ "$t" -eq 0 ]; then ( "$@" ); return; fi
   {
     ( "$@" 0<&7 7<&- 1>&8 8>&- &
       printf '%s\n' "$!"
@@ -437,13 +438,15 @@ confine_timed() {
 # allowlist in the environment, which the repository's config cannot widen; it is empty (no transport)
 # unless the caller sets CONFINE_ALLOW_PROTOCOL for one call. confine_git_files runs first, so git never
 # starts on a repository that holds a file it would wait on, and git gets the time confine_git_limit
-# gives it (CONFINE_GIT_TIME sets it for one call).
+# gives it (CONFINE_GIT_TIME sets it for one call). env itself starts with an empty environment (exec -c):
+# a loader variable of the caller's would otherwise act on env, and on Linux an LD_PRELOAD naming no
+# library puts the loader's line ahead of git's own answer on stderr, which confine_no_repo reads.
 hgit() {
   local d=$1
   shift
   confine_git_files "$d"
   confine_git_limit "$@"
-  confine_timed "$CONFINE_LIMIT" "$d" env -i ${HOME+"HOME=$HOME"} PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LC_ALL=C TZ="${TZ:-UTC}" \
+  confine_timed "$CONFINE_LIMIT" "$d" exec -c env -i ${HOME+"HOME=$HOME"} PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LC_ALL=C TZ="${TZ:-UTC}" \
     GIT_NO_LAZY_FETCH=1 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
     GIT_OPTIONAL_LOCKS=0 GIT_ALLOW_PROTOCOL="${CONFINE_ALLOW_PROTOCOL-}" GIT_CEILING_DIRECTORIES="$CONFINE_CEILING" GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS=true \
     git --no-pager -C "$d" \
