@@ -28,8 +28,8 @@
 # A tool that contacts an outside service records it in <R>/disclosures.tsv (OUTPUT-RULES.md Rule 11b;
 # the format is at confine_disclose).
 # Needs bash >= 3.2 and, on the cleaned PATH, env, git, find, wc and cat (grep, when there, saves a git
-# call); confine_scratch needs mktemp, hgit_tree mktemp and rmdir, confine_service sed, confine_disclose
-# date, and confine_b58_bytes python3.
+# call); confine_scratch needs mktemp, hgit_tree mktemp and rmdir (and /bin/sh after a Ctrl-C),
+# confine_service sed, confine_disclose date, and confine_b58_bytes python3.
 
 # confine_refuse <reason>: the refusal line, then exit 64 (or the status confine_init was given). A tool
 # may set CONFINE_HINT around a check; the line then ends with "; <hint>". confine_init clears one the
@@ -508,7 +508,13 @@ confine_tree() { # confine_tree <hgit|hgit_text> <dir> <git arguments>: hgit_tre
     confine_refuse "TMPDIR lies inside the working directory, so git has no empty work tree to read in; point it outside the tree under audit"
   e=$(mktemp -d "${e%/}/auditor-git.XXXXXX" 2>/dev/null) && [ -d "$e" ] && [ ! -L "$e" ] ||
     confine_refuse "no empty directory can be made under TMPDIR for git to read in"
-  CONFINE_CEILING=${e%/*} "$call" "$e" --git-dir="$CONFINE_TREE_GIT" --work-tree="$e" "$@"
+  # git runs in a subshell that removes the directory as it ends: when git is done, when a signal ends the
+  # subshell, and, when a signal ends only the caller (a timeout's alarm), once git is done. After a
+  # Ctrl-C it removes the directory and then ends by SIGINT itself, so the caller stops as it would have.
+  # A refusal in there (a question's time limit) ends that subshell alone, and its status is returned.
+  ( trap 'rmdir -- "$e" 2>/dev/null' EXIT
+    trap 'rmdir -- "$e" 2>/dev/null; trap - INT; exec /bin/sh -c "kill -INT \$\$"' INT
+    CONFINE_CEILING=${e%/*} "$call" "$e" --git-dir="$CONFINE_TREE_GIT" --work-tree="$e" "$@" )
   rc=$?
   rmdir -- "$e" 2>/dev/null
   return "$rc"

@@ -778,6 +778,55 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
     awk -F '\037' -v t="$T/tmpd/auditor-git." -v g="--git-dir=$RW/wl/.git" '$1 == "ARGV" && $3 == "-C" && index($4, t) == 1 {
       for (i = 5; i <= NF; i++) { if ($i == g) gd = 1; if ($i == "--work-tree=" $4) w = 1 } } END { exit !(gd && w) }' "$T/rec.log"
   check "... which is gone afterwards" test -z "$(ls -A "$T/tmpd")"
+  # ... also when a signal ends the caller while git reads: only the caller, as a timeout's alarm does (the
+  # directory goes once git is done), or its whole process group, as Ctrl-C does (the caller still stops).
+  # This git sleeps 2 s before it reads a history.
+  mkdir -p "$T/slow"
+  cat > "$T/slow/git" <<EOF
+#!/bin/sh
+for a in "\$@"; do
+  [ "\$a" = log ] || continue
+  : > "$T/slow.started"; sleep 2; break
+done
+exec "$REAL_GIT" "\$@"
+EOF
+  chmod +x "$T/slow/git"
+  slow_read() { # slow_read <signal> caller|group: a read with TMPDIR $T/tmp-<signal>, which <signal> ends once git sleeps
+    local pid n=0 d="$T/tmp-$1"
+    mkdir -p "$d"
+    rm -f "$T/slow.started"
+    (cd "$RW" && TMPDIR="$d" PATH="$T/slow:$PATH" exec "${SHELLS[0]}" -c \
+      '. "$1" && confine_init test "$2" && confine_repo wl R && hgit_tree "$CONFINE_REPO" log --format=%s -1; printf "went on\n"' \
+      lib "$LIB" "$ROOT") >"$T/out" 2>"$T/err" </dev/null &
+    pid=$!
+    while [ ! -e "$T/slow.started" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+    SLOW_LEFT=$(ls -A "$d")
+    SLOW_KILLED=1
+    if [ "$2" != group ]; then
+      kill -"$1" "$pid" 2>/dev/null
+    elif kill -0 -- "-$pid" 2>/dev/null; then
+      kill -"$1" -- "-$pid" 2>/dev/null
+    else
+      SLOW_KILLED=0
+    fi
+    wait "$pid" 2>/dev/null
+    RC=$?
+    n=0
+    while [ -n "$(ls -A "$d")" ] && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+    SLOW_NOW=$(ls -A "$d")
+  }
+  slow_read ALRM caller
+  check "... a caller an alarm ends while git reads leaves no directory under TMPDIR once git is done" \
+    test "$SLOW_LEFT:$SLOW_NOW" = "${SLOW_LEFT:-none}:"
+  set -m
+  slow_read INT group
+  set +m
+  if [ "$SLOW_KILLED" = 0 ]; then
+    skp "... Ctrl-C: the read got no process group of its own here"
+  else
+    check "... nor does Ctrl-C, which still stops the caller" \
+      test "$RC:$SLOW_LEFT:$SLOW_NOW:$(cat "$T/out")" = "130:${SLOW_LEFT:-none}::"
+  fi
   TMPDIR="$T/tmpd" lib "$RW" 'confine_repo copy.git R && hgit_tree "$CONFINE_REPO" rev-list --count HEAD && ls -A "$TMPDIR"'
   check "... and a bare repository read as hgit reads it, with no directory made" out_is 1
   TMPDIR="$RW/tmpd" lib "$RW" 'confine_repo wl R && hgit_tree "$CONFINE_REPO" log -1'
