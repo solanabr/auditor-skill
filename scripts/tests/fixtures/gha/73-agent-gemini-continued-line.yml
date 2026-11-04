@@ -1,0 +1,16 @@
+# Fixture: Google's agent CLI started from a run: block whose command continues over lines; no actor check of its own.
+name: f73-agent-gemini-continued-line
+on:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+jobs:
+  summarize:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          gemini --model gemini-2.5-pro \
+            --prompt "Summarize the change in this pull request"
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

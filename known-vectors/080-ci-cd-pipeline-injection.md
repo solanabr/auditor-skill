@@ -24,7 +24,7 @@ grep -rn -A 12 --include='*.yml' --include='*.yaml' '^on:' .github/workflows/ 2>
 **Step 2: Check privileged triggers (`pull_request_target`, `workflow_run`) for fork-controlled checkouts**
 ```
 grep -rnE --include='*.yml' --include='*.yaml' 'pull_request_target|workflow_run' .github/
-grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{[[:space:]]*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref|steps\.[A-Za-z0-9_-]+\.outputs\.head_(sha|ref)|from(JSON|Json)\(steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_]+\)\.head\.(sha|ref))|repository:[[:space:]]*.?\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|head_ref|head\.ref|head\.sha)|allow-unsafe-pr-checkout' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{.*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref|steps\.[A-Za-z0-9_-]+\.outputs\.head_(sha|ref)|from(JSON|Json|json)\(steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_]+\)\.head\.(sha|ref))|(^|[[:space:]{,])ref:[[:space:]]*(.?\$\{\{.*(env|needs|steps)\.|[|>])|repository:[[:space:]]*.?\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|[Hh][Ee][Aa][Dd][._]([Ss][Hh][Aa]|[Rr][Ee][Ff]))|allow-unsafe-pr-checkout' .github/
 ```
 - ✅ PASS: No privileged trigger, or the privileged job checks out only the base ref with an `actions/checkout` that carries the fork-PR guard (v2.8.0 / v3.7.0 / v4.4.0 / v5.1.0 / v6.1.0 / v7.0.0 or later)
 - ❌ FAIL: `pull_request_target` or `workflow_run` with a checkout or fetch of the PR / run head, or `allow-unsafe-pr-checkout: true` — forked PRs run arbitrary code with the base repository's secrets and write token. Full procedure: KV-140
@@ -63,8 +63,11 @@ grep -rn --include="*.yml" --include="*.yaml" "uses.*/" .github/workflows/ | gre
 
 **Step 7: Check comment- and issue-triggered jobs for an author gate**
 ```
-grep -rlE --include='*.yml' --include='*.yaml' '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):?[[:space:]]*(#.*)?$|^[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):[[:space:]]*\{|^on:.*(issue_comment|pull_request_review|discussion|issues)' .github/ | xargs -r grep -L 'author_association'
+grep -rlE --include='*.yml' --include='*.yaml' -e '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues)[[:space:]]*(:[[:space:]]*([{[&*~]|null|(#.*)?$)|[],]|(#.*)?$)' -e "^[^[:alnum:]_#-]{0,3}[\"']?on[\"']?[[:space:]]*:.*(issue_comment|pull_request_review|discussion|issues)" -e "^[[:space:]]*-?[[:space:]]*[\"'](issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues)[\"']" .github/
+echo 'second list: files under .github/ that mention author_association'
+grep -rl --include='*.yml' --include='*.yaml' '^[^#]*author_association' .github/
 ```
+- Read each file in the first list and not in the second: it has one of these triggers and never mentions `author_association` outside a comment
 - ✅ PASS: Every privileged job on these triggers gates on the triggering object's own `author_association`, paired per event
 - ❌ FAIL: A privileged job starts on a mention or command alone, or reads the opener's association on a comment event. Full procedure: KV-139
 

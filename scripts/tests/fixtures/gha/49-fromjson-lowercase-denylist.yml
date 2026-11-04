@@ -1,0 +1,13 @@
+# Fixture: deny-list written with fromjson in lower case (expression functions are case-insensitive); every unlisted association passes.
+name: f49-fromjson-lowercase-denylist
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: write
+jobs:
+  command:
+    if: ${{ !contains(fromjson('["NONE"]'), github.event.comment.author_association) }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "privileged command"

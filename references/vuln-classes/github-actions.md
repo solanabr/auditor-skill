@@ -140,7 +140,8 @@ workflows.
    `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN` and any value nobody listed, and an absent field passes every negative test.
 5. **Identity strings.** On PR-family events (`pull_request*`) and `workflow_run`, `github.actor` is whoever last acted
    on the event: a fork PR can be arranged so that Dependabot performs the last push, which makes
-   `github.actor == 'dependabot[bot]'` true on an attacker's PR (Synacktiv, 2024). Compare
+   `github.actor == 'dependabot[bot]'` true on an attacker's PR (Synacktiv, 2024). `github.event.sender.login`, the
+   account that triggered the event, fails the same way. Compare
    `github.event.pull_request.user.login` together with `github.event.pull_request.head.repo.full_name ==
    github.repository`; GitHub's own Dependabot automation docs gate on the PR author for this reason. On
    `issue_comment` the actor is the commenter, so `github.actor == '<maintainer>'` is a sound allowlist there. App

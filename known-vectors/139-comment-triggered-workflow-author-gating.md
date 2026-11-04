@@ -31,7 +31,7 @@ Read-only: never comment, review, label or open issues on the target to test a g
 
 **Step 1: Inventory externally triggerable comment, review, issue, discussion and wiki workflows**
 ```
-grep -rlE --include='*.yml' --include='*.yaml' '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues|gollum):?[[:space:]]*(#.*)?$|^[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues|gollum):[[:space:]]*\{|^on:.*(issue_comment|pull_request_review|discussion|issues|gollum)' .github/
+grep -rlE --include='*.yml' --include='*.yaml' -e '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues|gollum)[[:space:]]*(:[[:space:]]*([{[&*~]|null|(#.*)?$)|[],]|(#.*)?$)' -e "^[^[:alnum:]_#-]{0,3}[\"']?on[\"']?[[:space:]]*:.*(issue_comment|pull_request_review|discussion|issues|gollum)" -e "^[[:space:]]*-?[[:space:]]*[\"'](issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues|gollum)[\"']" .github/
 ```
 - Record per job: triggers, job-level `if:`, `permissions:`, secrets referenced, `id-token: write`, AI-agent steps (`anthropics/claude-code-action`, `run-gemini-cli`, `openai/codex-action`, `claude -p`, `codex exec`), and any checkout or fetch of PR code
 - If no such job holds write scopes, secrets, `id-token: write`, an agent or PR code, the vector is N/A (record it; a labeler with only `issues: write` is informational)
@@ -49,16 +49,16 @@ grep -rnE --include='*.yml' --include='*.yaml' 'github\.event\.(issue|pull_reque
 
 **Step 4: Is the comparison sound?** (recipe R3)
 ```
-grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '![[:space:]]*contains\([[:space:]]*from(JSON|Json)' -e 'github\.(actor|triggering_actor)[[:space:]]*[!=]=' -e 'contains\(.*github\.(actor|triggering_actor)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
+grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '!=[[:space:]]*github\.event\.[a-z_]+\.author_association' -e '![[:space:]]*contains\([[:space:]]*[Ff][Rr][Oo][Mm][Jj][Ss][Oo][Nn]' -e 'github\.(actor|triggering_actor|event\.sender\.login)[[:space:]]*[!=]=' -e '[!=]=[[:space:]]*github\.(actor|triggering_actor|event\.sender\.login)' -e 'contains\(.*github\.(actor|triggering_actor|event\.sender\.login)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
 ```
 - ✅ PASS:
   - membership is `==` or `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), …)`, and the allowed set is those three only;
-  - `github.actor` is used as an allowlist only on `issue_comment`, where the actor is the commenter;
+  - `github.actor` (or `github.event.sender.login`) is used as an allowlist only on `issue_comment`, where the actor is the commenter;
   - bot identities are compared as `<slug>[bot]`.
 - ❌ FAIL:
   - string-form `contains()` in a workflow with any trigger that lacks the field;
   - a deny-list (`!= 'NONE'`, `!contains(fromJSON(…), …)`), or `CONTRIBUTOR` / `FIRST_TIME_*` in the allowed set;
-  - a trust decision on `github.actor` / `github.triggering_actor` for PR-family or `workflow_run` events (Synacktiv 2024 showed `github.actor` set to `dependabot[bot]` on an attacker's PR);
+  - a trust decision on `github.actor`, `github.triggering_actor` or `github.event.sender.login` for PR-family or `workflow_run` events (Synacktiv 2024 showed `github.actor` set to `dependabot[bot]` on an attacker's PR);
   - `contains(github.actor, …)` on any event, because it tests a substring;
   - an `app/<slug>` string compared to `github.actor`, which never matches.
 

@@ -5,12 +5,18 @@
 #   K116-1   KV-116 Step 1 (AI-agent steps);
 #   K139-1   KV-139 Step 1 (externally triggerable workflows);
 #   K140-6   KV-140 Step 6 (Actions cache writers and restorers).
-# It also checks that every known-vector step that repeats an R recipe carries it byte for byte, and runs R1
-# over large inputs: 2,000 workflows, and two of about 1 MiB.
+# A recipe of two commands (R1) flags what the first lists and the second does not; every other line of an R
+# recipe must be an echo of a quoted marker, which the suite does not run. The suite also checks that every
+# known-vector step that repeats an R recipe carries its lines byte for byte, as one block in the same order,
+# and that no recipe flags a fixture's comment lines. It runs R1 and K139-1 over trigger spellings built at run
+# time, R1 over file names that hold a space or a quote, and R1 over large inputs: 2,000 workflows, and two of
+# about 1 MiB. Every command of every recipe must end within 30 s on a workflow that holds one 1 MiB line of
+# near misses.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
-# Needs bash >= 3.2, grep, awk, xargs. No network. The fixtures are copied into a temp dir as
-# .github/workflows/ for the run; nothing is written under the repository's own .github/.
+# Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as .github/workflows/, and
+# those under actions/ as .github/actions/<name>/action.yml, for the run; nothing is written under the
+# repository's own .github/.
 set -uo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -20,16 +26,39 @@ fixtures="$root/scripts/tests/fixtures/gha"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/gha-recipes.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/.github/workflows"
-cp "$fixtures"/*.yml "$work/.github/workflows/" || exit 1
 
-# The command line that follows the "# Rn — …" comment inside the GitHub Actions section of the doc.
+# install_fixtures <fixture dir> <tree>: the workflows (.yml and .yaml) into <tree>/.github/workflows/, and each
+# composite action in <fixture dir>/actions/ as <tree>/.github/actions/<name>/action.yml.
+install_fixtures() {
+  local a n
+  mkdir -p "$2/.github/workflows" && cp "$1"/*.yml "$1"/*.yaml "$2/.github/workflows/" || return 1
+  for a in "$1"/actions/*.yml; do
+    n=${a##*/}; n=${n%.yml}
+    mkdir -p "$2/.github/actions/$n" && cp "$a" "$2/.github/actions/$n/action.yml" || return 1
+  done
+}
+install_fixtures "$fixtures" "$work" || exit 1
+
+# The command lines of the code block that follows the "# Rn — …" comment inside the GitHub Actions section of
+# the doc.
 recipe() {
   awk -v id="$1" '
     /^## GitHub Actions \(CI trigger trust\)/ { sec = 1; next }
     sec && /^## / { exit }
     sec && index($0, "# " id " ") == 1 { grab = 1; next }
-    sec && grab && /^grep / { print; exit }
+    sec && grab && /^```/ { exit }
+    sec && grab && /^grep / { print }
+  ' "$doc"
+}
+
+# Every line of that code block after the comment, the grep lines and any other.
+recipe_block() {
+  awk -v id="$1" '
+    /^## GitHub Actions \(CI trigger trust\)/ { sec = 1; next }
+    sec && /^## / { exit }
+    sec && index($0, "# " id " ") == 1 { grab = 1; next }
+    sec && grab && /^```/ { exit }
+    sec && grab { print }
   ' "$doc"
 }
 
@@ -39,6 +68,16 @@ kv_step() { # kv_step <vector file> <step>
     index($0, "**Step " n ":") == 1 { s = 1; next }
     s && /^\*\*Step / { exit }
     s && /^grep / { print }
+  ' "$kv/$1"
+}
+
+# Every line inside the code blocks of that step, in order.
+kv_block() { # kv_block <vector file> <step>
+  awk -v n="$2" '
+    index($0, "**Step " n ":") == 1 { s = 1; next }
+    s && /^\*\*Step / { exit }
+    s && /^```/ { code = !code; next }
+    s && code { print }
   ' "$kv/$1"
 }
 
@@ -61,33 +100,103 @@ R5 $KV140 5
 R7 $KV080 2
 R7 $KV140 2"
 
+IDS="R1 R2 R3 R4 R5 R6 R7 R8 K116-1 K139-1 K140-6"
+
 # Fixtures each recipe must flag (two-digit prefixes, ascending). Anything else is a mismatch.
 expected() {
   case "$1" in
-    R1) echo "01 08 10 16 40" ;;
+    R1) echo "01 08 10 16 40 55 56 58 64 65 66 69" ;;
     R2) echo "02 04" ;;
-    R3) echo "03 12 13 17 25 26 27 28" ;;
+    R3) echo "03 12 13 17 25 26 27 28 46 47 48 49 74" ;;
     R4) echo "05 06 21 29 30 41" ;;
     R5) echo "06 07 15" ;;
-    R6) echo "05 07 08 14 15 16 20 31 32" ;;
-    R7) echo "05 07 11 12 15 18 19 20 21 22 23 24" ;;
-    R8) echo "01 08 11 14 33 34" ;;
-    K116-1) echo "01 08 11 14 33 34" ;;
-    K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40" ;;
+    R6) echo "05 07 08 14 15 16 20 31 32 50 75" ;;
+    R7) echo "05 07 11 12 15 18 19 20 21 22 23 24 51 52 53 61 62 63 70 71" ;;
+    R8) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
+    K116-1) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
+    K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56 58 59 62 64 65 66 69 71 74" ;;
     K140-6) echo "35 36 37 38 39 42 43 44 45" ;;
   esac
 }
 
+# The command lines of recipe <id>.
+recipe_lines() {
+  local i file step
+  case "$1" in
+    R*) recipe "$1" ;;
+    *) while read -r i file step; do
+         if [ "$i" = "$1" ]; then kv_step "$file" "$step" | sed -n 1p; fi
+       done <<< "$KV_RECIPES" ;;
+  esac
+}
+
+# run_recipe <tree> <command lines>: what the recipe flags in <tree>. One command: what it prints. Two: the
+# lines the first prints that the second does not.
+run_recipe() {
+  local first second
+  { IFS= read -r first; IFS= read -r second; } <<< "$2"
+  if [ -z "$second" ]; then
+    (cd "$1" && eval "$first" </dev/null 2>/dev/null)
+    return
+  fi
+  (cd "$1" && eval "$second" </dev/null 2>/dev/null) > "$work/second.out"
+  (cd "$1" && eval "$first" </dev/null 2>/dev/null) \
+    | awk -v f="$work/second.out" 'BEGIN { while ((getline l < f) > 0) seen[l] = 1 } !($0 in seen)'
+}
+
+# within <seconds> <tree> <command>: run the command in <tree>, its output in $work/within.out. Fails, and stops
+# the command, when it is still running after <seconds>.
+within() {
+  local pid i=0
+  (cd "$2" && eval "exec $3" </dev/null > "$work/within.out" 2>/dev/null) &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$i" -ge "$(($1 * 10))" ]; then kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; return 1; fi
+    sleep 0.1; i=$((i + 1))
+  done
+  wait "$pid" 2>/dev/null
+  return 0
+}
+
+# same_files <command lines>: the two commands take the same --include options and the same root, so a file
+# leaves the first list only by matching the second.
+same_files() {
+  local first second
+  { IFS= read -r first; IFS= read -r second; } <<< "$1"
+  [ "${first##* }" = "${second##* }" ] && [ "$(printf '%s\n' "$first" | grep -oE -- "--include='[^']*'")" = \
+    "$(printf '%s\n' "$second" | grep -oE -- "--include='[^']*'")" ]
+}
+
+# The two-digit fixture prefixes in a recipe's output, ascending, on one line.
+prefixes() {
+  sed -E 's#^\.github/(workflows|actions)/##; s#^([0-9][0-9])-.*#\1#' | sort -u | tr '\n' ' ' | sed 's/ $//'
+}
+
 fail=0; nrec=0
-check() { # check <id> <command line>
+check() { # check <id> <command lines>
+  local n=0 l
   nrec=$((nrec + 1))
   if [ -z "$2" ]; then
     echo "FAIL $1: no recipe line found"
     fail=1
     return
   fi
-  got=$(cd "$work" && eval "$2" </dev/null 2>/dev/null \
-    | sed -E 's#^\.github/workflows/##; s#^([0-9][0-9])-.*#\1#' | sort -u | tr '\n' ' ' | sed 's/ $//')
+  while IFS= read -r l; do n=$((n + 1)); done <<< "$2"
+  if [ "$n" -gt 2 ]; then
+    echo "FAIL $1: $n command lines; a recipe has one or two"
+    fail=1
+    return
+  fi
+  if [ "$n" -eq 2 ] && ! same_files "$2"; then
+    echo "FAIL $1: its two commands search different files (--include options or root)"
+    fail=1
+    return
+  fi
+  case "$1" in R*)
+    bad=$(recipe_block "$1" | grep -v -e '^grep ' -e "^echo '[^'\$]*'\$" -e '^$')
+    if [ -n "$bad" ]; then echo "FAIL $1: a line that is neither a grep call nor an echo of a quoted marker: $bad"; fail=1; return; fi ;;
+  esac
+  got=$(run_recipe "$work" "$2" | prefixes)
   want=$(expected "$1")
   if [ "$got" = "$want" ]; then
     echo "ok   $1: $got"
@@ -97,19 +206,25 @@ check() { # check <id> <command line>
   fi
 }
 
-for id in R1 R2 R3 R4 R5 R6 R7 R8; do
-  check "$id" "$(recipe "$id")"
+for id in $IDS; do
+  check "$id" "$(recipe_lines "$id")"
 done
-while read -r id file step; do
-  check "$id" "$(kv_step "$file" "$step" | sed -n 1p)"
-done <<< "$KV_RECIPES"
 
+# A copy is the recipe's code lines as one run of whole lines, in order. The step may hold other commands
+# around a recipe of one command; a recipe of two is the whole code of its step, so "the first" and "the second"
+# name the same lines in both files.
+nl='
+'
 ncopy=0
 while read -r id file step; do
   ncopy=$((ncopy + 1))
-  line=$(recipe "$id")
-  steps=$(kv_step "$file" "$step")
-  if [ -n "$line" ] && grep -qxF -- "$line" <<< "$steps"; then
+  want=$(recipe_block "$id")
+  have=$(kv_block "$file" "$step")
+  same=0
+  case "$nl$have$nl" in *"$nl$want$nl"*) same=1 ;; esac
+  if [ -z "$(recipe "$id")" ]; then same=0; fi
+  if [ "$(recipe "$id" | wc -l | tr -d ' ')" -gt 1 ] && [ "$have" != "$want" ]; then same=0; fi
+  if [ "$same" -eq 1 ]; then
     echo "ok   copy of $id in $file step $step"
   else
     echo "FAIL copy of $id in $file step $step differs from discovery/grep-commands.md"
@@ -117,14 +232,79 @@ while read -r id file step; do
   fi
 done <<< "$COPIES"
 
-# The negative control must stay silent for every recipe.
-for id in R1 R2 R3 R4 R5 R6 R7 R8 K116-1 K139-1 K140-6; do
-  case " $(expected "$id") " in *" 09 "*) echo "FAIL $id: negative control 09 is expected"; fail=1 ;; esac
+# The negative controls must stay silent for every recipe.
+for id in $IDS; do
+  for neg in 09 60; do
+    case " $(expected "$id") " in *" $neg "*) echo "FAIL $id: negative control $neg is expected"; fail=1 ;; esac
+  done
 done
 
-# Large inputs: 2,000 gated workflows (a file list over 64 KiB for R1's xargs) and two of about 1 MiB with
-# the trigger on their first lines; one has its author_association gate on its last line. R1 must read each
-# file whole and flag only the ungated one.
+# Every expected hit comes from a workflow line: no recipe flags the fixtures' comment lines on their own.
+mkdir -p "$work/comment-lines/actions"
+for f in "$fixtures"/*.yml "$fixtures"/*.yaml "$fixtures"/actions/*.yml; do
+  sed -n '/^[[:space:]]*#/p' "$f" > "$work/comment-lines/${f#"$fixtures"/}"
+done
+install_fixtures "$work/comment-lines" "$work/comments" || exit 1
+quiet=1
+for id in $IDS; do
+  got=$(run_recipe "$work/comments" "$(recipe_lines "$id")" | prefixes)
+  if [ -n "$got" ]; then echo "FAIL $id: flags the comment lines of fixtures [$got]"; quiet=0; fail=1; fi
+done
+if [ "$quiet" -eq 1 ]; then echo "ok   no recipe flags the comment lines of a fixture"; fi
+
+# File names that hold a space, a single quote or a double quote: R1 flags each ungated workflow among them and
+# drops none, and the three gated ones, named the same way, stay out.
+names="$work/names"; mkdir -p "$names/.github/workflows"
+for n in "a space.yml" "b it's.yml" 'c say "hi".yml' "d plain.yml"; do
+  printf 'on: issue_comment\njobs:\n  a:\n    runs-on: ubuntu-latest\n' > "$names/.github/workflows/$n"
+done
+for n in "e gated space.yml" "f gated it's.yml" 'g gated "x".yml'; do
+  printf 'on: issue_comment\njobs:\n  a:\n    if: github.event.comment.author_association == %sOWNER%s\n' "'" "'" \
+    > "$names/.github/workflows/$n"
+done
+got=$(run_recipe "$names" "$(recipe R1)" | sed 's#^\.github/workflows/##' | sort | tr '\n' '|')
+want='a space.yml|b it'"'"'s.yml|c say "hi".yml|d plain.yml|'
+if [ "$got" = "$want" ]; then
+  echo "ok   R1 on file names with a space or a quote: the four ungated workflows flagged, the three gated ones not"
+else
+  echo "FAIL R1 on file names with a space or a quote: got [$got] want [$want]"
+  fail=1
+fi
+
+# Trigger spellings, one workflow each: a space before a colon, an event key holding null, ~, [], an anchor or an
+# alias, a flow list wrapped over lines, a byte-order mark before on:, a JSON document and an indented document.
+# None has an author gate, so R1 and K139-1 must list every one.
+spell="$work/spellings"; mkdir -p "$spell/.github/workflows"
+ns=0
+while IFS= read -r t; do
+  ns=$((ns + 1)); printf '%b\n' "$t" > "$spell/.github/workflows/spelling-$ns.yml"
+done <<'SPELLINGS'
+on:\n  issue_comment :\n    types: [created]
+on : issue_comment
+"on" : [issues]
+on:\n  issue_comment: null
+on:\n  issue_comment: ~
+on:\n  issue_comment: []
+on:\n  issues: &t\n    types: [opened]
+on:\n  workflow_dispatch: &t\n  issue_comment: *t
+on: [push,\n  issue_comment,\n  workflow_dispatch]
+on: [push,\n  issues]
+\0357\0273\0277on: issue_comment
+{"on": {"issue_comment": {"types": ["created"]}}, "jobs": {"a": {"runs-on": "ubuntu-latest"}}}
+  on: issue_comment\n  jobs:\n    a:\n      runs-on: ubuntu-latest
+SPELLINGS
+want=""; i=0
+while [ "$i" -lt "$ns" ]; do i=$((i + 1)); want="$want $i"; done; want=${want# }
+for id in R1 K139-1; do
+  got=$(run_recipe "$spell" "$(recipe_lines "$id")" | sed 's#^\.github/workflows/spelling-##; s#\.yml$##' | sort -n | tr '\n' ' ' \
+    | sed 's/ $//')
+  if [ "$got" = "$want" ]; then echo "ok   $id on $ns trigger spellings: every one listed"
+  else echo "FAIL $id on trigger spellings: got [$got] want [$want]"; fail=1; fi
+done
+
+# Large inputs: 2,000 gated workflows (each of R1's two lists runs over 64 KiB) and two of about 1 MiB with the
+# trigger on their first lines; one has its author_association gate on its last line. R1 must read each file
+# whole and flag only the ungated one.
 large="$work/large"; mkdir -p "$large/.github/workflows"
 awk -v d="$large/.github/workflows" 'BEGIN { for (i = 0; i < 2000; i++) { f = sprintf("%s/small-gated-workflow-%04d.yml", d, i)
   printf "on: issue_comment\njobs:\n  a:\n    if: github.event.comment.author_association == %sOWNER%s\n", "\047", "\047" > f; close(f) } }'
@@ -135,7 +315,7 @@ for g in gated ungated; do
   } > "$large/.github/workflows/big-$g.yml"
 done
 size=$(wc -c < "$large/.github/workflows/big-gated.yml" | tr -d ' ')
-got=$(cd "$large" && eval "$(recipe R1)" </dev/null 2>/dev/null | sed 's#^\.github/workflows/##' | sort | tr '\n' ' ')
+got=$(run_recipe "$large" "$(recipe R1)" | sed 's#^\.github/workflows/##' | sort | tr '\n' ' ')
 if [ "$got" = "big-ungated.yml " ] && [ "$size" -gt 1048576 ]; then
   echo "ok   R1 on large inputs: 2,000 gated workflows and two of $size bytes, only the ungated one flagged"
 else
@@ -143,5 +323,27 @@ else
   fail=1
 fi
 
+# One workflow holding a 1 MiB line that nearly matches R6 again and again. Each command of every recipe must end
+# within 30 s and flag nothing. GNU grep in a UTF-8 locale backtracks for minutes on such a line when a range such
+# as a-z follows .*, which is why R6 spells its letters out.
+long="$work/long"; mkdir -p "$long/.github/workflows"
+{ printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
+  awk 'BEGIN { for (i = 0; i < 26000; i++) printf "${{ github.event.issue.x contains( ref: " }'
+  printf '"\n'; } > "$long/.github/workflows/long.yml"
+size=$(wc -c < "$long/.github/workflows/long.yml" | tr -d ' ')
+slow=""; noisy=""
+for id in $IDS; do
+  while IFS= read -r c; do
+    if ! within 30 "$long" "$c"; then slow="$slow $id"; elif [ -s "$work/within.out" ]; then noisy="$noisy $id"; fi
+  done <<< "$(recipe_lines "$id")"
+done
+if [ -z "$slow$noisy" ] && [ "$size" -gt 1000000 ]; then
+  echo "ok   every recipe on a line of $size bytes of near misses: each command done within 30 s, nothing flagged"
+else
+  echo "FAIL a line of $size bytes of near misses: still running after 30 s [$slow], flagged [$noisy]"
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then echo "gha recipe test FAILED" >&2; exit 1; fi
-echo "gha recipe test passed: $nrec recipes, $(ls "$fixtures"/*.yml | wc -l | tr -d ' ') fixtures, $ncopy copies, large inputs"
+nfix=$(ls "$fixtures"/*.yml "$fixtures"/*.yaml "$fixtures"/actions/*.yml | wc -l | tr -d ' ')
+echo "gha recipe test passed: $nrec recipes, $nfix fixtures, $ncopy copies, comment lines, trigger spellings, file names, large inputs"
