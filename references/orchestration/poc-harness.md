@@ -48,7 +48,8 @@ line, which the report records as it stands. Every cargo call and test binary th
 runs in a cleaned environment with a throwaway `HOME` and Solana keypair, and every
 build and test runs offline, after the downloads. With no recorded mode, or in a run
 directory an earlier session made, the command asks once (a non-interactive run cannot
-ask: it uses the stricter of the recorded mode and native, and the report says so) and
+ask: it uses the stricter of the recorded mode and native, writes it to the run
+directory's `exec-mode` when that file is missing, and the report says so) and
 hands the mode on; `poc-engineer` and `patch-engineer` use the mode the command hands them and
 never ask. Build and test the crate only through `run.sh`. As a second layer, `run.sh`
 never builds inside the target tree: cargo reads `.cargo/config*` and rustup reads `rust-toolchain*` from every
