@@ -1310,13 +1310,13 @@ fn lists_each_file_a_parsed_file_brings_in_that_it_does_not_parse() {
     }
 
     // A program that brings code in from its node_modules/ and from a target/
-    // cargo built in, both beside its src/: each file is listed, beside the
-    // directory the walk prunes.
+    // cargo built in, both beside its src/, by #[path] and by include!: each file
+    // is listed, beside the directory the walk prunes.
     let wt = Wt::repo();
     wt.write(
         "programs/foo/src/lib.rs",
         b"#[path = \"../node_modules/hide.rs\"]\nmod hide;\n\
-          #[path = \"../target/gen.rs\"]\nmod gen;\n",
+          #[path = \"../target/gen.rs\"]\nmod gen;\ninclude!(\"../target/inc.rs\");\n",
     );
     wt.write(
         "programs/foo/node_modules/hide.rs",
@@ -1327,24 +1327,29 @@ fn lists_each_file_a_parsed_file_brings_in_that_it_does_not_parse() {
         "programs/foo/target/gen.rs",
         b"fn g() { invoke(&ix, &a); }\n",
     );
+    wt.write(
+        "programs/foo/target/inc.rs",
+        b"fn i() { invoke(&ix, &a); }\n",
+    );
     for (root, at) in [("programs/foo", "programs/foo"), (".", "./programs/foo")] {
         let report = json(&run(BIN, &wt.dir, &[root]));
         assert_eq!(report["files_scanned"], 1, "{root}");
         assert_eq!(report["cpi_sites"], serde_json::json!([]), "{root}");
-        let unentered = |file: &str, line: u32| {
+        let unentered = |file: &str, how: &str, line: u32| {
             (
                 format!("{at}/{file}"),
                 format!(
                     "not parsed: in a directory the walk did not enter; {at}/src/lib.rs brings \
-                     it in (#[path], line {line})"
+                     it in ({how}, line {line})"
                 ),
             )
         };
         let mut want = vec![
             (format!("{at}/node_modules"), NODE_MODULES.to_string()),
-            unentered("node_modules/hide.rs", 2),
+            unentered("node_modules/hide.rs", "#[path]", 2),
             (format!("{at}/target"), BUILD.to_string()),
-            unentered("target/gen.rs", 4),
+            unentered("target/gen.rs", "#[path]", 4),
+            unentered("target/inc.rs", "include!", 5),
         ];
         if root == "." {
             want.push((
