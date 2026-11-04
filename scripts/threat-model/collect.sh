@@ -25,7 +25,10 @@
 # directory, with no "." or ".." component, and reach nothing through a symbolic link; --repo, and a
 # --parent, is the top level of a repository whose git directory lies inside the working directory,
 # holds no symbolic link and borrows no objects (alternates) or parents (info/grafts). A local path that
-# fails this is refused (exit 2), naming --network.
+# fails this is refused (exit 2), naming --network. --network reads such a repository: its git directory
+# is searched for named pipes and devices git would open, but not where a link to a directory there leads,
+# nor the object directories objects/info/alternates names, so a read that meets one there waits until
+# the caller stops the run.
 #
 # Options (each at most once, except the repeatable --paths, --parent-paths and --vulns; a value is
 # at most 1024 bytes, with no control character):
