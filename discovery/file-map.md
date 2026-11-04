@@ -374,7 +374,7 @@ PHP-SPECIFIC:
 ### 16 — Formal Verification & Testing Quality
 ```
 PRIMARY (CI/CD & Testing):
-  .github/workflows/*.yml              # CI pipelines (static analysis, tests)
+  .github/workflows/*.{yml,yaml}       # CI pipelines (static analysis, tests)
   Makefile* / scripts/*.sh             # Build/test scripts
   tests/ / **/*test* / **/*spec*       # Test files
   **/*.fuzz.* / **/fuzz_targets/       # Fuzz targets
@@ -409,7 +409,7 @@ PRIMARY (Backend Logging):
   apps/backend/src/services/*.ts       # Business logic logging
 
 PRIMARY (Monitoring):
-  .github/workflows/*.yml              # CI alerting
+  .github/workflows/*.{yml,yaml}       # CI alerting
   docker-compose*.yml                  # Monitoring services
   <your-deploy-config>.yaml            # Hosted monitoring config (render.yaml, fly.toml, etc.)
 
@@ -439,7 +439,7 @@ PRIMARY (Compliance):
   .github/CODEOWNERS                   # Code ownership
 
 PRIMARY (Change Management):
-  .github/workflows/*.yml              # CI/CD pipelines
+  .github/workflows/*.{yml,yaml}       # CI/CD pipelines
   .github/CHANGELOG.md                 # Change tracking
   scripts/                             # Deployment scripts
   .github/pull_request_template.md     # PR process
@@ -469,7 +469,7 @@ PRIMARY (Signing & guardrails):
   **/*allowlist* / **/*policy*         # Program/target allowlists, spend caps, budgets
 
 PRIMARY (CI with deploy keys):
-  .github/workflows/*.yml              # Workflows holding deploy/mainnet keys or agent creds
+  .github/workflows/*.{yml,yaml}       # Workflows holding deploy/mainnet keys or agent creds
 
 GREP PATTERNS:
   "mcpServers"           → MCP servers granted to the agent (trust each one)

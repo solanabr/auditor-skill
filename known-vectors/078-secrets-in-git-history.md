@@ -109,7 +109,7 @@ grep -iE '"(husky|lint-staged|detect-secrets|gitleaks|trufflehog)"' package.json
 
 **Step 12: Check CI/CD for secret scanning**
 ```
-cat .github/workflows/*.yml 2>/dev/null | grep -iE "gitleaks|trufflehog|detect-secrets|secret.*scan"
+grep -rniE --include='*.yml' --include='*.yaml' -e 'gitleaks|trufflehog|detect-secrets|secret.*scan' .github/workflows/ 2>/dev/null
 ```
 - ✅ PASS: CI pipeline includes secret scanning step
 - ❌ FAIL: No automated secret scanning in CI
