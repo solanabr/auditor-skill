@@ -2129,9 +2129,9 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
 # anywhere in a value, so a password with a $ before a letter, _ or { as well), and names that do not look like
 # credentials, do not count; nor do an ssh URL with a user name only, arguments that name no credential, a
 # public RPC URL, a skip-auth switch, a word that switches a setting or names an authentication method (--auth
-# none, --auth api-key), a public key or a table's key, a --no- option, a version, a date or a local file in a
-# URL's path, and a commit in a code host's path. A path with a NUL byte in it (a git include, a cache helper's
-# socket), which no file has, counts for nothing and does not stop the check.
+# none, --auth api-key, --auth sso), a public key or a table's key, a --no- option, a version, a date or a local
+# file in a URL's path, and a commit in a code host's path. A path with a NUL byte in it (a git include, a cache
+# helper's socket), which no file has, counts for nothing and does not stop the check.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -2224,6 +2224,14 @@ done <<'CONFIGS'
 .claude.json|{"mcpServers":{"g":{"command":"g-mcp","args":["--repo","https://x@github.com/o/r.git","--mirror","https://u:x@gitlab.com/o/r.git"]}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"s":{"command":"s-mcp","args":["--auth","none","--key","oauth","--api-key=true","--partition-key","pk","--sort-key","createdAt","--range-key=sk"]}}}\n|
 .claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","anonymous","--auth=disabled","--key","enabled","--auth","api-key","--auth","API_KEY"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","sso"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","iam"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth=SigV4"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","guest"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","public"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","auto"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","required"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","Xa1b2C3d4E5f6G7h8I9j"]}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://gitlab.com/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://github.com/o/r/blob/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://bitbucket.org/o/r/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://codeberg.org/o/r/raw/commit/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json"]}}}\n|
 .gitconfig|[include]\n\tpath = /nonexistent.invalid/a\000b\n|
 .gitconfig|[credential]\n\thelper = cache --socket /nonexistent.invalid/s\000k\n|

@@ -63,8 +63,8 @@
 #     it, taken for a reference to a variable (so also a password with a $ before a letter, _ or {), does not
 #     count, nor does a word that switches a setting or names an authentication method (true, false,
 #     yes, no, on, off, 0, 1, none, null, enabled, disabled, anonymous, oauth, oauth2, oidc, basic, bearer,
-#     digest, token, apikey, api-key, api_key, jwt, mtls), and neither does a file that is not JSON; one larger
-#     than 16 MiB stops the check (status 2);
+#     digest, token, apikey, api-key, api_key, jwt, mtls, sso, iam, sigv4, guest, public, auto, required), and
+#     neither does a file that is not JSON; one larger than 16 MiB stops the check (status 2);
 #   1Password's agent socket: ~/.1password/agent.sock, and on macOS
 #     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock;
 #   the sockets of a container daemon, which gives whoever reaches it the host: Docker Desktop's
@@ -262,12 +262,12 @@ MANAGED_FILES = ("managed-settings.json", "managed-settings.d/*.json", "managed-
 CLAUDE_HELPERS = ("apiKeyHelper", "awsCredentialExport", "otelHeadersHelper", "headersHelper")
 CLAUDE_LIMIT = 16 << 20
 REFERENCE = re.compile(r"\$(?:\{|[A-Za-z_])")
-# The values that switch a setting or name an authentication method (--auth none, --api-key=true), which no
-# credential is; the parts before a last part KEY or AUTH that make a key no secret (a public key; a table key,
-# --partition-key pk).
+# The values that switch a setting or name an authentication method (--auth none, --api-key=true, --auth sso),
+# which no credential is; the parts before a last part KEY or AUTH that make a key no secret (a public key; a
+# table key, --partition-key pk).
 SWITCHES = ("true", "false", "yes", "no", "on", "off", "0", "1", "none", "null", "enabled", "disabled", "anonymous",
             "oauth", "oauth2", "oidc", "basic", "bearer", "digest", "token", "apikey", "api-key", "api_key", "jwt",
-            "mtls")
+            "mtls", "sso", "iam", "sigv4", "guest", "public", "auto", "required")
 NOT_SECRET = ("PUBLIC", "PUBLISHABLE", "PUB", "PARTITION", "SORT", "RANGE")
 # A URL in a value; the schemes whose user name alone can be a token (https://<token>@host); the names a query
 # parameter holding a key takes beside those a key goes by (key_name); a path segment that can be a key
