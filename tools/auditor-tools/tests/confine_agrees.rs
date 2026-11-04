@@ -89,7 +89,7 @@ fn confined(wt: &Wt, want: &str, path: &str) -> (u8, String) {
     let got = (|| -> Result<String, Stop> {
         let r = confine::rel("the path", OsStr::new(path), want == "dir")?;
         let kind = confine::check(&wt.dir, &r, "the path")?;
-        let s = r.shown();
+        let s = r.given();
         match (want, kind) {
             ("dir", Kind::Dir) | ("any", _) | ("new", Kind::Absent) => {}
             ("dir", _) => {

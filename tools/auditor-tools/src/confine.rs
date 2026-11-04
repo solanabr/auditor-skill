@@ -292,7 +292,8 @@ pub fn json_text(json: String) -> String {
 
 /// A path argument that passed the grammar: as given (`arg`), as given less one
 /// leading `./` (`raw`), and its components (none for `.`, the working directory
-/// itself).
+/// itself). `check` names it as given in a refusal, as `confine_path` does; a
+/// tool's own messages name the path it reads, `raw`.
 pub struct Rel {
     pub arg: Vec<u8>,
     pub raw: Vec<u8>,
@@ -305,9 +306,13 @@ impl Rel {
         Path::new(OsStr::from_bytes(&self.raw))
     }
 
-    /// The argument as given, `./` and all, as `confine_path` names a path in
-    /// its messages.
     pub fn shown(&self) -> String {
+        shown(&self.raw)
+    }
+
+    /// The argument as given, `./` and all, as `confine_path` names a path in
+    /// its refusals.
+    pub fn given(&self) -> String {
         shown(&self.arg)
     }
 
@@ -387,7 +392,7 @@ pub enum Kind {
 /// search, as `cd -P` needs. A name lstat cannot find or cannot name (one longer
 /// than a name may be, say) is absent, as `[ -e ]` reads it.
 pub fn check(wt: &Path, r: &Rel, what: &str) -> Result<Kind, Stop> {
-    let s = r.shown();
+    let s = r.given();
     let mut kind = Kind::Dir;
     let mut resolve = wt.to_path_buf();
     for n in 1..=r.parts.len() {
