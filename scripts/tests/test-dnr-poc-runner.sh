@@ -2296,6 +2296,13 @@ out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" GITHUB_TOKEN=x AWS_SECR
   "$BASH" "$T/iso-driver.sh" "$ROOT" names)"
 [ "$out" = "AWS_SECRET_ACCESS_KEY, DB_PASSWORD, GITHUB_TOKEN, HELIUS_API_KEY, SOLANA_RPC_URL, npm_config__authToken" ] \
   && ok "iso_cred_names names the variables that look like credentials (a name in mixed case too), and no others (not a duration, CLAUDE_CODE_API_KEY_HELPER_TTL_MS)" || bad "iso_cred_names: '$out'"
+# A python3 that fails by itself, before the check's own program runs (exit 1, as on a SyntaxError), makes the
+# check say it could not finish, not that something with no kind is readable.
+mkdir -p "$T/py-fail"; printf '#!/bin/sh\nprintf "Traceback (most recent call last):\\nSyntaxError: invalid syntax\\n" >&2\nexit 1\n' > "$T/py-fail/python3"
+chmod +x "$T/py-fail/python3"
+code="$(dcreds PATH="$T/py-fail:$PATH" -- "$T/fh-link")"
+[ "$code" = 2 ] && grep -qx 'why: python3 stopped with status 1' "$T/creds.out" && ! grep -q '^kinds:' "$T/creds.out" \
+  && ok "a python3 that fails by itself (exit 1) -> the check could not finish (status 2), not readable with no kind" || { bad "a python3 failing by itself: $code"; cat "$T/creds.out" >&2; }
 # Agent sockets count when they accept a connection: SSH_AUTH_SOCK, sockets in ~/.ssh and ~/.gnupg, in
 # GNUPGHOME, ssh-*/agent.* under TMPDIR, and in the runtime directory's gnupg/. So do container daemon sockets
 # and the sockets that answer git's credential requests with a login (the one a git cache helper's --socket

@@ -129,10 +129,11 @@
 #                                line: a path under a home it reads starts with ~, the gcloud account in
 #                                legacy_credentials/ is <account>, and control characters are printed as ?.
 #                                Status 0 when none is readable, 1 when some are, 2 when the check cannot
-#                                run or finish, with ISO_WHY saying why. With no <home>, it reads the homes
-#                                iso_homes prints, the places the environment names and the machine-wide
-#                                places; with <home>s, those homes and the places the environment names
-#                                only. A caller in isolated mode stops on status 1 or 2; in native mode it
+#                                run or finish (python3 failing by itself too), with ISO_WHY saying why.
+#                                With no <home>, it reads the homes iso_homes prints, the places the
+#                                environment names and the machine-wide places; with <home>s, those homes
+#                                and the places the environment names only. A caller in isolated mode
+#                                stops on status 1 or 2; in native mode it
 #                                prints what is readable and goes on. What a report may carry is
 #                                ISO_KINDS, never the paths.
 #   iso_cred_names               sets ISO_NAMES to the variables of this environment whose names look like
@@ -203,10 +204,11 @@
 # from the working directory or PYTHONPATH. python3 starts from /, so nothing in the working directory picks
 # the interpreter (a .python-version a pyenv shim reads), and a relative path in a variable the check reads
 # is taken from /, never from the tree under audit. "creds given|default [<home>...]" prints what is
-# readable by kind and count on its first line and the readable paths after it (exit 1), nothing (exit 0),
-# or why the check could not finish (exit 2); "names" prints the variable names that look like credentials;
-# "homes <home>" prints the homes; "wallet <path>" writes a fresh keypair, RFC 8032 key generation from 32
-# random bytes, as the 64-number array solana-keygen writes. Exit 2 on anything unexpected.
+# readable by kind and count on its first line and the readable paths after it (exit 3, a status python3
+# never gives by itself, so that an error before the program runs, exit 1, does not read as that), nothing
+# (exit 0), or why the check could not finish (exit 2); "names" prints the variable names that look like
+# credentials; "homes <home>" prints the homes; "wallet <path>" writes a fresh keypair, RFC 8032 key
+# generation from 32 random bytes, as the 64-number array solana-keygen writes. Exit 2 on anything unexpected.
 ISO_PY='import glob, hashlib, json, os, pwd, re, socket, stat, sys, urllib.parse
 
 KINDS = ("SSH keys", "agent sockets", "container daemon sockets", "Solana keypairs or CLI config", "cloud credentials",
@@ -825,7 +827,7 @@ def creds(which, given):
     print(", ".join("%s (%d)" % (kind, count[kind]) for kind in KINDS if count[kind]))
     for path in out:
         print(path)
-    return 1
+    return 3
 
 
 def names(env):
@@ -900,9 +902,10 @@ iso_credentials() { # iso_credentials [<home>...]
   out=$(cd / && exec python3 -I -c "$ISO_PY" creds "$which" "$@") || rc=$?
   case "$rc" in
     0) return 0 ;;
-    1) ISO_KINDS=${out%%$'\n'*}; ISO_READABLE=${out#*$'\n'}; return 1 ;;
+    3) ISO_KINDS=${out%%$'\n'*}; ISO_READABLE=${out#*$'\n'}; return 1 ;;
+    2) ISO_WHY=${out%%$'\n'*} ;;
+    *) ISO_WHY="python3 stopped with status $rc" ;;
   esac
-  ISO_WHY=${out%%$'\n'*}
   [ -n "$ISO_WHY" ] || ISO_WHY="the check stopped on an error"
   return 2
 }
