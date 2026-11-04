@@ -1,0 +1,318 @@
+# Hostile argument vectors for scripts/git-ro.sh. test-git-ro.sh runs each one in its hostile fixture
+# repository (the working directory), which holds a.rs, programs/, the run directory audit_1 and the
+# nested repositories escape (a .git file naming a repository outside), escape-link (.git, a symbolic
+# link to one), inner-link (a symbolic link inside .git), alt (objects/info/alternates) and worktree
+# (core.worktree outside), plus linkrepo, a symbolic link to inner-link. Its config sets
+# blame.ignoreRevsFile and a merge driver, and the branch merged ends in a merge commit.
+# One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each
+# case prints nothing on stdout, starts no program the repository's config names, and fetches nothing.
+# git options before the subcommand
+64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: -c	-c	core.pager=x	log
+64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: -cfoo=bar	-cfoo=bar	log
+64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: --exec-path=/tmp	--exec-path=/tmp	log
+64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: --git-dir=.git	--git-dir=.git	log
+64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: --config-env=core.pager=GIT_PAGER	--config-env=core.pager=GIT_PAGER	log
+64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: -C	-C	.	log
+64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: --work-tree=.	--work-tree=.	log
+64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: --namespace=x	--namespace=x	log
+64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: --paginate	--paginate	log
+64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: -p	-p	log
+64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: --no-replace-objects	--no-replace-objects	log
+64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: --bare	--bare	log
+64	git-ro: refused: --repo needs a value	--repo
+64	git-ro: refused: --git-dir needs a value	--git-dir
+64	git-ro: refused: give --repo or --git-dir once	--repo	.	--repo	.	log
+64	git-ro: refused: give --repo or --git-dir once	--repo	.	--git-dir	audit_1/src.git	log
+# subcommands that write, run programs, reach the network, or are not git's own
+64	git-ro: refused: status is not a read-only subcommand that git-ro runs	status
+64	git-ro: refused: add is not a read-only subcommand that git-ro runs	add
+64	git-ro: refused: checkout is not a read-only subcommand that git-ro runs	checkout
+64	git-ro: refused: switch is not a read-only subcommand that git-ro runs	switch
+64	git-ro: refused: restore is not a read-only subcommand that git-ro runs	restore
+64	git-ro: refused: reset is not a read-only subcommand that git-ro runs	reset
+64	git-ro: refused: stash is not a read-only subcommand that git-ro runs	stash
+64	git-ro: refused: commit is not a read-only subcommand that git-ro runs	commit
+64	git-ro: refused: merge is not a read-only subcommand that git-ro runs	merge
+64	git-ro: refused: rebase is not a read-only subcommand that git-ro runs	rebase
+64	git-ro: refused: cherry-pick is not a read-only subcommand that git-ro runs	cherry-pick
+64	git-ro: refused: revert is not a read-only subcommand that git-ro runs	revert
+64	git-ro: refused: fetch is not a read-only subcommand that git-ro runs	fetch
+64	git-ro: refused: pull is not a read-only subcommand that git-ro runs	pull
+64	git-ro: refused: push is not a read-only subcommand that git-ro runs	push
+64	git-ro: refused: clone is not a read-only subcommand that git-ro runs	clone
+64	git-ro: refused: ls-remote is not a read-only subcommand that git-ro runs	ls-remote
+64	git-ro: refused: archive is not a read-only subcommand that git-ro runs	archive
+64	git-ro: refused: bundle is not a read-only subcommand that git-ro runs	bundle
+64	git-ro: refused: submodule is not a read-only subcommand that git-ro runs	submodule
+64	git-ro: refused: worktree is not a read-only subcommand that git-ro runs	worktree
+64	git-ro: refused: apply is not a read-only subcommand that git-ro runs	apply
+64	git-ro: refused: am is not a read-only subcommand that git-ro runs	am
+64	git-ro: refused: format-patch is not a read-only subcommand that git-ro runs	format-patch
+64	git-ro: refused: gc is not a read-only subcommand that git-ro runs	gc
+64	git-ro: refused: repack is not a read-only subcommand that git-ro runs	repack
+64	git-ro: refused: prune is not a read-only subcommand that git-ro runs	prune
+64	git-ro: refused: fsck is not a read-only subcommand that git-ro runs	fsck
+64	git-ro: refused: update-ref is not a read-only subcommand that git-ro runs	update-ref
+64	git-ro: refused: update-index is not a read-only subcommand that git-ro runs	update-index
+64	git-ro: refused: notes is not a read-only subcommand that git-ro runs	notes
+64	git-ro: refused: tag is not a read-only subcommand that git-ro runs	tag
+64	git-ro: refused: branch is not a read-only subcommand that git-ro runs	branch
+64	git-ro: refused: verify-commit is not a read-only subcommand that git-ro runs	verify-commit
+64	git-ro: refused: verify-tag is not a read-only subcommand that git-ro runs	verify-tag
+64	git-ro: refused: filter-branch is not a read-only subcommand that git-ro runs	filter-branch
+64	git-ro: refused: replace is not a read-only subcommand that git-ro runs	replace
+64	git-ro: refused: lfs is not a read-only subcommand that git-ro runs	lfs
+64	git-ro: refused: range-diff is not a read-only subcommand that git-ro runs	range-diff
+64	git-ro: refused: whatchanged is not a read-only subcommand that git-ro runs	whatchanged
+64	git-ro: refused: difftool is not a read-only subcommand that git-ro runs	difftool
+64	git-ro: refused: mergetool is not a read-only subcommand that git-ro runs	mergetool
+64	git-ro: refused: instaweb is not a read-only subcommand that git-ro runs	instaweb
+64	git-ro: refused: maintenance is not a read-only subcommand that git-ro runs	maintenance
+64	git-ro: refused: hash-object is not a read-only subcommand that git-ro runs	hash-object
+64	git-ro: refused: check-attr is not a read-only subcommand that git-ro runs	check-attr
+64	git-ro: refused: var is not a read-only subcommand that git-ro runs	var
+64	git-ro: refused: help is not a read-only subcommand that git-ro runs	help
+64	git-ro: refused: lg is not a read-only subcommand that git-ro runs	lg
+64	git-ro: refused: st is not a read-only subcommand that git-ro runs	st
+# --repo and --git-dir values
+64	git-ro: refused: --repo must be relative to the working directory: /tmp	--repo	/tmp	log
+64	git-ro: refused: --repo has an empty, . or .. component: ../wt	--repo	../wt	log
+64	git-ro: refused: --repo has an empty, . or .. component: programs/..	--repo	programs/..	log
+64	git-ro: refused: --repo has an empty, . or .. component: ./	--repo	./	log
+64	git-ro: refused: --repo has an empty, . or .. component: programs/	--repo	programs/	log
+64	git-ro: refused: --repo has an empty, . or .. component: programs//demo	--repo	programs//demo	log
+64	git-ro: refused: --repo may not start with - or ~: ~/x	--repo	~/x	log
+64	git-ro: refused: --repo may not start with - or ~: --git-dir	--repo	--git-dir	log
+64	git-ro: refused: --repo is not an existing directory: absent	--repo	absent	log
+64	git-ro: refused: --repo is not an existing directory: a.rs	--repo	a.rs	log
+64	git-ro: refused: --repo has a component that is not a directory: a.rs/x	--repo	a.rs/x	log
+64	git-ro: refused: --repo is not the top level of its repository: programs	--repo	programs	log
+64	git-ro: refused: --repo passes through a symbolic link: linkrepo	--repo	linkrepo	log
+64	git-ro: refused: --repo keeps its git directory outside the working directory: escape	--repo	escape	log
+64	git-ro: refused: --repo keeps its git directory outside the working directory: escape-link	--repo	escape-link	log
+64	git-ro: refused: --repo has a symbolic link in its git directory: inner-link	--repo	inner-link	log
+64	git-ro: refused: --repo borrows objects from another repository (objects/info/alternates); audit a full copy: alt	--repo	alt	log
+64	git-ro: refused: --repo is not the top level of its repository: worktree	--repo	worktree	log
+64	git-ro: refused: --git-dir takes <R>/src.git or <R>/src-<k>.git: audit_1	--git-dir	audit_1	log
+64	git-ro: refused: --git-dir takes <R>/src.git or <R>/src-<k>.git: audit_1/other.git	--git-dir	audit_1/other.git	log
+64	git-ro: refused: --git-dir takes <R>/src.git or <R>/src-<k>.git: audit_1/src.git/objects	--git-dir	audit_1/src.git/objects	log
+64	git-ro: refused: --git-dir takes <R>/src.git or <R>/src-<k>.git: audit_1/src-x.git	--git-dir	audit_1/src-x.git	log
+64	git-ro: refused: --git-dir's run directory must be a run directory named audit_<n> or incident_<n> in the working directory: programs	--git-dir	programs/src.git	log
+64	git-ro: refused: --git-dir's run directory must be a run directory named audit_<n> or incident_<n> in the working directory: .git	--git-dir	.git/src.git	log
+64	git-ro: refused: --git-dir's run directory is not an existing directory: audit_99	--git-dir	audit_99/src.git	log
+64	git-ro: refused: --git-dir names no copy that git-ro.sh copy made: audit_1/src-9.git	--git-dir	audit_1/src-9.git	log
+# the denylist after the subcommand: every word there is an option of the subcommand, and these are refused
+64	git-ro: refused: log does not allow --output=out.txt	log	--output=out.txt
+64	git-ro: refused: log does not allow --output-directory=x	log	--output-directory=x
+64	git-ro: refused: log does not allow --exec-path=/tmp	log	--exec-path=/tmp
+64	git-ro: refused: log does not allow --exec=x	log	--exec=x
+64	git-ro: refused: log does not allow --git-dir=.git	log	--git-dir=.git
+64	git-ro: refused: log does not allow --work-tree=/tmp	log	--work-tree=/tmp
+64	git-ro: refused: log does not allow --namespace=x	log	--namespace=x
+64	git-ro: refused: log does not allow --super-prefix=x/	log	--super-prefix=x/
+64	git-ro: refused: log does not allow --config-env=core.pager=GIT_PAGER	log	--config-env=core.pager=GIT_PAGER
+64	git-ro: refused: log does not allow --upload-pack=x	log	--upload-pack=x
+64	git-ro: refused: log does not allow --receive-pack=x	log	--receive-pack=x
+64	git-ro: refused: log does not allow --remote=x	log	--remote=x
+64	git-ro: refused: log does not allow --show-signature	log	--show-signature
+64	git-ro: refused: log does not allow --textconv	log	--textconv
+64	git-ro: refused: log does not allow --ext-diff	log	--ext-diff
+64	git-ro: refused: log does not allow --recurse-submodules	log	--recurse-submodules
+64	git-ro: refused: log does not allow --submodule=log	log	--submodule=log
+64	git-ro: refused: log does not allow --pathspec-from-file=x	log	--pathspec-from-file=x
+64	git-ro: refused: log does not allow --no-no-textconv	log	--no-no-textconv
+64	git-ro: refused: log does not allow --no-no-no-no-ext-diff	log	--no-no-no-no-ext-diff
+64	git-ro: refused: log does not allow --no-no-show-signature	log	--no-no-show-signature
+64	git-ro: refused: log does not allow --outp=x: write options out in full	log	--outp=x
+64	git-ro: refused: log does not allow --out=x: write options out in full	log	--out=x
+64	git-ro: refused: log does not allow --sub=log: write options out in full	log	--sub=log
+64	git-ro: refused: log does not allow --show-sig: write options out in full	log	--show-sig
+64	git-ro: refused: log does not allow --tex: write options out in full	log	--tex
+64	git-ro: refused: log does not allow --no-in: write options out in full	log	--no-in
+64	git-ro: refused: log does not allow --pathspec-f=x: write options out in full	log	--pathspec-f=x
+64	git-ro: refused: log does not allow --for=%H: write options out in full	log	--for=%H
+64	git-ro: refused: log does not allow --form=%H: write options out in full	log	--form=%H
+64	git-ro: refused: log does not allow --forma=%H: write options out in full	log	--forma=%H
+64	git-ro: refused: log does not allow --pre=oneline: write options out in full	log	--pre=oneline
+64	git-ro: refused: log does not allow --pret=oneline: write options out in full	log	--pret=oneline
+64	git-ro: refused: log does not allow --remot=x: write options out in full	log	--remot=x
+64	git-ro: refused: log does not allow --remerge-diff	log	--remerge-diff
+64	git-ro: refused: show does not allow --remerge-diff	show	--remerge-diff	merged
+64	git-ro: refused: log does not allow --no-no-remerge-diff	log	--no-no-remerge-diff
+64	git-ro: refused: log does not allow --remerge: write options out in full	log	--remerge
+64	git-ro: refused: log does not allow --diff-m=r: write options out in full	log	--diff-m=r
+64	git-ro: refused: a remerge diff runs the merge drivers the repository configures: --diff-merges=remerge	log	--diff-merges=remerge	-p
+64	git-ro: refused: a remerge diff runs the merge drivers the repository configures: --diff-merges=r	log	--diff-merges=r	-p
+64	git-ro: refused: a remerge diff runs the merge drivers the repository configures: --diff-merges=r	log	--diff-merges	r	-p
+64	git-ro: refused: a remerge diff runs the merge drivers the repository configures: --diff-merges=remerge	show	--diff-merges	remerge	merged
+64	git-ro: refused: a remerge diff runs the merge drivers the repository configures: --diff-merges=r	reflog	show	--diff-merges=r
+# NUL-separated output: the output filter prints NUL as ?, so the options that ask for it are refused
+64	git-ro: refused: log does not allow -z	log	-z
+64	git-ro: refused: log does not allow -pz	log	-pz
+64	git-ro: refused: log does not allow -z	log	-z	--format=%H
+64	git-ro: refused: show does not allow -z	show	-z	HEAD
+64	git-ro: refused: diff does not allow -z	diff	-z	HEAD~1	HEAD
+64	git-ro: refused: diff-tree does not allow -z	diff-tree	-z	-r	HEAD
+64	git-ro: refused: rev-list does not allow -z	rev-list	-z	HEAD
+64	git-ro: refused: ls-files does not allow -z	ls-files	-z
+64	git-ro: refused: ls-files does not allow -sz	ls-files	-sz
+64	git-ro: refused: ls-tree does not allow -z	ls-tree	-z	HEAD
+64	git-ro: refused: grep does not allow -z	grep	-z	-e	x	HEAD
+64	git-ro: refused: grep does not allow -nz	grep	-nz	-e	x	HEAD
+64	git-ro: refused: reflog does not allow -z	reflog	show	-z
+64	git-ro: refused: shortlog does not allow -z	shortlog	-z	-s	HEAD
+64	git-ro: refused: blame does not allow -z	blame	-z	HEAD	--	a.rs
+64	git-ro: refused: cat-file does not allow -z	cat-file	-z	--batch
+64	git-ro: refused: cat-file does not allow -Z	cat-file	-Z	--batch-check
+64	git-ro: refused: grep does not allow --null	grep	--null	-e	x	HEAD
+64	git-ro: refused: grep does not allow --nul: write options out in full	grep	--nul	-e	x	HEAD
+64	git-ro: refused: config does not allow -z	config	-z	--list
+64	git-ro: refused: config does not allow --null	config	--null	--list
+64	git-ro: refused: config does not allow -z	config	list	-z
+64	git-ro: refused: log does not allow -O/etc/hosts	log	-O/etc/hosts	-p
+64	git-ro: refused: log does not allow -pO/etc/hosts	log	-pO/etc/hosts
+64	git-ro: refused: show does not allow --textconv	show	--textconv	HEAD
+64	git-ro: refused: show does not allow --ext-diff	show	--ext-diff	HEAD
+64	git-ro: refused: diff-tree does not allow --textconv	diff-tree	--textconv	-p	HEAD
+64	git-ro: refused: reflog does not allow --output=x	reflog	show	--output=x
+64	git-ro: refused: diff does not allow --no-index	diff	--no-index	a.rs	b.rs
+64	git-ro: refused: diff does not allow --output=x	diff	--output=x	HEAD~1	HEAD
+64	git-ro: refused: diff does not allow -O/etc/hosts	diff	-O/etc/hosts	HEAD~1	HEAD
+64	git-ro: refused: grep does not allow --no-index	grep	--no-index	-e	x
+64	git-ro: refused: grep does not allow --untracked	grep	--untracked	-e	x
+64	git-ro: refused: grep does not allow --open-files-in-pager=sh	grep	--open-files-in-pager=sh	-e	x
+64	git-ro: refused: grep does not allow --open: write options out in full	grep	--open	-e	x
+64	git-ro: refused: grep does not allow --untr: write options out in full	grep	--untr	-e	x
+64	git-ro: refused: grep does not allow --recurse-submodules	grep	--recurse-submodules	-e	x	HEAD
+64	git-ro: refused: grep does not allow -O	grep	-O	-e	x
+64	git-ro: refused: grep does not allow -Osh	grep	-Osh	-e	x
+64	git-ro: refused: grep does not allow -nO	grep	-nO	-e	x
+64	git-ro: refused: grep does not allow -f	grep	-f	pats	HEAD
+64	git-ro: refused: grep does not allow -nf	grep	-nf	pats	HEAD
+64	git-ro: refused: grep does not allow --file=pats	grep	--file=pats	HEAD
+64	git-ro: refused: grep does not allow --textconv	grep	--textconv	-e	x	HEAD
+64	git-ro: refused: grep does not allow --no-cached	grep	--no-cached	-e	x
+64	git-ro: refused: grep does not allow --no-staged	grep	-n	--no-staged	-e	x
+64	git-ro: refused: grep does not allow --no-no-no-cached	grep	--no-no-no-cached	-e	x
+64	git-ro: refused: grep does not allow --no-cache: write options out in full	grep	--no-cache	-e	x
+64	git-ro: refused: diff does not allow --no-cached	diff	--cached	--no-cached
+64	git-ro: refused: diff does not allow --no-staged	diff	--no-staged	HEAD~1	HEAD
+64	git-ro: refused: blame does not allow --contents	blame	--contents	a.rs	HEAD	--	a.rs
+64	git-ro: refused: blame does not allow --cont: write options out in full	blame	--cont	a.rs	HEAD	--	a.rs
+64	git-ro: refused: blame does not allow --contents=a.rs	blame	--contents=a.rs	HEAD	--	a.rs
+64	git-ro: refused: blame does not allow --ignore-revs-file=revs	blame	--ignore-revs-file=revs	HEAD	--	a.rs
+64	git-ro: refused: blame does not allow --ignore-revs: write options out in full	blame	--ignore-revs	revs	HEAD	--	a.rs
+64	git-ro: refused: blame does not allow -S	blame	-S	revs	HEAD	--	a.rs
+64	git-ro: refused: blame does not allow -Srevs	blame	-Srevs	HEAD	--	a.rs
+64	git-ro: refused: blame does not allow --textconv	blame	--textconv	HEAD	--	a.rs
+64	git-ro: refused: ls-files does not allow --exclude-from=x	ls-files	--exclude-from=x
+64	git-ro: refused: ls-files does not allow --exclude-f=x: write options out in full	ls-files	--exclude-f=x
+64	git-ro: refused: ls-files does not allow -X	ls-files	-X	x
+64	git-ro: refused: ls-files does not allow -oX	ls-files	-oX
+64	git-ro: refused: ls-files does not allow -m	ls-files	-m
+64	git-ro: refused: ls-files does not allow -tm	ls-files	-tm
+64	git-ro: refused: ls-files does not allow --modified	ls-files	--modified
+64	git-ro: refused: ls-files does not allow --mod: write options out in full	ls-files	--mod
+64	git-ro: refused: ls-files does not allow --eol	ls-files	--eol
+64	git-ro: refused: ls-files does not allow --recurse-submodules	ls-files	--recurse-submodules
+64	git-ro: refused: ls-files does not allow --exclude-per-directory=.gitignore	ls-files	-o	--exclude-per-directory=.gitignore
+64	git-ro: refused: ls-files does not allow --exclude-p=x: write options out in full	ls-files	-o	--exclude-p=x
+64	git-ro: refused: ls-files does not read the work tree: %(path) %(eolinfo:worktree)	ls-files	--format=%(path) %(eolinfo:worktree)
+64	git-ro: refused: cat-file does not allow --textconv	cat-file	--textconv	HEAD:a.rs
+64	git-ro: refused: cat-file does not allow --filters	cat-file	--filters	HEAD:a.rs
+64	git-ro: refused: cat-file does not allow --filt: write options out in full	cat-file	--filt	HEAD:a.rs
+64	git-ro: refused: cat-file does not allow --batch-command	cat-file	--batch-command
+64	git-ro: refused: describe does not allow --dirty	describe	--dirty
+64	git-ro: refused: describe does not allow --dirty=-x	describe	--dirty=-x
+64	git-ro: refused: describe does not allow --broken	describe	--broken
+64	git-ro: refused: describe does not allow --dirt: write options out in full	describe	--dirt
+64	git-ro: refused: for-each-ref does not allow --form=%(refname): write options out in full	for-each-ref	--form=%(refname)
+64	git-ro: refused: rev-parse does not allow --git-dir	rev-parse	--git-dir
+# formats
+64	git-ro: refused: --format and --pretty take a built-in name, a format: or tformat: string, or a string with %, not x	log	--format=x
+64	git-ro: refused: --format and --pretty take a built-in name, a format: or tformat: string, or a string with %, not x	log	--pretty=x
+64	git-ro: refused: --format and --pretty take a built-in name, a format: or tformat: string, or a string with %, not x	for-each-ref	--format	x
+64	git-ro: refused: a format with %G or %(signature runs the signature program: %G?	log	--format=%G?
+64	git-ro: refused: a format with %G or %(signature runs the signature program: format:%GK	log	--pretty=format:%GK
+64	git-ro: refused: a format with %G or %(signature runs the signature program: tformat:%h %GS	log	--format=tformat:%h %GS
+64	git-ro: refused: a format with %G or %(signature runs the signature program: %(signature)	for-each-ref	--format	%(signature)
+64	git-ro: refused: a format with %G or %(signature runs the signature program: %(signature:key)	for-each-ref	--format=%(signature:key)
+# committed revisions only
+64	git-ro: refused: diff compares committed revisions: give A..B, A...B, A^!, A B or --cached [A], and paths after --	diff
+64	git-ro: refused: diff compares committed revisions: give A..B, A...B, A^!, A B or --cached [A], and paths after --	diff	HEAD
+64	git-ro: refused: diff compares committed revisions: give A..B, A...B, A^!, A B or --cached [A], and paths after --	diff	HEAD	--	a.rs
+64	git-ro: refused: diff compares committed revisions: give A..B, A...B, A^!, A B or --cached [A], and paths after --	diff	--stat
+64	git-ro: refused: diff compares committed revisions: give A..B, A...B, A^!, A B or --cached [A], and paths after --	diff	-U3	HEAD	--stat
+64	git-ro: refused: blame needs <rev> -- <path>: a revision, then --, then one path	blame	a.rs
+64	git-ro: refused: blame needs <rev> -- <path>: a revision, then --, then one path	blame	--	a.rs
+64	git-ro: refused: blame needs <rev> -- <path>: a revision, then --, then one path	blame	HEAD	a.rs
+64	git-ro: refused: blame needs <rev> -- <path>: a revision, then --, then one path	blame	HEAD	--	a.rs	b.rs
+64	git-ro: refused: blame needs <rev> -- <path>: a revision, then --, then one path	blame	HEAD	--
+64	git-ro: refused: blame needs <rev> -- <path>: a revision, then --, then one path	blame	--reverse	--	a.rs
+64	git-ro: refused: blame does not run where the repository's config sets blame.ignoreRevsFile; blame a copy (git-ro.sh copy, then --git-dir)	blame	HEAD	--	a.rs
+64	git-ro: refused: blame does not run where the repository's config sets blame.ignoreRevsFile; blame a copy (git-ro.sh copy, then --git-dir)	blame	-L	1,1	HEAD	--	a.rs
+64	git-ro: refused: reflog only reads: reflog show [<options>] [<ref>]	reflog
+64	git-ro: refused: reflog only reads: reflog show [<options>] [<ref>]	reflog	expire	--all
+64	git-ro: refused: reflog only reads: reflog show [<options>] [<ref>]	reflog	delete	HEAD@{0}
+# config and remote only read
+64	git-ro: refused: config only reads: --get, --get-all or --get-regexp <name> [<value-pattern>], --get-urlmatch <name> <URL>, --list, config get <name>, config list	config
+64	git-ro: refused: config only reads: --get, --get-all or --get-regexp <name> [<value-pattern>], --get-urlmatch <name> <URL>, --list, config get <name>, config list	config	core.pager	x
+64	git-ro: refused: config only reads: --get, --get-all or --get-regexp <name> [<value-pattern>], --get-urlmatch <name> <URL>, --list, config get <name>, config list	config	core.pager
+64	git-ro: refused: config only reads: --get, --get-all or --get-regexp <name> [<value-pattern>], --get-urlmatch <name> <URL>, --list, config get <name>, config list	config	--get
+64	git-ro: refused: config only reads: --get, --get-all or --get-regexp <name> [<value-pattern>], --get-urlmatch <name> <URL>, --list, config get <name>, config list	config	--get	a.b	c	d
+64	git-ro: refused: config only reads: --get, --get-all or --get-regexp <name> [<value-pattern>], --get-urlmatch <name> <URL>, --list, config get <name>, config list	config	--get-urlmatch	a.b
+64	git-ro: refused: config only reads: --get, --get-all or --get-regexp <name> [<value-pattern>], --get-urlmatch <name> <URL>, --list, config get <name>, config list	config	--list	extra
+64	git-ro: refused: config only reads: --get, --get-all or --get-regexp <name> [<value-pattern>], --get-urlmatch <name> <URL>, --list, config get <name>, config list	config	get
+64	git-ro: refused: config only reads: --get, --get-all or --get-regexp <name> [<value-pattern>], --get-urlmatch <name> <URL>, --list, config get <name>, config list	config	set	core.pager	x
+64	git-ro: refused: config only reads the repository's own config file: --unset is not allowed	config	--unset	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --unset-all is not allowed	config	--unset-all	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --add is not allowed	config	--add	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --replace-all is not allowed	config	--replace-all	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --rename-section is not allowed	config	--rename-section	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --remove-section is not allowed	config	--remove-section	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --edit is not allowed	config	--edit	core.pager
+64	git-ro: refused: config only reads the repository's own config file: -e is not allowed	config	-e	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --global is not allowed	config	--global	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --system is not allowed	config	--system	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --worktree is not allowed	config	--worktree	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --file is not allowed	config	--file	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --blob=HEAD:x is not allowed	config	--blob=HEAD:x	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --includes is not allowed	config	--includes	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --get-r is not allowed	config	--get-r	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --get-color is not allowed	config	--get-color	core.pager
+64	git-ro: refused: config only reads the repository's own config file: --bool is not allowed	config	list	--bool
+64	git-ro: refused: config only reads the repository's own config file: --get is not allowed	config	get	--get	core.pager
+64	git-ro: refused: config takes one action	config	--list	--get	core.pager
+64	git-ro: refused: config --type needs a value	config	--get	core.bare	--type
+64	git-ro: refused: remote only reads: remote, remote -v, or remote get-url [--all] [--push] <name>	remote	show	origin
+64	git-ro: refused: remote only reads: remote, remote -v, or remote get-url [--all] [--push] <name>	remote	add	origin
+64	git-ro: refused: remote only reads: remote, remote -v, or remote get-url [--all] [--push] <name>	remote	update	origin
+64	git-ro: refused: remote only reads: remote, remote -v, or remote get-url [--all] [--push] <name>	remote	prune	origin
+64	git-ro: refused: remote only reads: remote, remote -v, or remote get-url [--all] [--push] <name>	remote	rename	origin
+64	git-ro: refused: remote only reads: remote, remote -v, or remote get-url [--all] [--push] <name>	remote	remove	origin
+64	git-ro: refused: remote only reads: remote, remote -v, or remote get-url [--all] [--push] <name>	remote	set-url	origin
+64	git-ro: refused: remote only reads: remote, remote -v, or remote get-url [--all] [--push] <name>	remote	set-head	origin
+64	git-ro: refused: remote only reads: remote, remote -v, or remote get-url [--all] [--push] <name>	remote	set-branches	origin
+64	git-ro: refused: remote only reads: remote, remote -v, or remote get-url [--all] [--push] <name>	remote	-vv	origin
+64	git-ro: refused: remote only reads: remote, remote -v, or remote get-url [--all] [--push] <name>	remote	-v	-v
+64	git-ro: refused: remote get-url needs a remote name	remote	get-url
+64	git-ro: refused: remote get-url takes --all, --push and one remote name, not --foo	remote	get-url	--foo	origin
+64	git-ro: refused: remote get-url takes one remote name	remote	get-url	origin	up
+# copy, partial, tracked
+64	git-ro: refused: copy takes a repository and a run directory: copy <dir> <R>	copy
+64	git-ro: refused: copy takes a repository and a run directory: copy <dir> <R>	copy	.
+64	git-ro: refused: copy takes a repository and a run directory: copy <dir> <R>	copy	.	audit_1	extra
+64	git-ro: refused: copy takes no --repo or --git-dir	--repo	.	copy	.	audit_1
+64	git-ro: refused: copy's run directory must be a run directory named audit_<n> or incident_<n> in the working directory: programs	copy	.	programs
+64	git-ro: refused: copy's run directory must be a run directory named audit_<n> or incident_<n> in the working directory: /tmp/audit_1	copy	.	/tmp/audit_1
+64	git-ro: refused: copy's run directory is not an existing directory: audit_99	copy	.	audit_99
+64	git-ro: refused: copy's repository is not the top level of its repository: programs	copy	programs	audit_1
+64	git-ro: refused: copy's repository keeps its git directory outside the working directory: escape	copy	escape	audit_1
+64	git-ro: refused: usage: partial [--repo <dir>]	partial	x
+64	git-ro: refused: usage: partial [--repo <dir>]	--repo	.	partial	--repo	.
+64	git-ro: refused: tracked takes one path	tracked
+64	git-ro: refused: tracked takes one path	tracked	a	b
+64	git-ro: refused: tracked takes no --repo or --git-dir	--repo	.	tracked	a.rs
+64	git-ro: refused: tracked's path must be relative to the working directory: /etc	tracked	/etc
+64	git-ro: refused: tracked's path has an empty, . or .. component: ../x	tracked	../x
+64	git-ro: refused: tracked's path passes through a symbolic link: linkrepo	tracked	linkrepo
