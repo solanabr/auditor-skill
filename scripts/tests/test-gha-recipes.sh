@@ -36,6 +36,8 @@
 # hold a lone CR or U+2028.
 # KV-140 Step 6 is checked line by line on its own fixture too, and it and R7 also run over a workflow written as
 # JSON.
+# KV-080 Step 4's first command also runs over uses: lines that follow a local action on the same grep line, in a
+# flow sequence or after a lone CR or U+0085, which it must list.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
 # Needs bash >= 3.2, grep, awk, git. No network. The fixtures are copied into a temp dir as .github/workflows/, those
@@ -875,12 +877,18 @@ fi
 # with a blank before the colon and a pin that follows another key of a { } mapping; a pin under a quoted key goes to
 # R9's. A lone CR ends a YAML line but not grep's, and so does U+2028 for a YAML 1.1 parser, so a comment line that holds
 # one carries the step after it: the first command lists that line, a pin included, since R9 skips every comment line.
+# The first command leaves out a local action only when nothing but blanks, closing brackets, commas or a comment of
+# printable ASCII follows it, as Step 6 does, so it lists a step after one on the same grep line: in a flow sequence,
+# after a lone CR or U+0085 right after the local action, or after a lone CR in its comment. A local action on a line
+# of a file saved with CRLF line ends is listed under GNU and BSD grep, where the CR is not the end of the line. A step
+# after a lone CR in a pin's comment shows only inside R9's line.
 step4="$work/step4"; mkdir -p "$step4/.github/workflows"
 sha=0123456789abcdef0123456789abcdef01234567
 printf 'on: push\r\njobs:\r\n  a:\r\n    runs-on: ubuntu-latest\r\n    steps:\r\n      - uses: example/bare@%s\r\n' "$sha" \
   > "$step4/.github/workflows/crlf.yml"
 printf '      - uses: example/versioned@%s # v1.0.0\r\n      - uses: "example/quoted@%s"\r\n      - uses: example/tag@v1\r\n' \
   "$sha" "$sha" >> "$step4/.github/workflows/crlf.yml"
+printf '      - uses: ./.github/actions/local\r\n' >> "$step4/.github/workflows/crlf.yml"
 printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: example/long@%sf\n' "$sha" \
   > "$step4/.github/workflows/lf.yml"
 printf '      - uses: example/odd/pa+th@%s\n      - uses: ./.github/actions/local\n      # - uses: example/retired@%s\n' \
@@ -893,19 +901,27 @@ printf '      - { with: { a: 1 }, uses: example/flow-second@%s }\n' "$sha" >> "$
 printf '      # note\r      - uses: example/after-cr@v1\n      # note\r      - uses: example/pin-after-cr@%s # v1.0.0\n' \
   "$sha" >> "$step4/.github/workflows/lf.yml"
 printf '      # note \342\200\250      - uses: example/after-ls@v1\n' >> "$step4/.github/workflows/lf.yml"
+printf '      - uses: ./.github/actions/x # n\r      - uses: example/after-local-comment@v1\n' >> "$step4/.github/workflows/lf.yml"
+printf '      - {uses: ./x}, {uses: example/flow-after-local@v1}\n      - uses: ./x\r      - uses: example/after-local-cr@v1\n' \
+  >> "$step4/.github/workflows/lf.yml"
+printf '      - uses: ./x\302\205      - uses: example/after-local-nel@v1\n      - uses: ./.github/actions/local # n\n' \
+  >> "$step4/.github/workflows/lf.yml"
+printf "      - { uses: './.github/actions/quoted' }\n      - uses: example/pin-cr-in-comment@%s # v1.0.0\r      - uses: x/y@v1\n" \
+  "$sha" >> "$step4/.github/workflows/lf.yml"
 first4=$(kv_step "$KV080" 4 | sed -n 1p); second4=$(kv_step "$KV080" 4 | sed -n 2p)
 got1=$( (cd "$step4" && eval "$first4" </dev/null 2>/dev/null) | tr -d '\r' | sed 's#^\.github/workflows/##' \
   | awk -F: '{ print $1 ":" $2 }' | sort -t: -k1,1 -k2,2n | tr '\n' ' ')
 got2=$( (cd "$step4" && eval "$second4" </dev/null 2>/dev/null) | tr -d '\r' | sed 's#^\.github/workflows/##' \
   | awk -F: '{ print $1 ":" $2 }' | sort -t: -k1,1 -k2,2n | tr '\n' ' ')
-lf4="lf.yml:6 lf.yml:7 lf.yml:10 lf.yml:11 lf.yml:13 lf.yml:14 lf.yml:15 lf.yml:16 lf.yml:17 "
+lf4="lf.yml:6 lf.yml:7 lf.yml:10 lf.yml:11 lf.yml:13 lf.yml:14 lf.yml:15 lf.yml:16 lf.yml:17 lf.yml:18 lf.yml:19 lf.yml:20"
+lf4="$lf4 lf.yml:21 "
 case "$got1|$got2" in
-  "crlf.yml:6 crlf.yml:9 $lf4|crlf.yml:7 crlf.yml:8 lf.yml:12 " | \
-  "crlf.yml:9 $lf4|crlf.yml:6 crlf.yml:7 crlf.yml:8 lf.yml:12 ")
+  "crlf.yml:6 crlf.yml:9 crlf.yml:10 $lf4|crlf.yml:7 crlf.yml:8 lf.yml:12 lf.yml:24 " | \
+  "crlf.yml:9 $lf4|crlf.yml:6 crlf.yml:7 crlf.yml:8 lf.yml:12 lf.yml:24 ")
     echo "ok   KV-080 Step 4: R9 lists the pins it reads, the first command every other uses: line, CRLF ends and" \
-      "a step after a lone CR or U+2028 in a comment line included" ;;
-  *) echo "FAIL KV-080 Step 4: first command listed [$got1], want [crlf.yml:6 crlf.yml:9 $lf4]; R9 listed [$got2]," \
-       "want [crlf.yml:7 crlf.yml:8 lf.yml:12 ]"
+      "a step after a lone CR or U+2028 in a comment line, or after a local action, included" ;;
+  *) echo "FAIL KV-080 Step 4: first command listed [$got1], want [crlf.yml:6 crlf.yml:9 crlf.yml:10 $lf4]; R9 listed" \
+       "[$got2], want [crlf.yml:7 crlf.yml:8 lf.yml:12 lf.yml:24 ]"
      fail=1 ;;
 esac
 
@@ -938,8 +954,9 @@ if [ "$nhead" -eq 0 ]; then echo "FAIL no command of KV-080 or KV-140 pipes into
 # in a UTF-8 locale where one is installed (C.UTF-8 on GitHub's ubuntu runners): there GNU grep needs minutes for
 # such a line when a pattern holds a construct its DFA leaves undecided (see "Linear by construction" above), and
 # each line here passes the filter GNU grep runs before that. KV-080 Step 4's first command and Step 6 list the pin
-# line, whose run: string holds uses: keys, and the uses: line, and nothing else.
+# line, whose run: string holds uses: keys, and the uses: lines, and nothing else.
 # The ref: line repeats the expression under a quoted key too, with a quoted cache key that holds no name.
+# A local uses: is followed by the same megabyte, and KV-080 Step 4's first command and Step 6 list it too.
 utf8=$(locale -a 2>/dev/null | grep -iE '^(C|en_US)[.]utf-?8$' | sed -n 1p)
 long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
@@ -970,10 +987,14 @@ long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4'
   awk 'BEGIN { for (i = 0; i < 262500; i++) printf " }, " }'
   printf 'x\n'; } > "$long/.github/workflows/long-uses.yml"
+{ printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./x'
+  awk 'BEGIN { for (i = 0; i < 262500; i++) printf " }, " }'
+  printf 'x\n'; } > "$long/.github/workflows/long-local.yml"
 sizes=""; small=0
 for f in .github/workflows/long.yml .github/workflows/long-pins.yml .github/workflows/long-refs.yml \
   .github/workflows/long-gate.yml .github/workflows/long-agent.yml \
-  .github/workflows/long-trigger.yml .github/workflows/long-echo.yml .github/workflows/long-uses.yml infra/long.tf; do
+  .github/workflows/long-trigger.yml .github/workflows/long-echo.yml .github/workflows/long-uses.yml \
+  .github/workflows/long-local.yml infra/long.tf; do
   s=$(wc -c < "$long/$f" | tr -d ' '); sizes="$sizes $s"
   if [ "$s" -le 1000000 ]; then small=1; fi
 done
@@ -983,8 +1004,8 @@ for id in $IDS K080-4a; do
     if ! within 30 "$long" "$c" "$utf8"; then slow="$slow $id"
     elif [ -s "$work/within.out" ]; then
       case "$id:$(cut -d: -f1 "$work/within.out" | sort -u | tr '\n' ' ')" in
-        K080-4a:".github/workflows/long-pins.yml .github/workflows/long-uses.yml ") ;;
-        K080-6:".github/workflows/long-pins.yml .github/workflows/long-uses.yml ") ;;
+        K080-4a:".github/workflows/long-local.yml .github/workflows/long-pins.yml .github/workflows/long-uses.yml ") ;;
+        K080-6:".github/workflows/long-local.yml .github/workflows/long-pins.yml .github/workflows/long-uses.yml ") ;;
         *) noisy="$noisy $id" ;;
       esac
     fi
