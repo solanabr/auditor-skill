@@ -644,7 +644,7 @@ find .github -name "*pull_request*" -o -name "CODEOWNERS" 2>/dev/null
 
 ### Deployment approval gates
 ```
-grep_search: "approval|deploy.*gate|manual.*trigger"   isRegexp: true   includePattern: ".github/workflows/*.yml"
+grep_search: "approval|deploy.*gate|manual.*trigger"   isRegexp: true   includePattern: ".github/workflows/*.{yml,yaml}"
 ```
 
 ---
