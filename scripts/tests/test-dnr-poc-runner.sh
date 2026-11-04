@@ -2662,16 +2662,27 @@ PM="$(getconf PATH_MAX / 2>/dev/null)"
 case "$PM" in ''|*[!0-9]*) PM=1024 ;; esac
 long() { printf '%*s' "$1" '' | tr ' ' "$2"; }
 deep_dir() {  # deep_dir <length>: prints a new directory below $T whose physical path is <length> bytes, holding audit_1 (exec-mode native)
+  # Its components of 200 bytes stop while 2 to 202 bytes are left, so the last one, of 1 to 201 bytes, makes
+  # up the rest whatever the length of $T; it fails when $T leaves less.
   local cur c
   mkdir "$T/deep-$1" && cd "$T/deep-$1" || return 1
   cur="$(pwd -P)"
-  while [ $(( ${#cur} + 201 )) -lt "$1" ]; do
+  while [ $(( ${#cur} + 202 )) -lt "$1" ]; do
     c="d$(long 199 0)"; mkdir "$c" && cd "$c" || return 1; cur="$(pwd -P)"
   done
+  [ $(( $1 - ${#cur} )) -ge 2 ] || return 1
   c="e$(long $(( $1 - ${#cur} - 2 )) 0)"; mkdir "$c" && cd "$c" || return 1
   mkdir -p audit_1/poc/F-1 && printf '*\n' > audit_1/.gitignore && printf 'native\n' > audit_1/exec-mode
   pwd -P
 }
+# 202 lengths in a row give the last component each of the sizes a length of $T can leave it.
+dlen=$(( ${#T} + 220 )) dbad=
+while [ "$dlen" -lt $(( ${#T} + 422 )) ]; do
+  DW="$(deep_dir "$dlen")" && [ "${#DW}" = "$dlen" ] || dbad="$dlen bytes asked, ${#DW} made"
+  rm -rf "$T/deep-$dlen"; [ -z "$dbad" ] || break; dlen=$((dlen + 1))
+done
+[ -z "$dbad" ] && ok "deep_dir makes a working directory of each of 202 lengths in a row" \
+  || bad "deep_dir makes a working directory of each of 202 lengths in a row: $dbad below $T"
 dgate() {  # dgate <dir> [VAR=val ...] -- <argument>...: ngate, from <dir> in place of $WT
   local dir="$1"; shift
   rm -rf "$T/calls" "$T/calls.env" "$T/envdump" "$NT"; mkdir -p "$NT"
