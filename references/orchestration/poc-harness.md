@@ -65,14 +65,14 @@ the crate that is not a member of its workspace, a workspace root other than the
 itself, or a target other than the library and the tests (a bin, an example, a bench, a
 `dylib` or `staticlib`); from the manifests, a `[patch]` or `[replace]` table or a
 `cargo-features` key; and from the crate's own Rust code, a crate-level
-`#![feature(...)]`, inline assembly or the `link` attribute. Code generated at build time is checked into the crate instead. A
+`#![feature(...)]`, inline assembly or the `link` attribute (not what a dependency's macro writes: a name it pastes together from pieces, as the `paste` crate's `[<glo bal_as m>]` becomes `global_asm`, passes). Code generated at build time is checked into the crate instead. A
 `path` dependency outside the crate is not refused: its build script runs in the
 recorded mode. Before its final line `run.sh` names the non-registry code in the
 build: the path and git dependencies in the resolved `Cargo.lock` and those from a
 registry other than crates.io, and each file from outside the crate that rustc's
 dep-info lists for the crate's own units (a `#[path]` module, an `include!`,
 `include_str!` or `include_bytes!` file), in the test build and in each arm's SBF
-build; what a dependency's proc macro reads on its own is not listed. `run.sh` builds both arms and their test binaries before either test runs, so nothing a test writes in the scratch copy reaches a build. Since the vulnerable arm's builds run its dependencies' build scripts and proc macros there, it checks the crate again right before the fixed arm builds, and stops when the checks now refuse it or `cargo metadata` gives other packages, targets, features or dependencies than at first, or when a test build compiled a target of the crate that the first `cargo metadata` did not list; an arm's bytes or test binary that changed after its build stop it too. Building the target itself (for example `cargo build-sbf` /
+build; what a dependency's proc macro reads on its own is not listed. `run.sh` builds both arms and their test binaries before either test runs, so nothing a test writes in the scratch copy reaches a build. Since the vulnerable arm's builds run its dependencies' build scripts and proc macros there, it checks the crate again right before the fixed arm builds, and stops when the checks now refuse it or `cargo metadata` gives other packages, targets, features or dependencies than at first, or when a test build compiled a target of the crate that the first `cargo metadata` did not list; an arm's bytes or test binary that changed after its build stop it too. What the vulnerable arm's test leaves behind can still reach the fixed arm's test, though no build: a process it leaves running can still act while the fixed test runs, and on Linux a shared library it writes into the test binaries' `deps/` directory, the one above it or the toolchain's target library directory loads into the fixed arm's test binary in place of the system's copy (the template's `README.md` says why). Building the target itself (for example `cargo build-sbf` /
 `anchor build` on the client tree to get its `.so`) runs target code in the same mode.
 An incident whose root cause is supply chain / CI is never built natively, and its PoC
 never builds or links the target's crates in any mode, since they may be the payload:
