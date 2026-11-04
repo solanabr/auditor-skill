@@ -189,7 +189,7 @@ expected() {
     K140-7b) echo "80 82 83 84 85 93 95 96 97 101" ;;
     K080-3) echo "" ;;   # no fixture echoes a secret; the tree of its own below does
     K080-6) echo "01 08 14 33 35 37 39 42 43 44 60 76 77 98 107" ;;
-    K080-8a) echo "78 98 100 106 109" ;;
+    K080-8a) echo "78 98 100 106 109 110" ;;
     K080-8b) echo "86 87 88 89 90 94" ;;
   esac
 }
@@ -213,6 +213,7 @@ K080-8a 98-pin-and-runner-yaml-extension.yaml 9
 K080-8a 100-arc-runner-labels.yml 9 13 17 21 25 29 33
 K080-8a 106-runner-key-spellings.yml 10 14 18 22
 K080-8a 109-retired-runner-label.yml 9 13 17
+K080-8a 110-runner-label-hash.yml 10 14
 K140-6 112-quoted-cache-key.yml 15 17 21 23
 K080-8b infra/86-runner-group-public.tf 2 5
 K080-8b infra/87-arc-runner-deployment.yaml 11
@@ -957,6 +958,7 @@ if [ "$nhead" -eq 0 ]; then echo "FAIL no command of KV-080 or KV-140 pipes into
 # line, whose run: string holds uses: keys, and the uses: lines, and nothing else.
 # The ref: line repeats the expression under a quoted key too, with a quoted cache key that holds no name.
 # A local uses: is followed by the same megabyte, and KV-080 Step 4's first command and Step 6 list it too.
+# A hosted runs-on label is followed by a megabyte of blanks and a comment, which KV-080 Step 8 leaves out.
 utf8=$(locale -a 2>/dev/null | grep -iE '^(C|en_US)[.]utf-?8$' | sed -n 1p)
 long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
@@ -990,11 +992,14 @@ long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./x'
   awk 'BEGIN { for (i = 0; i < 262500; i++) printf " }, " }'
   printf 'x\n'; } > "$long/.github/workflows/long-local.yml"
+{ printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest'
+  awk 'BEGIN { for (i = 0; i < 1050000; i++) printf " " }'
+  printf '# a hosted label, its comment after a megabyte of blanks\n    steps:\n      - run: make\n'; } > "$long/.github/workflows/long-runner.yml"
 sizes=""; small=0
 for f in .github/workflows/long.yml .github/workflows/long-pins.yml .github/workflows/long-refs.yml \
   .github/workflows/long-gate.yml .github/workflows/long-agent.yml \
   .github/workflows/long-trigger.yml .github/workflows/long-echo.yml .github/workflows/long-uses.yml \
-  .github/workflows/long-local.yml infra/long.tf; do
+  .github/workflows/long-local.yml .github/workflows/long-runner.yml infra/long.tf; do
   s=$(wc -c < "$long/$f" | tr -d ' '); sizes="$sizes $s"
   if [ "$s" -le 1000000 ]; then small=1; fi
 done
