@@ -266,8 +266,9 @@ under the lowercase name.
   It sets `REQUIRE_TOOLCHAIN=1`, so the PoC runner's suite fails when cargo or rustup is missing instead of
   skipping its real-toolchain checks.
 - **`corpus-check`, job "macOS, bash 3.2 and BSD tools (advisory)"**: the same checks, except the
-  pull-request attribution check, on `macos-26`, with a stock PATH plus `~/.cargo/bin` that its first step
-  asserts. It is not a required check. A newer push to the same ref cancels its older run.
+  pull-request attribution check, on `macos-26`, with a stock PATH plus `~/.cargo/bin` that its
+  stock-toolchain step asserts. When `~/.cargo/bin` lacks cargo or rustup, the job installs both there with
+  rustup first. It is not a required check. A newer push to the same ref cancels its older run.
 - **`corpus-check`, job "auditor-tools build and audit-logs parity"**: builds `tools/auditor-tools` as a
   user does (`cargo build --release --locked`) with warnings denied, runs the unit tests, and runs
   `scripts/tests/test-audit-logs.sh` against that release binary. It is not a required check.
