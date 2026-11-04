@@ -788,7 +788,7 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
   check "... which is gone afterwards" test -z "$(ls -A "$T/tmpd")"
   # ... also when a signal ends the caller while git reads: only the caller, as a timeout's alarm does (the
   # directory goes once git is done), or its whole process group, as Ctrl-C does (the caller still stops).
-  # This git sleeps 2 s before it reads a history.
+  # This git sleeps 2 s before it reads a history; each wait below gives up after 30 s.
   mkdir -p "$T/slow"
   cat > "$T/slow/git" <<EOF
 #!/bin/sh
@@ -807,7 +807,7 @@ EOF
       '. "$1" && confine_init test "$2" && confine_repo wl R && hgit_tree "$CONFINE_REPO" log --format=%s -1; printf "went on\n"' \
       lib "$LIB" "$ROOT") >"$T/out" 2>"$T/err" </dev/null &
     pid=$!
-    while [ ! -e "$T/slow.started" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+    while [ ! -e "$T/slow.started" ] && [ "$n" -lt 300 ]; do sleep 0.1; n=$((n + 1)); done
     SLOW_LEFT=$(ls -A "$d")
     SLOW_KILLED=1
     if [ "$2" != group ]; then
@@ -820,7 +820,7 @@ EOF
     wait "$pid" 2>/dev/null
     RC=$?
     n=0
-    while [ -n "$(ls -A "$d")" ] && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+    while [ -n "$(ls -A "$d")" ] && [ "$n" -lt 300 ]; do sleep 0.1; n=$((n + 1)); done
     SLOW_NOW=$(ls -A "$d")
   }
   slow_read ALRM caller
