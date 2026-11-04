@@ -2120,22 +2120,17 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
 # URL, a proxy without a login, a region alone and a Terraform plugin cache do not count. A store or cache
 # written with a variable counts even with an absolute path. So do Claude Code's settings and state files (in
 # ~/.claude*, ~/.claude.json and its backups): a command that prints a credential (an MCP server's
-# headersHelper too), a token, a passphrase, a password (REDIS_PWD, PGPASSWORD), a PAT or a key (DD_APP_KEY) in
-# an env block (of the file or of an MCP server), a value a Bearer or Basic scheme sends there, a URL with a
-# login, a key-named query or fragment parameter or a key in its path there, a credential header in a list of
-# headers there (ANTHROPIC_CUSTOM_HEADERS lines, a name ending in HEADER, an MCP server's JSON object; any
-# *-Authorization, and a name whose last part is KEY or AUTH), any header in the OTLP exporter's lists, an MCP
-# server's or a hook's Authorization or key header or a header that sends a Bearer value, a key in an MCP
-# server's or a hook's URL (its login, its query or its path), and in an MCP server's arguments (an option
-# named like such a variable (--pat) or whose last part is KEY, AUTH, BEARER, AUTHORIZATION or CREDENTIALS,
-# NAME=value as docker run -e takes it, a header option with Name: value or with a name and a value of their
-# own as mcp-proxy takes them, a Bearer or Basic value, a URL), and a client key path the check cannot place.
-# Settings that only refer to a variable, and names that do not look like credentials, do not count; nor do an
-# ssh URL with a user name only, arguments that name no credential, prose that starts with Bearer or Basic, PWD
-# and OLDPWD, a public RPC URL, a skip-auth switch, a word that switches a setting (--auth none), a public key
-# or a table's key, a --no- option, a version, a date or a local file in a URL's path, and a commit in a code
-# host's path. A path with a NUL byte in it (a git include, a cache helper's socket, a client key), which no file
-# has, counts for nothing and does not stop the check.
+# headersHelper too), a token or a passphrase in an env block (of the file or of an MCP server), a URL with a
+# login, a key-named query parameter or a key in its path there, a credential header in a list of headers
+# there (ANTHROPIC_CUSTOM_HEADERS lines, an MCP server's JSON object; any *-Authorization, and a name whose last
+# part is KEY or AUTH), any header in the OTLP exporter's lists, an MCP server's Authorization or key header,
+# and a key in an MCP server's or a hook's URL (its login, its query or its path) or in an MCP server's
+# arguments (an option, NAME=value, a header option, a URL). Settings that only refer to a variable, and names
+# that do not look like credentials, do not count; nor do an ssh URL with a user name only, arguments that name
+# no credential, a public RPC URL, a skip-auth switch, a word that switches a setting (--auth none), a public
+# key or a table's key, a --no- option, a version, a date or a local file in a URL's path, and a commit in a
+# code host's path. A path with a NUL byte in it (a git include, a cache helper's socket), which no file has,
+# counts for nothing and does not stop the check.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -2223,52 +2218,12 @@ done <<'CONFIGS'
 .claude.json|{"mcpServers":{"rpc":{"command":"npx","args":["solana-mcp","--rpc-url","https://x.solana-mainnet.quiknode.pro/0123456789abcdef0123456789abcdef01234567/"]}}}\n|Claude Code credentials
 .claude/settings.json|{"env":{"SOLANA_RPC_URL":"https://api.devnet.solana.com","RPC_URL":"https://solana-mainnet.g.alchemy.com/v2/docs-demo"}}\n|
 .claude.json|{"mcpServers":{"sol":{"command":"npx","args":["solana-mcp","--rpc-url","https://api.devnet.solana.com"]},"docs":{"type":"http","url":"https://mcp.example.invalid/v1/claude-3-5-sonnet-20241022/sse"},"repo":{"command":"uvx","args":["--from","git+https://github.com/o/solana-mcp-server-2025","x","file:///w/notes-a1b2c3d4e5f6a7b8c9d0"]}}}\n|
-.claude.json|{"mcpServers":{"p":{"command":"mcp-proxy","args":["--headers","Authorization","Bearer x","http://mcp.example.invalid/sse"]}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"p":{"command":"mcp-proxy","args":["-H","Authorization","Bearer x","http://mcp.example.invalid/sse"]}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"g":{"command":"npx","args":["-y","supergateway","--sse","https://mcp.example.invalid/sse","--oauth2Bearer","x"]}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"redis":{"command":"uvx","args":["redis-mcp-server"],"env":{"REDIS_HOST":"db.invalid","REDIS_PWD":"x"}}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"pg":{"command":"pg-mcp","env":{"PGPASSWORD":"x"}}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"ado":{"command":"ado-mcp","env":{"AZURE_DEVOPS_PAT":"x"}}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"mail":{"command":"mail-mcp","env":{"SMTP_PASS":"x"}}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"dd":{"command":"dd-mcp","env":{"DD_APP_KEY":"x"}}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"redis":{"command":"docker","args":["run","-i","--rm","-e","REDIS_PWD=x","mcp/redis"]}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"ado":{"command":"ado-mcp","args":["--pat","x"]}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"r":{"command":"npx","args":["mcp-remote","https://mcp.example.invalid/sse","--header","Authorization:${AUTH_HEADER}"],"env":{"AUTH_HEADER":"Bearer x0123456789"}}}}\n|Claude Code credentials
-.claude/settings.json|{"env":{"UPSTREAM_AUTHORIZATION_VALUE":"Basic dXNlcjpwYXNz"}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"r":{"command":"relay","args":["--upstream-header-value","Bearer x0123456789"]}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"r":{"command":"relay","args":["serve","Basic dXNlcjpwYXNz"]}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"a":{"command":"a-mcp","args":["--authorization","Bearer x"]}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"a":{"command":"a-mcp","args":["--credentials","x"]}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"a":{"command":"a-mcp","args":["--credential=x"]}}}\n|Claude Code credentials
-.claude/settings.json|{"hooks":{"Stop":[{"hooks":[{"type":"http","url":"https://hooks.example.invalid/x","headers":{"X-Relay":"Bearer x0123456789"}}]}]}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"r":{"command":"r-mcp","env":{"MCP_HEADER":"Authorization: Bearer x"}}}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"r":{"type":"http","url":"https://mcp.example.invalid/mcp#access_token=x"}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/main/openapi.json?token=x"]}}}\n|Claude Code credentials
-.claude/settings.json|{"env":{"CLAUDE_CODE_CLIENT_KEY":"certs/client.key"}}\n|Claude Code credentials
-.claude.json|{"mcpServers":{"p":{"command":"p-mcp","args":["--prompt","Bearer of bad news","--title","Basic authentication","--note","Bearer token","-H","Authorization","Bearer ${T}","--header","Authorization: Bearer ${T}","--pwd","/w"],"env":{"AUTH_HEADER":"Bearer ${T}","AUTH_MODE":"Basic tutorial","PWD":"/w","OLDPWD":"/"}}}}\n|
-.claude.json|{"mcpServers":{"s":{"command":"s-mcp","args":["--auth","none","--key","oauth","--credentials=true","--partition-key","pk","--sort-key","createdAt","--range-key=sk"],"env":{"TABLE_PARTITION_KEY":"customer_id"}}}}\n|
+.claude.json|{"mcpServers":{"s":{"command":"s-mcp","args":["--auth","none","--key","oauth","--api-key=true","--partition-key","pk","--sort-key","createdAt","--range-key=sk"]}}}\n|
 .claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://gitlab.com/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json"]}}}\n|
-.claude/settings.json|{"env":{"CLAUDE_CODE_CLIENT_CERT":"/nonexistent.invalid/client.pem","CLAUDE_CODE_CLIENT_KEY":"/nonexistent.invalid/client.key","OTEL_EXPORTER_OTLP_CLIENT_KEY":"~/no-such/client.key"}}\n|
-.claude/settings.json|{"env":{"CLAUDE_CODE_CLIENT_KEY":"/nonexistent.invalid/a\\u0000b"}}\n|
 .gitconfig|[include]\n\tpath = /nonexistent.invalid/a\000b\n|
 .gitconfig|[credential]\n\thelper = cache --socket /nonexistent.invalid/s\000k\n|
 CONFIGS
-# The mTLS client keys Claude Code takes (CLAUDE_CODE_CLIENT_KEY; OTEL_EXPORTER_OTLP_CLIENT_KEY and its
-# per-signal forms for its OTLP exporter over gRPC) count by the file they name when it is readable, named by
-# the environment or by an env block in Claude Code's settings, "~/" there standing for the home. The settings
-# file does not count for them, nor does a key file that is not there.
-FH="$T/fc-clientkey"; mkdir -p "$FH/.claude" "$FH/certs"; printf 'secret\n' > "$FH/certs/client.key"; printf 'secret\n' > "$T/otlp-client.key"
-printf '{"env":{"CLAUDE_CODE_CLIENT_CERT":"~/certs/client.pem","CLAUDE_CODE_CLIENT_KEY":"~/certs/client.key","OTEL_EXPORTER_OTLP_METRICS_CLIENT_KEY":"%s"}}\n' "$T/otlp-client.key" > "$FH/.claude/settings.json"
-code="$(dcreds -- "$FH")"
-[ "$code" = 1 ] && lines_are "Claude Code credentials (2)" "~/certs/client.key" "$T/otlp-client.key" \
-  && ok "a readable mTLS client key an env block in Claude Code's settings names counts, and the settings file does not" \
-  || { bad "a client key Claude Code's settings name: $code"; cat "$T/creds.out" >&2; }
-printf 'secret\n' > "$T/cc-client.key"
-code="$(dcreds CLAUDE_CODE_CLIENT_KEY="$T/cc-client.key" OTEL_EXPORTER_OTLP_CLIENT_KEY="$T/otlp-client.key" \
-  OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY=/nonexistent.invalid/client.key -- "$CLEANHOME")"
-[ "$code" = 1 ] && lines_are "Claude Code credentials (2)" "$T/cc-client.key" "$T/otlp-client.key" \
-  && ok "the readable mTLS client keys the environment names count (CLAUDE_CODE_CLIENT_KEY, OTEL_EXPORTER_OTLP_CLIENT_KEY)" \
-  || { bad "the client keys the environment names: $code"; cat "$T/creds.out" >&2; }
 # git's store counts by the file its --file names, when that file is readable: the file counts, not the git
 # config, as the code here could read it without git. "~" as a word of its own is the home; the helper may be
 # named by an absolute path, and the option by an abbreviation, as git takes it (--fi).
@@ -2300,12 +2255,9 @@ FH="$T/fh-link"; mkdir -p "$FH"; printf 'secret\n' > "$T/npmrc-elsewhere"; ln -s
 code="$(dcreds -- "$FH")"
 [ "$code" = 1 ] && lines_are "package registry tokens (1)" "~/.npmrc" && ok "a symbolic link to a readable file counts" || { bad "a linked credential: $code"; cat "$T/creds.out" >&2; }
 out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" GITHUB_TOKEN=x AWS_SECRET_ACCESS_KEY=x HELIUS_API_KEY=x SOLANA_RPC_URL=x \
-  DB_PASSWORD=x MAX_MCP_OUTPUT_TOKENS=1 TOKENIZER_PATH=x SSH_AUTH_SOCK=x npm_config__authToken=x REDIS_PWD=x PGPASSWORD=x \
-  AZURE_DEVOPS_PAT=x DD_APP_KEY=x OLDPWD=/ SOLANA_PUBLIC_KEY=x TABLE_SORT_KEY=x CLAUDE_CODE_CLIENT_KEY=x \
-  "$BASH" "$T/iso-driver.sh" "$ROOT" names)"
-[ "$out" = "AWS_SECRET_ACCESS_KEY, AZURE_DEVOPS_PAT, DB_PASSWORD, DD_APP_KEY, GITHUB_TOKEN, HELIUS_API_KEY, PGPASSWORD, REDIS_PWD, SOLANA_RPC_URL, npm_config__authToken" ] \
-  && ok "iso_cred_names names the variables that look like credentials (a name in mixed case too), and no others: not PWD, OLDPWD, a public or table key, or a client key path" \
-  || bad "iso_cred_names: '$out'"
+  DB_PASSWORD=x MAX_MCP_OUTPUT_TOKENS=1 TOKENIZER_PATH=x SSH_AUTH_SOCK=x npm_config__authToken=x "$BASH" "$T/iso-driver.sh" "$ROOT" names)"
+[ "$out" = "AWS_SECRET_ACCESS_KEY, DB_PASSWORD, GITHUB_TOKEN, HELIUS_API_KEY, SOLANA_RPC_URL, npm_config__authToken" ] \
+  && ok "iso_cred_names names the variables that look like credentials (a name in mixed case too), and no others" || bad "iso_cred_names: '$out'"
 # Agent sockets count when they accept a connection: SSH_AUTH_SOCK, sockets in ~/.ssh and ~/.gnupg, in
 # GNUPGHOME, ssh-*/agent.* under TMPDIR, and in the runtime directory's gnupg/. So do container daemon sockets
 # and the sockets that answer git's credential requests with a login (the one a git cache helper's --socket

@@ -43,36 +43,26 @@
 #     ~/.claude.json and its backups (the state file, which keeps the personal MCP servers). One counts when it
 #     names a command that prints a credential (apiKeyHelper, awsCredentialExport, otelHeadersHelper, an MCP
 #     server's headersHelper); when an env block in it, its own or an MCP server's, gives a value to a variable
-#     whose name looks like a credential (as below; an RPC_URL counts only by what its URL carries), a value an
-#     HTTP authentication scheme sends, a value with a URL that carries one, or, to a name that ends in HEADER
-#     or HEADERS, a list of headers (Name: value lines, Name=value pairs or a JSON object) that sends a
-#     credential header, or for OTEL_EXPORTER_OTLP_HEADERS and its per-signal forms, which authenticate the
-#     exporter, any header; when a headers block sends a credential header; or when a URL (an MCP server's or a
-#     hook's) or an MCP server's arguments carry one. An env block's CLAUDE_CODE_CLIENT_KEY, and
-#     OTEL_EXPORTER_OTLP_CLIENT_KEY and its per-signal forms (the mTLS client keys of Claude Code and of its
-#     OTLP exporter over gRPC), count by the file they name: at an absolute path or under "~/", the file counts
-#     when it is readable; at another path, which the check cannot place, the settings file counts. A
-#     credential header is Authorization, any *-Authorization, Cookie, a name a key goes by, or any name with a
-#     value an authentication scheme sends. The name a key goes by, of a header, an option or a query
-#     parameter, looks like a credential or has a last part KEY, AUTH, BEARER, AUTHORIZATION, CREDENTIAL or
-#     CREDENTIALS, but for a key that is no secret: a public key, and a table's partition, sort or range key
-#     (x-api-key, Ocp-Apim-Subscription-Key, Helicone-Auth, --oauth2Bearer; not --public-key or
-#     --partition-key). An authentication scheme sends Bearer and a token of eight or more characters, or Basic
-#     and the base64 of a user and a password. A URL carries one in its login (any user name in an http, ws or
-#     socks URL, a user and a password in another), in a query or fragment parameter named as a key goes by or
-#     sig or signature, or, when it has a host other than a code host (github.com, githubusercontent.com,
-#     gitlab.com, bitbucket.org, codeberg.org and their subdomains, whose paths hold names and commits), in a
-#     path segment that can be a key: 20 or more letters, digits, - and _, with a run of seven or more letters
-#     and digits holding both (https://<name>.quiknode.pro/<token>/; an id such as a UUID counts too, while a
-#     version or a date in a name holds none). Arguments carry one in an option named as a key goes by, with a
-#     value (--api-key <value>, --key=<value>; a --no- option takes none, and a word that starts with - is the
-#     next option), in NAME=<value> as an env block would set it, in a header option (-H, --header, --headers)
-#     as Name: value, as a JSON object or as a name and a value of their own (mcp-proxy --headers Authorization
-#     <value>), in a value an authentication scheme sends, or in a URL. A value that refers to a variable
-#     (${NAME}) does not count, nor does a word that switches a setting or names an authentication method
-#     (true, false, yes, no, on, off, 0, 1, none, null, oauth, oauth2, oidc, basic, bearer, digest, token,
-#     apikey, jwt, mtls), and neither does a file that is not JSON; one larger than 16 MiB stops the check
-#     (status 2);
+#     whose name looks like a credential (as below; an RPC_URL counts only by what its URL carries), a value
+#     with a URL that carries one, or, to a name that ends in HEADERS, a list of headers (Name: value lines,
+#     Name=value pairs or a JSON object) that sends a credential header, or for OTEL_EXPORTER_OTLP_HEADERS and
+#     its per-signal forms, which authenticate the exporter, any header; when a headers block sends a
+#     credential header with a value; or when a URL (an MCP server's or a hook's) or an MCP server's arguments
+#     carry one. A credential header is Authorization, any *-Authorization, Cookie, or a name a key goes by: one
+#     that looks like a credential, or whose last part is KEY or AUTH, but for a key that is no secret: a public
+#     key, and a table's partition, sort or range key (x-api-key, Ocp-Apim-Subscription-Key, Helicone-Auth; not
+#     --public-key or --partition-key). A URL carries one in its login (any user name in an http, ws or socks
+#     URL, a user and a password in another), in a query parameter named as a key goes by or sig or signature,
+#     or, when it has a host other than a code host (github.com, githubusercontent.com, gitlab.com,
+#     bitbucket.org, codeberg.org and their subdomains, whose paths hold names and commits), in a path segment
+#     that can be a key: 20 or more letters, digits, - and _, with a run of seven or more letters and digits
+#     holding both (https://<name>.quiknode.pro/<token>/; an id such as a UUID counts too, while a version or a
+#     date in a name holds none). Arguments carry one in an option named as a key goes by, with a value
+#     (--api-key <value>, --key=<value>; a --no- option takes none), in NAME=<value> for a name that looks like
+#     a credential, in a header option (-H, --header) or in a URL. A value that refers to a variable (${NAME})
+#     does not count, nor does a word that switches a setting or names an authentication method (true, false,
+#     yes, no, on, off, 0, 1, none, null, oauth, oauth2, oidc, basic, bearer, digest, token, apikey, jwt, mtls),
+#     and neither does a file that is not JSON; one larger than 16 MiB stops the check (status 2);
 #   1Password's agent socket: ~/.1password/agent.sock, and on macOS
 #     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock;
 #   the sockets of a container daemon, which gives whoever reaches it the host: Docker Desktop's
@@ -85,8 +75,7 @@
 # (credentials and credentials.toml); XDG_CONFIG_HOME (gh/hosts.yml, git/credentials, and git/config as
 # ~/.gitconfig is read); XDG_CACHE_HOME (git/credential/socket); GH_CONFIG_DIR (hosts.yml);
 # AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, NETRC, NPM_CONFIG_USERCONFIG (in either case),
-# GIT_ASKPASS, SSH_ASKPASS, ANTHROPIC_IDENTITY_TOKEN_FILE, CLAUDE_CODE_CLIENT_KEY, and
-# OTEL_EXPORTER_OTLP_CLIENT_KEY and its per-signal forms, each a file; GIT_CONFIG_GLOBAL and
+# GIT_ASKPASS, SSH_ASKPASS and ANTHROPIC_IDENTITY_TOKEN_FILE, each a file; GIT_CONFIG_GLOBAL and
 # GIT_CONFIG_SYSTEM, read as ~/.gitconfig is; AWS_CONFIG_FILE, read as ~/.aws/config is; TF_CLI_CONFIG_FILE,
 # read as ~/.terraformrc is; KUBECONFIG, a list of files; DOCKER_CONFIG (config.json and
 # contexts/tls/*/*/key.pem); DOCKER_CERT_PATH (key.pem); CLAUDE_CONFIG_DIR (.credentials.json, and the
@@ -111,11 +100,10 @@
 # sandbox that denies reads of these paths passes, so its credentials block must list them all; an
 # unsandboxed retry, a sandbox without those deny rules and a host session that recorded "isolated" do not
 # pass. The check also names the variables of its own environment whose names look like credentials (a
-# part TOKEN, SECRET, PASSWORD, PASSWD, PASSPHRASE, APIKEY, PWD, PASS or PAT, a part that ends in PASSWORD or
-# PASSWD, API_KEY, ACCESS_KEY, PRIVATE_KEY or RPC_URL, or a last part KEY but for a key that is no secret as
-# above, the parts apart at _, - and . and where a lower-case letter or a digit meets an upper-case one; not
-# PWD and OLDPWD themselves, nor the client key variables, which name files): no child gets them, but code
-# running as the same user can read another process's environment (on Linux, in /proc/<pid>/environ).
+# part TOKEN, SECRET, PASSWORD, PASSWD, PASSPHRASE or APIKEY, or API_KEY, ACCESS_KEY, PRIVATE_KEY or RPC_URL,
+# the parts apart at _, - and . and where a lower-case letter or a digit meets an upper-case one): no child gets
+# them, but code running as the same user can read another process's environment (on Linux, in
+# /proc/<pid>/environ).
 #
 # Environment cleaning, in every mode. A child runs under env -i with only these variables: PATH as
 # confine_init cleaned it; HOME, a throwaway directory holding a fresh Solana keypair at
@@ -214,7 +202,7 @@
 # or why the check could not finish (exit 2); "names" prints the variable names that look like credentials;
 # "homes <home>" prints the homes; "wallet <path>" writes a fresh keypair, RFC 8032 key generation from 32
 # random bytes, as the 64-number array solana-keygen writes. Exit 2 on anything unexpected.
-ISO_PY='import base64, glob, hashlib, json, os, pwd, re, socket, stat, sys, urllib.parse
+ISO_PY='import glob, hashlib, json, os, pwd, re, socket, stat, sys, urllib.parse
 
 KINDS = ("SSH keys", "agent sockets", "container daemon sockets", "Solana keypairs or CLI config", "cloud credentials",
          "Kubernetes or Docker config", "package registry tokens", "git or HTTP credentials", "GnuPG private keys",
@@ -272,22 +260,12 @@ MANAGED_FILES = ("managed-settings.json", "managed-settings.d/*.json", "managed-
 CLAUDE_HELPERS = ("apiKeyHelper", "awsCredentialExport", "otelHeadersHelper", "headersHelper")
 CLAUDE_LIMIT = 16 << 20
 REFERENCE = re.compile(r"\$(?:\{|[A-Za-z_])")
-# The values that switch a setting or name an authentication method (--auth none, --credentials=true), which no
-# credential is.
+# The values that switch a setting or name an authentication method (--auth none, --api-key=true), which no
+# credential is; the parts before a last part KEY or AUTH that make a key no secret (a public key; a table key,
+# --partition-key pk).
 SWITCHES = ("true", "false", "yes", "no", "on", "off", "0", "1", "none", "null", "oauth", "oauth2", "oidc", "basic",
             "bearer", "digest", "token", "apikey", "jwt", "mtls")
-# The last parts of a name a key goes by when the rest of it does not look like a credential (--key, --auth,
-# --oauth2Bearer, --credentials), and the parts before the last that make a key no secret (a public key; a
-# table key, --partition-key pk).
-KEY_PARTS = ("KEY", "AUTH", "BEARER", "AUTHORIZATION", "CREDENTIAL", "CREDENTIALS")
 NOT_SECRET = ("PUBLIC", "PUBLISHABLE", "PUB", "PARTITION", "SORT", "RANGE")
-# A value an HTTP authentication scheme sends, with nothing else: Bearer and a token of eight or more characters
-# (RFC 6750), or Basic and the base64 of a user and a password (RFC 7617), which auth_value decodes.
-BEARER = re.compile(r"(?i)[ \t]*bearer[ \t]+[A-Za-z0-9._~+/-]{8,}=*[ \t]*")
-BASIC = re.compile(r"(?i)[ \t]*basic[ \t]+([A-Za-z0-9+/]+={0,2})[ \t]*")
-# The variables that name an mTLS client key file, read as that file: CLAUDE_CODE_CLIENT_KEY, and
-# OTEL_EXPORTER_OTLP_CLIENT_KEY and its per-signal forms, which Claude Code takes for an OTLP exporter over gRPC.
-CLIENT_KEY = re.compile(r"CLAUDE_CODE_CLIENT_KEY|OTEL_EXPORTER_OTLP_(?:[A-Z]+_)?CLIENT_KEY")
 # A URL in a value; the schemes whose user name alone can be a token (https://<token>@host); the names a query
 # parameter holding a key takes beside those a key goes by (key_name); a path segment that can be a key
 # (path_key), as a key in a path has no name (https://<name>.solana-mainnet.quiknode.pro/<token>/,
@@ -298,12 +276,10 @@ TOKEN_USER = ("http", "https", "ws", "wss", "socks", "socks4", "socks4a", "socks
 QUERY_KEYS = ("SIG", "SIGNATURE")
 PATH_KEY = re.compile(r"[A-Za-z0-9_-]{20,}")
 CODE_HOSTS = ("github.com", "githubusercontent.com", "gitlab.com", "bitbucket.org", "codeberg.org")
-# One header of a list, Name: value or Name=value, the headers apart by newlines or commas; a header name on its
-# own, as the argument after a header option that takes the name and the value apart (mcp-proxy --headers
-# <name> <value>); the variables whose headers all count, since the OTLP exporter sends them to authenticate
-# (OTEL_EXPORTER_OTLP_HEADERS and its per-signal forms).
+# One header of a list, Name: value or Name=value, the headers apart by newlines or commas; the variables whose
+# headers all count, since the OTLP exporter sends them to authenticate (OTEL_EXPORTER_OTLP_HEADERS and its
+# per-signal forms).
 HEADER = re.compile(r"(?:^|[\n,])[ \t]*([A-Za-z0-9_.-]+)[ \t]*[:=]([^\n,]*)")
-HEADER_NAME = re.compile(r"[A-Za-z0-9_.-]+")
 OTLP_HEADERS = re.compile(r"OTEL_EXPORTER_OTLP_(?:[A-Z]+_)?HEADERS")
 
 
@@ -325,7 +301,7 @@ def shown(path, bases=()):
 def start(path, size):
     # The first <size> bytes of a regular file, or of a link to one, opened without blocking so that a FIFO in
     # its place cannot stall the check; None when it cannot be read, as for a path with a NUL byte in it, which
-    # a file read (a git include, a keypair_path, a client key in a settings file) can name but no file has.
+    # a file read (a git include, a keypair_path) can name but no file has.
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOCTTY", 0))
     except (OSError, ValueError):
@@ -567,30 +543,13 @@ def secretish(name, rpc=True):
                 or pairs & {("API", "KEY"), ("ACCESS", "KEY"), ("PRIVATE", "KEY")} or rpc and ("RPC", "URL") in pairs)
 
 
-def last_part(name, parts):
-    # A name whose last part is one of <parts>, but for a key that is no secret (NOT_SECRET before it).
-    p = name_parts(name)
-    return p[-1] in parts and not (len(p) > 1 and p[-2] in NOT_SECRET)
-
-
-def env_name(name, rpc=False):
-    # A variable whose name looks like a credential: as secretish (an RPC_URL with <rpc> only), with a last part
-    # KEY (a key that is no secret aside), with a part PWD, PASS or PAT (PWD and OLDPWD themselves aside), or with
-    # a part that ends in PASSWORD or PASSWD (DD_APP_KEY, REDIS_PWD, AZURE_DEVOPS_PAT, PGPASSWORD). One that
-    # names a client key file (CLIENT_KEY) is read as that file instead.
-    parts = name_parts(name)
-    return not CLIENT_KEY.fullmatch(name) and bool(
-        secretish(name, rpc) or last_part(name, ("KEY",))
-        or name.upper() not in ("PWD", "OLDPWD")
-        and any(p in ("PWD", "PASS", "PAT") or p.endswith(("PASSWORD", "PASSWD")) for p in parts))
-
-
 def key_name(name):
-    # The name a header, an option or a query parameter carrying a key goes by: one a variable holding a
-    # credential goes by (env_name), or one whose last part is KEY, AUTH, BEARER, AUTHORIZATION, CREDENTIAL or
-    # CREDENTIALS (x-api-key, Ocp-Apim-Subscription-Key, subscription-key, --key, --pat, Helicone-Auth,
-    # --oauth2Bearer), a key that is no secret aside.
-    return env_name(name) or last_part(name, KEY_PARTS)
+    # The name a header, an option or a query parameter carrying a key goes by: one that looks like a credential,
+    # or one whose last part is KEY or AUTH (x-api-key, Ocp-Apim-Subscription-Key, subscription-key, --key,
+    # Helicone-Auth), a key that is no secret aside (NOT_SECRET: a public key, a table key).
+    parts = name_parts(name)
+    return (secretish(name, rpc=False)
+            or parts[-1] in ("KEY", "AUTH") and not (len(parts) > 1 and parts[-2] in NOT_SECRET))
 
 
 def set_here(value):
@@ -600,35 +559,22 @@ def set_here(value):
     return text != "" and not REFERENCE.search(text) and text.lower() not in SWITCHES
 
 
-def auth_value(text):
-    # A value an HTTP authentication scheme sends, with nothing else (BEARER, BASIC): Basic counts when what it
-    # sends decodes to a user and a password.
-    basic = BASIC.fullmatch(text)
-    try:
-        return bool(BEARER.fullmatch(text) or basic and b":" in base64.b64decode(basic.group(1), validate=True))
-    except ValueError:
-        return False
-
-
-def credential_header(name, value):
-    # A header that sends a credential, with a value set here: Authorization (Proxy-Authorization and any
-    # *-Authorization too) or Cookie, a name a key goes by (key_name), or any name with a value an authentication
-    # scheme sends (auth_value).
+def credential_header(name):
+    # Authorization (Proxy-Authorization and any *-Authorization too), Cookie, or a name a key goes by (key_name).
     upper = name.upper().replace("-", "_")
-    return set_here(value) and bool(upper in ("AUTHORIZATION", "COOKIE") or upper.endswith("_AUTHORIZATION")
-                                    or key_name(name) or auth_value(str(value)))
+    return upper in ("AUTHORIZATION", "COOKIE") or upper.endswith("_AUTHORIZATION") or key_name(name)
 
 
 def header_credential(text, every=False):
-    # A list of headers that sends a credential header, or with <every> any header with a value set here: Name:
-    # value lines (ANTHROPIC_CUSTOM_HEADERS), Name=value pairs apart by commas (the OTLP exporter), or a JSON
-    # object (OPENAPI_MCP_HEADERS, as an MCP server takes it).
+    # A list of headers that sends a credential header with a value set here, or with <every> any header with
+    # one: Name: value lines (ANTHROPIC_CUSTOM_HEADERS), Name=value pairs apart by commas (the OTLP exporter),
+    # or a JSON object (OPENAPI_MCP_HEADERS, as an MCP server takes it).
     try:
         headers = json.loads(text)
     except (ValueError, RecursionError):
         headers = None
     pairs = headers.items() if isinstance(headers, dict) else HEADER.findall(text)
-    return any(credential_header(str(name), value) or every and set_here(value) for name, value in pairs)
+    return any(set_here(value) and (every or credential_header(str(name))) for name, value in pairs)
 
 
 def path_key(segment):
@@ -640,8 +586,8 @@ def path_key(segment):
 
 def url_credential(text):
     # A URL in <text> that carries a key set here: in its login (any user name in an http, ws or socks URL, a
-    # user and a password in any other), in a query or fragment parameter whose name a key goes by (key_name, sig
-    # or signature), or, for a URL with a host that does not serve code by its commit (CODE_HOSTS), in a path
+    # user and a password in any other), in a query parameter whose name a key goes by (key_name, sig or
+    # signature), or, for a URL with a host that does not serve code by its commit (CODE_HOSTS), in a path
     # segment that can be one (path_key).
     for match in URL_IN.finditer(text):
         try:
@@ -652,7 +598,7 @@ def url_credential(text):
         login = url.netloc.rpartition("@")[0]
         if set_here(login) and (url.scheme.lower() in TOKEN_USER or login.partition(":")[2]):
             return True
-        for name, eq, value in (part.partition("=") for part in (url.query + "&" + url.fragment).split("&")):
+        for name, eq, value in (part.partition("=") for part in url.query.split("&")):
             name = urllib.parse.unquote_plus(name)
             if eq and set_here(urllib.parse.unquote_plus(value)) and (key_name(name) or name.upper() in QUERY_KEYS):
                 return True
@@ -663,23 +609,21 @@ def url_credential(text):
 
 
 def env_credential(name, value):
-    # An env entry that sets a credential: a value set here for a name that looks like one (env_name; an RPC URL
-    # counts by its URL alone) or that an authentication scheme sends, a URL that carries one, or, for a name
-    # that ends in HEADER or HEADERS, a list of headers that sends one, any header with a value counting for the
-    # OTLP exporter. A client key file the entry names is read on its own (client_keys).
+    # An env entry that sets a credential: a value set here for a name that looks like one (an RPC URL counts by
+    # its URL alone), a URL that carries one, or, for a name that ends in HEADERS, a list of headers that sends
+    # one, any header with a value counting for the OTLP exporter.
     if isinstance(value, bool) or not isinstance(value, (str, int, float)):
         return False
     text, upper = str(value), name.upper()
-    return (set_here(value) and (env_name(name) or auth_value(text)) or url_credential(text)
-            or upper.endswith(("HEADER", "HEADERS")) and header_credential(text, bool(OTLP_HEADERS.fullmatch(upper))))
+    return (set_here(value) and secretish(name, rpc=False) or url_credential(text)
+            or upper.endswith("HEADERS") and header_credential(text, bool(OTLP_HEADERS.fullmatch(upper))))
 
 
 def args_credential(args):
     # Arguments of a command that pass a credential: an option a key goes by (key_name) with a value set here
-    # (--api-key <value>, --key=<value>; a --no- option takes none), NAME=<value> as an env block would set it,
-    # as docker run -e takes it, a header option (-H, --header, --headers) that sends one, as Name: value or as a
-    # name and a value of their own (mcp-proxy --headers Authorization <value>), a value an authentication scheme
-    # sends, or an argument with a URL that carries one.
+    # (--api-key <value>, --key=<value>; a --no- option takes none), NAME=<value> for a name that looks like a
+    # credential, as docker run -e takes it, a header option (-H, --header) that sends one, or an argument with
+    # a URL that carries one.
     words = [w for w in args if isinstance(w, str)]
     for i, word in enumerate(words):
         option = word.startswith("-")
@@ -688,11 +632,8 @@ def args_credential(args):
             value = ""
         elif not eq:
             value = words[i + 1] if option and i + 1 < len(words) and not words[i + 1].startswith("-") else ""
-        header = option and name.lower() in ("h", "header", "headers")
-        if (url_credential(word) or set_here(word) and auth_value(word)
-                or (set_here(value) and key_name(name) if option else eq and env_credential(name, value))
-                or header and (header_credential(value) or not eq and i + 2 < len(words)
-                               and HEADER_NAME.fullmatch(value) and credential_header(value, words[i + 2]))):
+        if (url_credential(word) or set_here(value) and (key_name(name) if option else secretish(name, rpc=False))
+                or option and name.lower() in ("h", "header", "headers") and header_credential(value)):
             return True
     return False
 
@@ -702,31 +643,13 @@ def claude_files(directory, names=CLAUDE_FILES):
     return [p for n in names for p in sorted(glob.glob(os.path.join(at, n)))]
 
 
-def client_keys(env, home, found):
-    # The mTLS client key files an env block names (CLIENT_KEY) with a value set here: at an absolute path, or
-    # under "~/" (<home>), one counts when it is readable, the file counting, as the code here could read it
-    # without Claude Code; True for another path, which the check cannot place, so that the settings file counts.
-    other = False
-    for name, value in env.items():
-        if CLIENT_KEY.fullmatch(name) and set_here(value):
-            where = str(value).strip()
-            if where == "~" or where.startswith("~/"):
-                where = home + where[1:]
-            if where.startswith("/"):
-                readable(found, CLAUDE, [where])
-            else:
-                other = True
-    return other
-
-
 def claude_json(path, home, found, state):
     # A Claude Code settings or state file counts when it names a command that prints a credential (the
     # headersHelper of an MCP server too), when an env block in it (of the file or of an MCP server) sets a
-    # credential (env_credential) or names a client key file by a relative path, when a headers block (of an MCP
-    # server or an HTTP hook) sends a credential header, or when a URL (of an MCP server or a hook) or the
-    # arguments of an MCP server carry one; a readable client key file an env block names counts on its own
-    # (client_keys). Past 16 MiB the check cannot finish; a file that is not JSON counts for nothing, as Claude
-    # Code reads nothing from it.
+    # credential (env_credential), when a headers block (of an MCP server or an HTTP hook) sends an
+    # Authorization, Cookie or key header with a value, or when a URL (of an MCP server or a hook) or the
+    # arguments of an MCP server carry one. Past 16 MiB the check cannot finish; a file that is not JSON counts
+    # for nothing, as Claude Code reads nothing from it.
     data = start(path, CLAUDE_LIMIT + 1) if path else None
     key = os.path.realpath(path) if data is not None else ""
     if not key or key in state["configs"]:
@@ -738,23 +661,19 @@ def claude_json(path, home, found, state):
         stack = [json.loads(data.decode("utf-8", "replace"))]
     except (ValueError, RecursionError):
         return
-    counts = False
     while stack:
         node = stack.pop()
         items = node.items() if isinstance(node, dict) else enumerate(node) if isinstance(node, list) else ()
         for name, value in items:
-            if name == "env" and isinstance(value, dict):
-                counts = client_keys(value, home, found) or counts
-            counts = counts or bool(
-                name in CLAUDE_HELPERS and isinstance(value, str) and value.strip()
-                or name == "env" and isinstance(value, dict) and any(env_credential(k, v) for k, v in value.items())
-                or name == "headers" and isinstance(value, dict)
-                and any(credential_header(k, v) for k, v in value.items())
-                or name == "url" and isinstance(value, str) and url_credential(value)
-                or name == "args" and isinstance(value, list) and args_credential(value))
+            if (name in CLAUDE_HELPERS and isinstance(value, str) and value.strip()
+                    or name == "env" and isinstance(value, dict) and any(env_credential(k, v) for k, v in value.items())
+                    or name == "headers" and isinstance(value, dict)
+                    and any(set_here(v) and credential_header(k) for k, v in value.items())
+                    or name == "url" and isinstance(value, str) and url_credential(value)
+                    or name == "args" and isinstance(value, list) and args_credential(value)):
+                found.append((CLAUDE, path))
+                return
             stack.append(value)
-    if counts:
-        found.append((CLAUDE, path))
 
 
 def runtime(directory, dirs, socks):
@@ -772,7 +691,6 @@ def named(env, files, dirs, socks, configs):
                        (REGISTRY, "NPM_CONFIG_USERCONFIG"), (REGISTRY, "npm_config_userconfig"), (GIT, "GIT_ASKPASS"),
                        (GIT, "SSH_ASKPASS"), (CLAUDE, "ANTHROPIC_IDENTITY_TOKEN_FILE")):
         files.append((kind, env.get(name, "")))
-    files.extend((CLAUDE, env[name]) for name in sorted(env) if CLIENT_KEY.fullmatch(name))
     files.extend((CLUSTER, p) for p in env.get("KUBECONFIG", "").split(os.pathsep))
     for kind, name, under in ((REGISTRY, "CARGO_HOME", ("credentials", "credentials.toml")),
                               (GIT, "XDG_CONFIG_HOME", ("gh/hosts.yml", "git/credentials")), (GIT, "GH_CONFIG_DIR", ("hosts.yml",)),
@@ -894,8 +812,8 @@ def creds(which, given):
 
 
 def names(env):
-    # The variables whose names look like credentials (env_name, an RPC_URL too).
-    print(", ".join(shown(name) for name in sorted(env) if env_name(name, rpc=True)))
+    # The variables whose names look like credentials.
+    print(", ".join(shown(name) for name in sorted(env) if secretish(name)))
     return 0
 
 
