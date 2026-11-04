@@ -621,6 +621,9 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
   LIB_PATH="$T/minpath" lib_bounded "$T/lr-out/heads/main" "$T/lr" 'CONFINE_GIT_TIME=2 hgit "$CONFINE_WT" rev-parse --verify HEAD'
   check "... also on a PATH of env, git, find, wc and cat alone" \
     refused "git has not answered within 2 s in $(shown "$T/lr"), so a file it opens there may be a named pipe or device that it would wait on for good"
+  lib_bounded "$T/lr-out/heads/main" "$T/lr" 'trap "" PIPE; CONFINE_GIT_TIME=2 hgit "$CONFINE_WT" rev-parse --verify HEAD'
+  check "... and with SIGPIPE ignored, as GitHub's runners start their steps, the refusal is the only line on stderr" \
+    refused "git has not answered within 2 s in $(shown "$T/lr"), so a file it opens there may be a named pipe or device that it would wait on for good"
   # The files git reads in the work tree of a repository whose history it shows, which reads take no
   # time limit: .mailmap, and .gitattributes and .gitignore in any directory. A named pipe there, or a
   # link to one, is refused; a link to a regular file passes.

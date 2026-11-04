@@ -402,7 +402,9 @@ confine_git_limit() {
 # named pipe or device the checks above do not see ends in a refusal, not a wait. Built from the shell
 # alone: one side of a pipe starts git in the background, sends its process id, waits for it and sends
 # "done"; the other reads the id, then waits up to the limit for "done" (read -t), and kills git when it
-# does not come. bash's own note of a job ended by a signal is kept off stderr; the status says it.
+# does not come. bash's own note of a job ended by a signal is kept off stderr; the status says it. So is
+# the write of "done" once the limit has passed and the other side has gone: where SIGPIPE is ignored, as
+# GitHub's runners start their steps, that write fails with a message instead of ending this side quietly.
 confine_timed() {
   local t=$1 d=$2
   local -a st
@@ -413,7 +415,7 @@ confine_timed() {
       printf '%s\n' "$!"
       wait "$!" 2>/dev/null
       s=$?
-      printf 'done\n'
+      printf 'done\n' 2>/dev/null
       exit "$s" ) 7<&0 |
       ( read -r p
         if read -r -t "$t" x; then exit 0; fi
