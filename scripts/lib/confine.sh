@@ -693,7 +693,10 @@ confine_repo() {
 # repository", or with "fatal: gitfile does not point to a valid repository", the words git 2.56 and later
 # use where a .git file names none (earlier versions say "not a git repository: <dir>" there). Nothing
 # else counts, and no part of the output alone: a refusal of the checks above or of hgit's time limit
-# exits 64, and git's own messages can quote a name the repository chose.
+# exits 64, and git's own messages can quote a name the repository chose. git 2.54 and later stop at a
+# .git that is neither a regular file nor a directory, or that stat cannot read ("not a regular file:
+# '<dir>/.git'", "error reading '<dir>/.git'"), where earlier versions walked on: git looks no further,
+# but a repository above may still hold the directory in its work tree, so those words do not count.
 confine_no_repo() {
   [ "$1" = 128 ] || return 1
   case "$2" in 'fatal: not a git repository'*|'fatal: gitfile does not point to a valid repository'*) return 0 ;; esac

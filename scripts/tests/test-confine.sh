@@ -471,13 +471,17 @@ check "outside every repository nothing is tracked" out_is '[0]'
 # Outside every repository only on git's own answer (confine_no_repo): exit 128, its "fatal: not a git
 # repository" first, or git 2.56's "fatal: gitfile does not point to a valid repository" for a .git file
 # that names none. The same words further on, as when another user owns a repository named so, or with
-# another status, leave confine_tracked unable to tell (2). Each git here prints its line and exits.
-for c in own:128 gitfile:128 quoted:128 status:1; do
+# another status, leave confine_tracked unable to tell (2), and so do the words git 2.54 and later stop
+# with at a .git that is neither a regular file nor a directory, or that stat cannot read: git looks no
+# further, but a repository above may track the path. Each git here prints its line and exits.
+for c in own:128 gitfile:128 quoted:128 status:1 notfile:128 unread:128; do
   n=${c%%:*}
   mkdir -p "$T/fg-$n"
   case "$n" in
     quoted) printf "fatal: detected dubious ownership in repository at '%s/not a git repository'\n" "$T" ;;
     gitfile) printf 'fatal: gitfile does not point to a valid repository: %s/norepo/.git\n' "$T" ;;
+    notfile) printf "fatal: not a regular file: '%s/norepo/d/.git'\n" "$T" ;;
+    unread) printf "fatal: error reading '%s/norepo/d/.git'\n" "$T" ;;
     *) printf 'fatal: not a git repository (or any of the parent directories): .git\n' ;;
   esac > "$T/fg-$n/msg"
   printf '#!/bin/sh\ncat "%s/fg-%s/msg" >&2\nexit %s\n' "$T" "$n" "${c#*:}" > "$T/fg-$n/git"
@@ -491,6 +495,10 @@ LIB_PATH="$T/fg-quoted:$PATH" lib "$T/norepo/d" 'confine_tracked x; printf "[%s]
 check "... but those words inside another message of git's for not telling (2)" out_is '[2]'
 LIB_PATH="$T/fg-status:$PATH" lib "$T/norepo/d" 'confine_tracked x; printf "[%s]" "$?"'
 check "... and git's own words with another exit status for not telling (2)" out_is '[2]'
+LIB_PATH="$T/fg-notfile:$PATH" lib "$T/norepo/d" 'confine_tracked x; printf "[%s]" "$?"'
+check "... and git 2.54's stop at a .git that is no regular file or directory for not telling (2)" out_is '[2]'
+LIB_PATH="$T/fg-unread:$PATH" lib "$T/norepo/d" 'confine_tracked x; printf "[%s]" "$?"'
+check "... and its stop at a .git that stat cannot read for not telling (2)" out_is '[2]'
 # On Linux an LD_PRELOAD that names no library makes the loader print a line on stderr in each program
 # started with it, ahead of anything that program writes. env, which sets git's environment, starts with
 # an empty one (exec -c), so git's answer still comes first. The env here prints that line, as glibc's

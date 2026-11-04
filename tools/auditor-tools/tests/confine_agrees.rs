@@ -574,15 +574,21 @@ fn confine_rs_takes_only_git_s_own_answer_for_no_repository_as_confine_sh_does()
     // repository" for a .git file naming none, with exit 128, means no repository
     // and so nothing tracked; those words inside another of its messages (another
     // user owns a repository named so), or with another status, leave both sides
-    // unable to tell, and audit-mem refuses its in-tree store.
+    // unable to tell, and audit-mem refuses its in-tree store; so do the words git
+    // 2.54 and later stop with at a .git that is neither a regular file nor a
+    // directory, or that stat cannot read, since a repository above may track it.
     let own = "fatal: not a git repository (or any of the parent directories): .git";
     let gitfile = "fatal: gitfile does not point to a valid repository: /x/.git";
     let quoted = "fatal: detected dubious ownership in repository at '/x/not a git repository'";
+    let notfile = "fatal: not a regular file: '/x/.git'";
+    let unread = "fatal: error reading '/x/.git'";
     for (case, message, status, no_repo) in [
         ("own", own, 128, true),
         ("gitfile", gitfile, 128, true),
         ("quoted", quoted, 128, false),
         ("status", own, 1, false),
+        ("notfile", notfile, 128, false),
+        ("unread", unread, 128, false),
     ] {
         let wt = Wt::new();
         let fake = wt.outside().join("fake");

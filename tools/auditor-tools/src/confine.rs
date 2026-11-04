@@ -563,7 +563,11 @@ pub const GIT_TIME: Duration = Duration::from_secs(10);
 /// "fatal: not a git repository", or with "fatal: gitfile does not point to a valid
 /// repository", the words git 2.56 and later use where a `.git` file names none
 /// (earlier versions say "not a git repository: <dir>" there). No part of other
-/// text counts: git's messages can quote a name the repository chose.
+/// text counts: git's messages can quote a name the repository chose. Nor do the
+/// words git 2.54 and later stop with at a `.git` that is neither a regular file
+/// nor a directory, or that stat cannot read ("not a regular file", "error
+/// reading"): git looks no further, but a repository above may still hold the
+/// directory in its work tree.
 fn no_repository(code: Option<i32>, stderr: &[u8]) -> bool {
     const WORDS: [&[u8]; 2] = [
         b"fatal: not a git repository",
@@ -1798,6 +1802,8 @@ mod tests {
             (Some(128), "fatal: not a git repository: /x/nowhere", true),
             (Some(128), gitfile, true),
             (Some(128), quoted, false),
+            (Some(128), "fatal: not a regular file: '/x/.git'", false),
+            (Some(128), "fatal: error reading '/x/.git'", false),
             (Some(1), own, false),
             (Some(1), gitfile, false),
             (None, gitfile, false),
