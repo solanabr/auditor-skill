@@ -940,19 +940,29 @@ PM=$(getconf PATH_MAX / 2>/dev/null)
 case "$PM" in ''|*[!0-9]*) PM=1024 ;; esac
 long() { printf '%*s' "$1" '' | tr ' ' "$2"; }
 # deep_wt <length>: prints a new directory below $T whose physical path is <length> bytes, holding a cargo
-# package and audit_1 (exec-mode native).
+# package and audit_1 (exec-mode native). Its components of 200 bytes stop while 2 to 202 bytes are left, so
+# the last one, of 1 to 201 bytes, makes up the rest whatever the length of $T; it fails when $T leaves less.
 deep_wt() {
   local cur c
   mkdir "$T/deep-$1" && cd "$T/deep-$1" || return 1
   cur=$(pwd -P)
-  while [ $(( ${#cur} + 201 )) -lt "$1" ]; do
+  while [ $(( ${#cur} + 202 )) -lt "$1" ]; do
     c=d$(long 199 0); mkdir "$c" && cd "$c" || return 1; cur=$(pwd -P)
   done
+  [ $(( $1 - ${#cur} )) -ge 2 ] || return 1
   c=e$(long $(( $1 - ${#cur} - 2 )) 0); mkdir "$c" && cd "$c" || return 1
   printf '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n' > Cargo.toml
   mkdir src audit_1 && printf '// v1\n' > src/lib.rs && printf '*\n' > audit_1/.gitignore && printf 'native\n' > audit_1/exec-mode
   pwd -P
 }
+# 202 lengths in a row give the last component each of the sizes a length of $T can leave it.
+dlen=$(( ${#T} + 220 )) dbad=
+while [ "$dlen" -lt $(( ${#T} + 422 )) ]; do
+  DW=$(deep_wt "$dlen") && [ "${#DW}" = "$dlen" ] || dbad="$dlen bytes asked, ${#DW} made"
+  rm -rf "$T/deep-$dlen"; [ -z "$dbad" ] || break; dlen=$((dlen + 1))
+done
+if [ -z "$dbad" ]; then ok "deep_wt makes a working directory of each of 202 lengths in a row"
+else ko "deep_wt makes a working directory of each of 202 lengths in a row: $dbad below $T"; fi
 SCJ='{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}]}'
 if DW=$(deep_wt $((PM - 22))) && [ "${#DW}" = $((PM - 22)) ]; then
   ( cd "$DW" && mkdir incident_1 && printf '*\n' > incident_1/.gitignore && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
