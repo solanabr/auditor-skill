@@ -31,9 +31,10 @@ grep -rnE --include='*.yml' --include='*.yaml' '^(["'\'']?ref["'\'']?[ 	]*:[ 	]*
 
 **Step 3: Check for secret exposure in logs**
 ```
-grep -rnE --include='*.yml' --include='*.yaml' '^.*echo.*(\$\{\{.*secrets[ 	]*(\.|\[|\))|\$\{?[ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*(SECRET|TOKEN|KEY))' .github/
+grep -rnE --include='*.yml' --include='*.yaml' '^.*(echo|printf|tee).*(\$\{\{.*(secrets[ 	]*(\.|\[|\))|env\.[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_]*([Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]))|\$\{?[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_]*([Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]))' .github/
 ```
-- It lists each `echo` line that reads `secrets` inside a `${{ }}` expression (a field, an index, or the whole context, as `toJSON(secrets)` does), or that names a variable whose name holds `SECRET`, `TOKEN` or `KEY` (`$NPM_TOKEN`, `${NPM_TOKEN}`). A hit is a line to read: the expression may have closed before `secrets` (`echo "${{ github.sha }}" > secrets.txt`).
+- It lists each `echo`, `printf` or `tee` line that reads `secrets` inside a `${{ }}` expression (a field, an index, or the whole context, as `toJSON(secrets)` does), that reads an `env.` value there whose name holds `SECRET`, `TOKEN` or `KEY`, or that names a variable whose name holds one of them, in any letter case (`$NPM_TOKEN`, `${npm_token}`, `${{ env.NPM_TOKEN }}`). A hit is a line to read: the expression may have closed before `secrets` (`echo "${{ github.sha }}" > secrets.txt`), and a name such as `$cache_key` holds `KEY` too.
+- It does not read the lines of a heredoc, a command whose output holds a secret (`cat .npmrc`, `env`, `printenv`), what `set -x` traces, or a secret kept under a name that holds none of those words: read each `run:` block of a job that maps a secret into its `env:` or reads one in an expression.
 - ✅ PASS: Secrets never echoed in CI logs
 - ❌ FAIL: Secrets printed to CI output (visible in logs)
 

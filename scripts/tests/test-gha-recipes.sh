@@ -391,19 +391,23 @@ else
     "listed [$got6], want [base.yml:1 ]"
   fail=1
 fi
-# KV-080 Step 3 lists an echo line that reads secrets in an expression, as a field, an index or the whole context,
-# whatever the expression holds before it (a } of its own included), and one that names a variable whose name holds
-# SECRET, TOKEN or KEY, braced or not and digits included; not an echo of another context or variable.
+# KV-080 Step 3 lists an echo, printf or tee line that reads secrets in an expression, as a field, an index or the
+# whole context, whatever the expression holds before it (a } of its own included), one that reads an env. value whose
+# name holds SECRET, TOKEN or KEY, and one that names a variable whose name holds one of them, in any letter case,
+# braced or not and digits included; not one of another context or variable.
 k3="$work/k080-3"; mkdir -p "$k3/.github/workflows"
 printf '%s\n' 'on: push' 'jobs:' '  a:' '    runs-on: ubuntu-latest' '    steps:' \
   '      - run: echo "${{ secrets.NPM_TOKEN }}"' "      - run: echo \"\${{ format('{0}', secrets.DEPLOY_KEY) }}\"" \
   "      - run: echo '\${{ toJSON(secrets) }}'" "      - run: echo \"\${{ secrets['NPM_TOKEN'] }}\"" \
   '      - run: echo $DEPLOY_KEY' '      - run: echo "${API_TOKEN}"' '      - run: echo "$AWS_S3_SECRET"' \
-  '      - run: echo "${{ github.sha }}" "$HOME"' > "$k3/.github/workflows/echo.yml"
+  '      - run: echo "${{ github.sha }}" "$HOME"' "      - run: printf '%s\\n' \"\${{ secrets.NPM_TOKEN }}\"" \
+  "      - run: printf '%s' \"\$npm_token\"" '      - run: echo "${{ env.API_TOKEN }}"' \
+  '      - run: tee out.txt <<< "${Signing_Secret}"' "      - run: printf '%s\\n' \"\${{ env.REGION }}\" \"\$HOME\"" \
+  > "$k3/.github/workflows/echo.yml"
 nlines=$((nlines + 1))
 got=$(run_recipe "$k3" "$(recipe_lines K080-3)" | awk -F: '{ print $2 }' | sort -n | tr '\n' ' ' | sed 's/ $//')
-if [ "$got" = "6 7 8 9 10 11 12" ]; then echo "ok   K080-3 in its echo lines: lines $got"
-else echo "FAIL K080-3 in its echo lines: got lines [$got] want [6 7 8 9 10 11 12]"; fail=1; fi
+if [ "$got" = "6 7 8 9 10 11 12 14 15 16 17" ]; then echo "ok   K080-3 in its echo, printf and tee lines: lines $got"
+else echo "FAIL K080-3 in its echo, printf and tee lines: got lines [$got] want [6 7 8 9 10 11 12 14 15 16 17]"; fail=1; fi
 # KV-080 Step 6 lists each uses: in a workflow or a composite action that names neither actions/ nor github/ nor a
 # local action: an owner whose name starts with actions, a path below another owner's actions/, a docker:// image, a
 # reusable workflow, and a reference whose trailing comment names an official action. A uses: after another key of a
@@ -959,6 +963,7 @@ if [ "$nhead" -eq 0 ]; then echo "FAIL no command of KV-080 or KV-140 pipes into
 # The ref: line repeats the expression under a quoted key too, with a quoted cache key that holds no name.
 # A local uses: is followed by the same megabyte, and KV-080 Step 4's first command and Step 6 list it too.
 # A hosted runs-on label is followed by a megabyte of blanks and a comment, which KV-080 Step 8 leaves out.
+# The echo line repeats a printf of an env. value and of a variable that name no secret.
 utf8=$(locale -a 2>/dev/null | grep -iE '^(C|en_US)[.]utf-?8$' | sed -n 1p)
 long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
@@ -984,7 +989,7 @@ long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
   awk 'BEGIN { for (i = 0; i < 1050000; i++) printf " " }'
   printf 'issues xy\n'; } > "$long/.github/workflows/long-trigger.yml"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
-  awk 'BEGIN { for (i = 0; i < 36000; i++) printf "echo ${{ x }} secrets $a KEY " }'
+  awk 'BEGIN { for (i = 0; i < 19000; i++) printf "echo ${{ x }} secrets $a KEY printf ${{ env.x }} $a key " }'
   printf '"\n'; } > "$long/.github/workflows/long-echo.yml"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4'
   awk 'BEGIN { for (i = 0; i < 262500; i++) printf " }, " }'
