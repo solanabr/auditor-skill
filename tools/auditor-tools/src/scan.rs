@@ -1718,8 +1718,8 @@ struct FileVisitor<'t> {
     /// a chain's are found once for all its links.
     firsts: HashMap<usize, Span>,
     lasts: HashMap<usize, Span>,
-    /// The path each call calls, by its address: the call's, which
-    /// `visit_expr_call` lists, not a value `visit_expr_path` lists.
+    /// The path each call calls, by its address, until the visit reaches it: the
+    /// call's, which `visit_expr_call` lists, not a value `visit_expr_path` lists.
     callees: HashSet<usize>,
     /// The items listed so far, the bytes the answer would take with them, and,
     /// once more are left out, why (`room`).
@@ -2206,7 +2206,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
         // another name (`cpi(…)`) is not listed.
         let called = self
             .callees
-            .contains(&(node as *const syn::ExprPath as usize));
+            .remove(&(node as *const syn::ExprPath as usize));
         if let Some(seg) = node.path.segments.last().filter(|_| !called) {
             let name = ident_name(&seg.ident);
             if is_cpi_name(&name) {
