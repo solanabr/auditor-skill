@@ -588,11 +588,12 @@ impl Scan<'_> {
     /// such as a link, may lead anywhere, and one out of a directory it did not
     /// find leads nowhere.
     fn placed(&self, base: &Path, p: &Place) -> Placed {
-        if let Some((d, shown)) = p.left.iter().find(|(d, _)| !self.walked(base, d)) {
-            return if self.unknown(base, d) {
-                Placed::Unparsed(leaves(shown, true))
+        if let Err(d) = lexical_until(&p.written, |d| !self.walked(base, d)) {
+            let shown = shown_at(&self.root, base, &d);
+            return if self.unknown(base, &d) {
+                Placed::Unparsed(leaves(&shown, true))
             } else {
-                Placed::Absent(leaves(shown, false))
+                Placed::Absent(leaves(&shown, false))
             };
         }
         match p.kind {
@@ -773,12 +774,14 @@ struct Reachable {
 }
 
 /// A place rustc may find a brought-in file in: `at` as `lexical` gives it,
-/// shown as `file`, each directory a `..` on its way leaves, as `lexical` gives it
-/// and as it is shown (`left`), and what `at` is to the walk.
+/// shown as `file`, the path as written (`written`, read again once the walk is
+/// done for the directories its `..`s leave), the longest any of those may show,
+/// when a `..` leaves one (`climbs`), and what `at` is to the walk.
 struct Place {
     at: PathBuf,
     file: String,
-    left: Vec<(PathBuf, String)>,
+    written: PathBuf,
+    climbs: Option<String>,
     kind: PlaceKind,
 }
 
@@ -845,9 +848,9 @@ impl Brought {
                 let most = whys
                     .into_iter()
                     .chain(
-                        p.left
+                        p.climbs
                             .iter()
-                            .flat_map(|(_, shown)| [leaves(shown, true), leaves(shown, false)]),
+                            .flat_map(|dir| [leaves(dir, true), leaves(dir, false)]),
                     )
                     .map(|why| printed(&r.entry(p, &why)))
                     .max()
@@ -867,7 +870,7 @@ impl Brought {
 /// `mod.rs`, a crate's root of any name and a file a `#[path]` brings in. The walk
 /// cannot tell the last two, so for a file not named `mod.rs` it tries both
 /// places: first a crate root's for a `lib.rs` or `main.rs`, and a module file's
-/// for any other. `.` and `..` are taken as written (`lexical_left`), no link is
+/// for any other. `.` and `..` are taken as written (`lexical_until`), no link is
 /// followed, and nothing is opened.
 fn unparsed(root: &Path, path: &Path, b: &BroughtIn) -> Brought {
     let by = format!(
@@ -910,7 +913,12 @@ fn unparsed(root: &Path, path: &Path, b: &BroughtIn) -> Brought {
 
 /// The place `written` names, for the root `root` (`base` as `lexical` gives it).
 fn place_of(root: &Path, base: &Path, written: &Path) -> Place {
-    let (at, left) = lexical_left(written);
+    let mut climbs = None;
+    let (Ok(at) | Err(at)) = lexical_until(written, |_| {
+        // A directory a `..` leaves shows as part of `root` and `written` at most.
+        climbs.get_or_insert_with(|| format!("{}/{}", root.display(), written.display()));
+        false
+    });
     let kind = if !at
         .file_name()
         .is_some_and(|n| n.as_bytes().ends_with(b".rs"))
@@ -921,17 +929,11 @@ fn place_of(root: &Path, base: &Path, written: &Path) -> Place {
     } else {
         PlaceKind::Rs
     };
-    let left = left
-        .into_iter()
-        .map(|d| {
-            let shown = shown_at(root, base, &d);
-            (d, shown)
-        })
-        .collect();
     Place {
         file: shown_at(root, base, &at),
         at,
-        left,
+        written: written.to_path_buf(),
+        climbs,
         kind,
     }
 }
@@ -952,31 +954,33 @@ fn shown_at(root: &Path, base: &Path, at: &Path) -> String {
     .to_string()
 }
 
-/// `path` with each `.` left out and each `..` taking off the name before it,
-/// while there is one, and each directory such a `..` leaves, as it is then; a
-/// `..` past the start is kept.
-fn lexical_left(path: &Path) -> (PathBuf, Vec<PathBuf>) {
+/// `path` as `lexical` gives it, `Ok`; or, at the first directory a `..` in it
+/// leaves for which `stop` is true, that directory as it is then, `Err`. Each is
+/// handed to `stop` in turn and none is kept.
+fn lexical_until(path: &Path, mut stop: impl FnMut(&Path) -> bool) -> Result<PathBuf, PathBuf> {
     let mut out = PathBuf::new();
-    let mut left = Vec::new();
     for part in path.components() {
         match part {
             Component::CurDir => {}
             Component::ParentDir
                 if matches!(out.components().next_back(), Some(Component::Normal(_))) =>
             {
-                left.push(out.clone());
+                if stop(&out) {
+                    return Err(out);
+                }
                 out.pop();
             }
             other => out.push(other.as_os_str()),
         }
     }
-    (out, left)
+    Ok(out)
 }
 
 /// `path` with each `.` left out and each `..` taking off the name before it,
 /// while there is one; a `..` past the start is kept.
 fn lexical(path: &Path) -> PathBuf {
-    lexical_left(path).0
+    let (Ok(out) | Err(out)) = lexical_until(path, |_| false);
+    out
 }
 
 /// `path` as `lexical` gives it, each ASCII letter in lower case: the walk keeps
