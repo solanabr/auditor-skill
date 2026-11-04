@@ -334,10 +334,10 @@ Code asks about a shell read outside the working directory.
    (the class step 5 found in place of `unknown`); step 7 writes the file in full,
    keeping those ids. And natively neither `run.sh --crate` nor `target.sh` builds
    anything, whatever run directory it is given, an audit's included, while the
-   `INCIDENTS.json` of any `incident_*` directory in the working directory records
-   a `supply_chain_or_ci` incident or cannot be read (Rule 11a). Hand `poc-engineer`
-   the PoC build cache from the ledger header, if any, and pass one it creates to
-   the agent for that header.
+   `INCIDENTS.json` of any `incident_*` directory in the working directory (its
+   name in any letter case) records a `supply_chain_or_ci` incident or cannot be
+   read (Rule 11a). Hand `poc-engineer` the PoC build cache from the ledger header,
+   if any, and pass one it creates to the agent for that header.
    Before the Leg 3 line counts, check the crate's harness copy and its
    `non-registry code:` line as `/auditor:poc` step 6 does.
 
