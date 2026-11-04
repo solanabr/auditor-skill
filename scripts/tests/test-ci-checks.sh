@@ -24,7 +24,8 @@
 #      alias as a key or a merge key (<<); no run: script holds a ${{ }} expression; every job has
 #      timeout-minutes, every action is pinned by full SHA with its version, no checkout keeps credentials, and
 #      every cargo test runs with --no-fail-fast; every step of the advisory macOS job runs under the stock PATH:
-#      each run: script exports it plus ~/.cargo/bin first, and each action but checkout gets it in its env;
+#      each run: script exports it plus ~/.cargo/bin first, and each action but checkout gets it in its env; and
+#      one step of that job runs tools/auditor-tools' unit tests;
 #   5. scripts/check-hygiene.sh fails on each kind of file it names, and on a top-level directory named
 #      commands, agents, skills, hooks, bin, monitors or .claude-plugin in another letter case, also when it
 #      is the last of 3,000 tracked paths; on each load surface at the plugin root, and on a SKILL.md other
@@ -1083,6 +1084,31 @@ case "$probs" in *"step checkout:"*|*"step stock run:"*|*"step stock path:"*|*"s
 case "$(macpath "$T/bad-workflow.yml")" in *": no corpus-macos job"*)
     pass=$((pass + 1)); echo "PASS workflows: the macOS PATH check fails a workflow without the macOS job";;
   *) failn=$((failn + 1)); echo "FAIL workflows: the macOS PATH check passes a workflow without the macOS job";; esac
+# The macOS job runs tools/auditor-tools' unit tests: their cases for a path macOS spells through
+# /System/Volumes/Data or in other letters (audit-logs' stays_inside, audit-mem's working directory) pass on ubuntu
+# without testing anything.
+macrust() { # macrust FILE -> yes when a step of its corpus-macos job runs cargo test in tools/auditor-tools, else no
+  LC_ALL=C awk '
+    { line = $0; match(line, /^ */); ind = RLENGTH; text = (line !~ /^[ \t]*(#.*)?$/); t = line; sub(/^[ \t]*#.*/, "", t) }
+    text && ind <= 2 { job = (line ~ /^  corpus-macos:[ \t]*$/); next }
+    !job { next }
+    line ~ /^      - / { wd = 0; ct = 0 }
+    t ~ /^      [- ] working-directory:[ \t]*tools\/auditor-tools[ \t]*$/ { wd = 1 }
+    t ~ /(^|[ \t;&|(])cargo[ \t]+test([ \t]|$)/ { ct = 1 }
+    wd && ct { found = 1 }
+    END { print (found ? "yes" : "no") }' "$1"
+}
+if [ "$(macrust "$ROOT/.github/workflows/corpus-check.yml")" = yes ]; then pass=$((pass + 1))
+  echo "PASS workflows: the macOS job runs tools/auditor-tools' unit tests"
+else failn=$((failn + 1)); echo "FAIL workflows: no step of the macOS job runs cargo test in tools/auditor-tools"; fi
+{ printf 'jobs:\n  corpus-macos:\n    steps:\n      - name: tests\n        run: cargo test --no-fail-fast\n'
+  printf '      - name: elsewhere\n        working-directory: tools/auditor-tools\n        run: cargo build\n'
+  printf '  auditor-tools:\n    steps:\n      - working-directory: tools/auditor-tools\n'
+  printf '        run: cargo test --release --locked --no-fail-fast\n'
+} > "$T/macos-rust.yml" || { failn=$((failn + 1)); echo "FAIL workflows: could not build the macOS Rust fixture"; }
+if [ "$(macrust "$T/macos-rust.yml")" = no ]; then pass=$((pass + 1))
+  echo "PASS workflows: the macOS Rust check fails cargo test in another directory, another step or another job"
+else failn=$((failn + 1)); echo "FAIL workflows: the macOS Rust check passes cargo test outside tools/auditor-tools or the macOS job"; fi
 
 # ---- 5. check-hygiene.sh ------------------------------------------------------------------------------
 HYG="$ROOT/scripts/check-hygiene.sh"

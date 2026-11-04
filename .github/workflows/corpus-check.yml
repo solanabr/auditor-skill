@@ -85,11 +85,13 @@ jobs:
 
   corpus-macos:
     # Advisory: do not add this job to the required checks. It runs the same checks, except the pull-request
-    # attribution check, under macOS /bin/bash 3.2 with BSD sed, grep and awk. Every step after checkout runs under
-    # a stock macOS PATH, its scripts with ~/.cargo/bin added, which the stock-toolchain step asserts, so no tool
-    # from the runner image's Homebrew stands in for the system one. When ~/.cargo/bin lacks cargo or rustup, as
-    # on an image that ships Homebrew's rustup, the two steps before that one install both there with rustup.
-    # The suites run about twice as long on macOS as on ubuntu, hence its longer timeout.
+    # attribution check, under macOS /bin/bash 3.2 with BSD sed, grep and awk, and last the unit tests of
+    # tools/auditor-tools, whose cases for a path macOS spells through /System/Volumes/Data or in other letters
+    # test nothing on ubuntu. Every step after checkout runs under a stock macOS PATH, its scripts with
+    # ~/.cargo/bin added, which the stock-toolchain step asserts, so no tool from the runner image's Homebrew
+    # stands in for the system one. When ~/.cargo/bin lacks cargo or rustup, as on an image that ships Homebrew's
+    # rustup, the two steps before that one install both there with rustup. The suites run about twice as long
+    # on macOS as on ubuntu, hence its longer timeout.
     name: macOS, bash 3.2 and BSD tools (advisory)
     runs-on: macos-26
     timeout-minutes: 60
@@ -187,6 +189,15 @@ jobs:
         run: |
           export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"
           bash scripts/check-hygiene.sh
+
+      - name: tools/auditor-tools unit tests, whose macOS cases no other job runs (every test binary runs)
+        if: ${{ !cancelled() }}
+        working-directory: tools/auditor-tools
+        env:
+          RUSTFLAGS: -D warnings
+        run: |
+          export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"
+          cargo test --release --locked --no-fail-fast
 
   auditor-tools:
     # Builds the Rust tools as a user does (release, --locked) with warnings denied, runs
