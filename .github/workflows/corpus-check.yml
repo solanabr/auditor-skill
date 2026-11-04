@@ -89,9 +89,10 @@ jobs:
     # a stock macOS PATH, its scripts with ~/.cargo/bin added, which the stock-toolchain step asserts, so no tool
     # from the runner image's Homebrew stands in for the system one. When ~/.cargo/bin lacks cargo or rustup, as
     # on an image that ships Homebrew's rustup, the two steps before that one install both there with rustup.
+    # The suites run about twice as long on macOS as on ubuntu, hence its longer timeout.
     name: macOS, bash 3.2 and BSD tools (advisory)
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 60
     concurrency:   # a newer push to the same ref cancels this job's older run
       group: corpus-macos-${{ github.ref }}
       cancel-in-progress: true
