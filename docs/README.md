@@ -52,4 +52,4 @@ As a CI gate, `/auditor:quick-scan` runs non-interactively, so the run must be a
 - [`OUTPUT-RULES.md`](../OUTPUT-RULES.md) — the mandatory output format, severity scale and operating-safety rules (Rule 11).
 - [`AGENTS.md`](../AGENTS.md) — agent orchestration overview.
 - [`COSTS.md`](../COSTS.md) — token/dollar estimates by model and repo size.
-- [`QUESTIONS.md`](../QUESTIONS.md) — the 46-question pre-audit questionnaire.
+- [`QUESTIONS.md`](../QUESTIONS.md) — the 47-question pre-audit questionnaire.

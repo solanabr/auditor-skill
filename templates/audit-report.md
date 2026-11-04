@@ -380,7 +380,7 @@ scopes the assurance the client should take away. Cover:
 - **Blockers** — {Anything that constrained coverage: code delivered late,
   portions unbuildable, closed-source components, or the engagement time box.}
 - **Execution mode** — {isolated: <container / VM / sandbox> | native: target-controlled code (builds, tests, PoCs) ran on the auditor's machine — steps: …} (OUTPUT-RULES Rule 11a).
-- **Outside services** — {one line per tool → service → what was sent | none} (OUTPUT-RULES Rule 11b).
+- **Outside services** — {one line per tool → service → what was sent, and per live probe of DEP-072 / DEP-073 (QUESTIONS.md Q47) → host or bucket → the request | none} (OUTPUT-RULES Rule 11b).
 
 ---
 
