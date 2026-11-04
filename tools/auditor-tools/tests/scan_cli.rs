@@ -1143,3 +1143,33 @@ fn waits_once_for_a_git_that_does_not_answer() {
     );
     assert!(took >= GIT_TIME && took < GIT_TIME * 2, "took {took:?}");
 }
+
+#[test]
+fn scans_the_run_directories_at_once_when_head_is_a_named_pipe() {
+    use auditor_tools::confine::GIT_TIME;
+    let wt = Wt::repo();
+    for name in ["audit_1", "audit_2", "audit_3"] {
+        wt.run_dir(name);
+        wt.write(&format!("{name}/poc/lib.rs"), b"fn poc() {}\n");
+    }
+    // A named pipe as HEAD, which git would wait on for good when it opens it:
+    // no git is started, so nothing waits, and each run directory is scanned.
+    fs::remove_file(wt.path(".git/HEAD")).expect("remove HEAD");
+    let status = Command::new("mkfifo")
+        .arg(wt.path(".git/HEAD"))
+        .status()
+        .expect("mkfifo");
+    assert!(status.success());
+    let started = std::time::Instant::now();
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    let took = started.elapsed();
+    assert_eq!(
+        files(&report, "functions"),
+        vec![
+            "./audit_1/poc/lib.rs",
+            "./audit_2/poc/lib.rs",
+            "./audit_3/poc/lib.rs",
+        ]
+    );
+    assert!(took < GIT_TIME / 2, "took {took:?}");
+}
