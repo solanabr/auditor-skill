@@ -34,6 +34,8 @@
 # 64 KiB of names. Known limits' git listing for the commands that search the whole tree runs over a repository
 # that tracks files Claude Code's grep skips, and its count of YAML lines outside printable ASCII over files that
 # hold a lone CR or U+2028.
+# KV-140 Step 6 is checked line by line on its own fixture too, and it and R7 also run over a workflow written as
+# JSON.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
 # Needs bash >= 3.2, grep, awk, git. No network. The fixtures are copied into a temp dir as .github/workflows/, those
@@ -174,13 +176,13 @@ expected() {
     R3) echo "03 12 13 17 25 26 27 28 46 47 48 49 74 104" ;;
     R4) echo "05 06 21 29 30 41" ;;
     R5) echo "06 07 15" ;;
-    R6) echo "05 07 08 14 15 16 20 31 32 50 75 105" ;;
-    R7) echo "05 07 11 12 15 18 19 20 21 22 23 24 51 52 53 61 62 63 70 71 102 103 105" ;;
+    R6) echo "05 07 08 14 15 16 20 31 32 50 75 105 111" ;;
+    R7) echo "05 07 11 12 15 18 19 20 21 22 23 24 51 52 53 61 62 63 70 71 102 103 105 111" ;;
     R8) echo "01 08 11 14 33 34 54 57 67 68 72 73 108" ;;
     R9) echo "01 05 07 08 11 12 15 18 19 20 21 22 23 24 35 36 38 39 42 43 44 45 51 52 53 60 61 62 63 70 71 76 98 107" ;;
     K116-1) echo "01 08 11 14 33 34 54 57 67 68 72 73 108" ;;
     K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56 58 59 62 64 65 66 69 71 74 104 108" ;;
-    K140-6) echo "35 36 37 38 39 42 43 44 45" ;;
+    K140-6) echo "35 36 37 38 39 42 43 44 45 112" ;;
     K140-7a) echo "80 81 82 83 84 85 93 95 96 97 101" ;;
     K140-7b) echo "80 82 83 84 85 93 95 96 97 101" ;;
     K080-3) echo "" ;;   # no fixture echoes a secret; the tree of its own below does
@@ -196,6 +198,7 @@ LINES="R3 104-denylist-spellings.yml 11 16 21 26 31 36 41
 R7 102-input-and-matrix-ref.yml 19 29
 R7 actions/103-input-ref-composite-action.yml 13
 R7 105-index-syntax-refs.yml 20 30 37 38
+R7 111-prt-quoted-ref-keys.yml 14 21 28 29 35
 R8 108-agent-option-backslash.yml 14
 R9 76-pin-forms.yml 11 12 13 14 16 17 19
 R9 98-pin-and-runner-yaml-extension.yaml 11
@@ -208,6 +211,7 @@ K080-8a 98-pin-and-runner-yaml-extension.yaml 9
 K080-8a 100-arc-runner-labels.yml 9 13 17 21 25 29 33
 K080-8a 106-runner-key-spellings.yml 10 14 18 22
 K080-8a 109-retired-runner-label.yml 9 13 17
+K140-6 112-quoted-cache-key.yml 15 17 21 23
 K080-8b infra/86-runner-group-public.tf 2 5
 K080-8b infra/87-arc-runner-deployment.yaml 11
 K080-8b infra/88-arc-scale-set-values.yml 4
@@ -362,6 +366,26 @@ if [ "$got" = "4 6 8 10 12" ]; then
 else
   echo "FAIL R3 in a string deny-list holding a backslash or a letter outside ASCII, or in contains in capitals: got" \
     "lines [$got] want [4 6 8 10 12]"
+  fail=1
+fi
+# R7 and KV-140 Step 6 read a ref, repository or cache key quoted or not, so they list the checkouts and the cache
+# input of a workflow written as JSON, one line each; a checkout of the base commit stays out (a tree of its own, so
+# the fixtures' expected lists stay as they are).
+js="$work/json"; mkdir -p "$js/.github/workflows"
+printf '%s\n' '{"on": "pull_request_target", "jobs": {"a": {"runs-on": "ubuntu-latest", "steps": [{"uses": "actions/checkout@v4", "with": {"ref": "${{ github.event.pull_request.head.sha }}"}}, {"run": "make"}]}}}' \
+  > "$js/.github/workflows/head.yml"
+printf '%s\n' '{"on": "pull_request_target", "jobs": {"a": {"runs-on": "ubuntu-latest", "steps": [{"uses": "actions/checkout@v4", "with": {"repository": "${{ github.event.pull_request.head.repo.full_name }}"}}]}}}' \
+  > "$js/.github/workflows/fork.yml"
+printf '%s\n' '{"on": "pull_request_target", "jobs": {"a": {"runs-on": "ubuntu-latest", "steps": [{"uses": "actions/checkout@v4", "with": {"ref": "${{ github.sha }}"}}, {"uses": "actions/setup-node@v4", "with": {"cache": "npm"}}]}}}' \
+  > "$js/.github/workflows/base.yml"
+nlines=$((nlines + 1))
+got7=$(run_recipe "$js" "$(recipe_lines R7)" | sed 's#^\.github/workflows/##' | awk -F: '{ print $1 ":" $2 }' | LC_ALL=C sort | tr '\n' ' ')
+got6=$(run_recipe "$js" "$(recipe_lines K140-6)" | sed 's#^\.github/workflows/##' | awk -F: '{ print $1 ":" $2 }' | LC_ALL=C sort | tr '\n' ' ')
+if [ "$got7" = "fork.yml:1 head.yml:1 " ] && [ "$got6" = "base.yml:1 " ]; then
+  echo "ok   R7 and K140-6 in a workflow written as JSON: R7 lists ${got7}and K140-6 $got6"
+else
+  echo "FAIL R7 and K140-6 in a workflow written as JSON: R7 listed [$got7], want [fork.yml:1 head.yml:1 ]; K140-6" \
+    "listed [$got6], want [base.yml:1 ]"
   fail=1
 fi
 # KV-080 Step 3 lists an echo line that reads secrets in an expression, as a field, an index or the whole context,
@@ -915,6 +939,7 @@ if [ "$nhead" -eq 0 ]; then echo "FAIL no command of KV-080 or KV-140 pipes into
 # such a line when a pattern holds a construct its DFA leaves undecided (see "Linear by construction" above), and
 # each line here passes the filter GNU grep runs before that. KV-080 Step 4's first command and Step 6 list the pin
 # line, whose run: string holds uses: keys, and the uses: line, and nothing else.
+# The ref: line repeats the expression under a quoted key too, with a quoted cache key that holds no name.
 utf8=$(locale -a 2>/dev/null | grep -iE '^(C|en_US)[.]utf-?8$' | sed -n 1p)
 long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
@@ -928,7 +953,7 @@ long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
     printf "config.sh --prefix=x repo:x.y repo: x/y token.actions.githubusercontent.co ephemeral-storage runner group " }'
   printf '"\n'; } > "$long/infra/long.tf"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
-  awk 'BEGIN { for (i = 0; i < 28000; i++) printf "xref: ${{ steps.a b.outputs.head_sha " }'
+  awk 'BEGIN { for (i = 0; i < 12000; i++) printf "xref: ${{ steps.a b.outputs.head_sha x\"ref\" : ${{ steps.a b.outputs.head_sha {\"cache\" : 12 " }'
   printf '"\n'; } > "$long/.github/workflows/long-refs.yml"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
   awk 'BEGIN { for (i = 0; i < 33000; i++) printf "the comment author association x " }'
