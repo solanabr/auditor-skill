@@ -1346,7 +1346,7 @@ settings
 # deps.sh: registry queries and artifact fetches, through a curl stand-in that answers from $T/fix.
 # =================================================================================================
 python3 -I - "$T/fix" <<'PY'
-import base64, hashlib, io, json, lzma, os, sys, tarfile, zipfile, zlib
+import base64, hashlib, io, json, lzma, os, struct, sys, tarfile, zipfile, zlib
 fix = sys.argv[1]
 def put(url, data, status=None):
     key = url.replace("/", "_").replace(":", "_").replace("%", "_").replace("@", "_")
@@ -1534,11 +1534,22 @@ bigcd_url = "https://files.pythonhosted.org/packages/ee/ff/bigcd-1.0-py3-none-an
 put(bigcd_url, bigcd)
 put("https://pypi.org/pypi/bigcd/1.0/json", json.dumps({"urls": [{"packagetype": "bdist_wheel", "filename": "bigcd-1.0-py3-none-any.whl",
     "url": bigcd_url, "digests": {"sha256": hashlib.sha256(bigcd).hexdigest()}}]}))
-# A wheel whose one entry is compressed with bzip2, and an sdist compressed with bzip2, which unpacks.
+# A wheel whose one entry is compressed with bzip2, and an sdist compressed with bzip2, which unpacks; and a
+# wheel of 50002 entries whose last central directory record is damaged, which zipfile never reaches: it stops
+# at record 50001.
 buf = io.BytesIO()
 with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_BZIP2) as z:
     z.writestr("bzwhl/x", b"\0" * (1 << 20))
 other = {"bzwhl-1.0-py3-none-any.whl": buf.getvalue(), "bzsd-1.0.tar.bz2": small("bzsd-1.0/bzsd.py", "w:bz2")}
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w") as z:
+    for i in range(50002):
+        z.writestr("manybad/f%d" % i, "")
+data = bytearray(buf.getvalue())
+size, offset = struct.unpack_from("<II", data, data.rfind(b"PK\x05\x06") + 12)
+last = data.rfind(b"PK\x01\x02", offset, offset + size)
+data[last:last + 2] = b"XX"
+other["manybad-1.0-py3-none-any.whl"] = bytes(data)
 for name, data in other.items():
     url = "https://files.pythonhosted.org/packages/11/22/" + name
     put(url, data)
@@ -1665,6 +1676,9 @@ check "a member after 8 empty pax headers in a row is unpacked" \
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates chain9 1.0.0
 check "... and 9 in a row are refused: exit 3, nothing unpacked" \
   refused chain9-1.0.0 'the artifact holds more than 8 pax and GNU long-name headers in a row'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi manybad 1.0
+check "a wheel of more than 50000 entries is refused at central directory record 50001, before zipfile reads the damaged one after it: exit 3" \
+  refused manybad 'the artifact holds more than 50000 entries'
 # Only decompressors whose memory has a fixed bound run: an xz or zstd stream chooses the window its decompressor
 # keeps, and zipfile hands bzip2 a whole read with no bound on what comes out. A stream that no magic names, as
 # one in the legacy lzma format (whose header chooses the window too), is read as a plain tar.

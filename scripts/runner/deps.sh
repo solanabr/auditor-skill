@@ -910,6 +910,19 @@ def bound_memory():
         pass
 
 
+class Counted(zipfile.ZipInfo):
+    # What zipfile builds for each record of a central directory as it reads them: past FILES the read stops,
+    # before the rest are built.
+    __slots__ = ()
+    made = 0
+
+    def __init__(self, *args, **kwargs):
+        Counted.made += 1
+        if Counted.made > FILES:
+            fail("the artifact holds more than %d entries" % FILES)
+        super().__init__(*args, **kwargs)
+
+
 def unpack(archive, filename, algo, expected, dest):
     got = verify(archive, algo, expected)
     weak = "" if algo != "sha1" else " (weak: the npm registry offered no sha512 integrity for this version, only a sha1 shasum; sha1 is collision-weak, so this is not a strong content check)"
@@ -919,16 +932,21 @@ def unpack(archive, filename, algo, expected, dest):
     # The caps hold while the archive is read: the headers of a tar are read one at a time, through Capped, and
     # the read stops at the first entry past FILES, or the first that takes the declared sizes past BYTES (of
     # every entry: tarfile reads through the data of one it does not know as well), so the list never grows
-    # past the cap; a zip central directory, which zipfile reads whole, is measured first. Nothing is unpacked
-    # until the whole list is within the caps. Only decompressors whose memory has a fixed bound run: gzip
-    # and bzip2 for a tar (an xz or zstd stream chooses the window its decompressor keeps), deflate for a zip
-    # (zipfile hands bzip2 and LZMA a whole read of compressed bytes, with no bound on what comes out).
+    # past the cap; a zip central directory, which zipfile reads whole, is measured first, and zipfile stops at
+    # its record FILES + 1, through Counted. Nothing is unpacked until the whole list is within the caps. Only
+    # decompressors whose memory has a fixed bound run: gzip and bzip2 for a tar (an xz or zstd stream chooses
+    # the window its decompressor keeps), deflate for a zip (zipfile hands bzip2 and LZMA a whole read of
+    # compressed bytes, with no bound on what comes out).
     if filename.endswith((".whl", ".zip")):
         with open(archive, "rb") as f:
             end = zipfile._EndRecData(f)
         if end and end[zipfile._ECD_SIZE] > CENTRAL:
             fail("the central directory of the artifact takes more than 16 MiB")
-        z = zipfile.ZipFile(archive)
+        real, zipfile.ZipInfo = zipfile.ZipInfo, Counted
+        try:
+            z = zipfile.ZipFile(archive)
+        finally:
+            zipfile.ZipInfo = real
         if len(z.filelist) > FILES:
             fail("the artifact holds more than %d entries" % FILES)
         if any(i.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) for i in z.filelist):
