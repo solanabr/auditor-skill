@@ -656,7 +656,7 @@ The mode is the first argument; a mode anywhere else, as in the older `--repo â€
 | `--offline` | collect without the network: `--parent` and `--vulns` URLs are recorded, not fetched |
 | `--network` | collect, fetching the `https://` URLs given in `--parent` and `--vulns`; the only mode that reads a `--repo`, `--parent` or `--vulns` outside the working directory or through a symbolic link |
 
-In `--detect` and `--offline`, `--repo` and a local `--parent` or `--vulns` are relative to the working directory, with no `.` or `..` component, and reach nothing through a symbolic link; a repository there must keep its git directory inside the working directory, with no link in it and no `objects/info/alternates` or `info/grafts`. A path that fails is refused with a pointer to `--network`.
+In `--detect` and `--offline`, `--repo` and a local `--parent` or `--vulns` are relative to the working directory, with no `.` or `..` component, and reach nothing through a symbolic link; a repository there must keep its git directory inside the working directory, with no link in it and no `objects/info/alternates` or `info/grafts`. A path that fails is refused with a pointer to `--network`. `--network` reads such a repository: its git directory is searched for named pipes and devices git would open, but not where a link to a directory there leads, nor the object directories `objects/info/alternates` names, so a read that meets one there waits until you stop the run.
 
 | Flag | Meaning |
 |------|---------|
