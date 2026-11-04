@@ -2222,7 +2222,7 @@ done <<'CONFIGS'
 .claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/main/openapi.json?token=x"]}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"s":{"command":"s-mcp","args":["--auth","none","--key","oauth","--api-key=true","--partition-key","pk","--sort-key","createdAt","--range-key=sk"]}}}\n|
 .claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","anonymous","--auth=disabled","--key","enabled","--auth","api-key","--auth","API_KEY"]}}}\n|
-.claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://gitlab.com/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json"]}}}\n|
+.claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://gitlab.com/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://github.com/o/r/blob/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://bitbucket.org/o/r/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://codeberg.org/o/r/raw/commit/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json"]}}}\n|
 .gitconfig|[include]\n\tpath = /nonexistent.invalid/a\000b\n|
 .gitconfig|[credential]\n\thelper = cache --socket /nonexistent.invalid/s\000k\n|
 CONFIGS
