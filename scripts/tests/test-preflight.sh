@@ -164,7 +164,7 @@ $(note docs/AGENTS.md)
 $(note pkg/sub/agents.md)
 $OK_LINE"
 check "... and nothing on stderr" test ! -s "$T/err"
-# 400 notes of about 190 bytes each: over 64 KiB through sort, which head stops reading after 20.
+# 400 notes of about 190 bytes each: over 64 KiB through sort, and sed reads every one of them, after printing 20.
 L=$(newdir)
 PAD=$(printf '%170s' '' | tr ' ' x)
 dirs=()
@@ -183,6 +183,19 @@ check "... the 20th" test "$(sed -n 20p "$T/out")" = "$(note "dir-019-$PAD/CLAUD
 check "... then the count of the rest" \
   test "$(sed -n 21p "$T/out")" = 'preflight: note: and 380 more that Claude Code reads as project instructions'
 check "... and the ok line" clean
+# The note list grows linearly (#65): 20,000 notes, which 7.7.0's string of notes took over 20 s of CPU to
+# gather on a Mac, finish within a limit of 12 s of CPU for each process.
+L2=$(newdir)
+dirs=()
+i=0
+while [ "$i" -lt 20000 ]; do dirs+=("d$i"); i=$((i + 1)); done
+(cd "$L2" && mkdir "${dirs[@]}" && for d in "${dirs[@]}"; do : > "$d/CLAUDE.md"; done)
+check "... the 20,000 notes' fixture is built" test "$(cd "$L2" && find . -name CLAUDE.md | wc -l | tr -d ' ')" = 20000
+(ulimit -t 12; cd "$L2" && "${SHELLS[0]}" "$PF") >"$T/out" 2>"$T/err" </dev/null
+RC=$?
+check "20,000 notes are gathered within 12 s of CPU" \
+  sh -c '[ "$1" = 0 ] && [ "$(sed -n 21p "$2")" = "preflight: note: and 19980 more that Claude Code reads as project instructions" ]' _ "$RC" "$T/out"
+rm -rf "$L2"
 
 # =================================================================================================
 # A large tree, and the entry limit (entries outside .git, the working directory counting as one).
@@ -220,16 +233,16 @@ nb=$(cd "$B" && find . -name .git -type d -prune -o -print | wc -l | tr -d ' ')
 run "$B" "AUDITOR_PREFLIGHT_MAX_ENTRIES=$((nb - 1))"
 check "... and the limit is checked first" \
   refused "the working tree holds more than $((nb - 1)) entries outside .git, too many to check; run from a smaller directory, such as a workspace of its own for this incident (AUDITOR_PREFLIGHT_MAX_ENTRIES raises the limit)"
-# Where SIGPIPE is ignored, as on GitHub's runners, a closed pipe does not stop find. A find whose walk for
-# the entry count never ends, and which goes on past its failed writes as find does, stands in for one
-# walking an enormous tree; every other call is the real find's. preflight still refuses at once and stops
-# that walk. A run still going after 30 s is stopped, and fails.
+# Where SIGPIPE is ignored, as on GitHub's runners, a closed pipe does not stop find. A find whose walk of
+# the tree never ends, and which goes on past its failed writes as find does, stands in for one walking an
+# enormous tree; every other call is the real find's. preflight still refuses at once and stops that walk.
+# A run still going after 30 s is stopped, and fails.
 mkdir -p "$T/endless"
 cat > "$T/endless/find" <<EOF
 #!/bin/sh
-if [ "\$1" = . ] && [ "\$#" -eq 10 ] && [ "\${10}" = -print ]; then
+if [ "\$1" = ./. ]; then
   printf '%s\n' "\$\$" > '$T/endless.pid'
-  while :; do printf './entry\n'; done 2>/dev/null
+  while :; do printf './entry\0'; done 2>/dev/null
 fi
 exec '$(command -v find)' "\$@"
 EOF
@@ -252,6 +265,32 @@ for sh in "${SHELLS[@]}"; do
   # The walk has ended by now, so its process ID may go to another process: the EXIT trap must not find it.
   rm -f "$T/endless.pid"
 done
+# One walk of the tree (#65): a find that logs each call, then runs the real find, sees the tree walked once,
+# however much config, how many notes and links it holds. 7.7.0 walked it three times. The calls on one
+# parent or one directory (-maxdepth 1, -prune) are no walks.
+mkdir -p "$T/logfind"
+cat > "$T/logfind/find" <<EOF
+#!/bin/sh
+printf '%s\n' "\$1" >> '$T/find.log'
+exec '$(command -v find)' "\$@"
+EOF
+chmod +x "$T/logfind/find"
+OW=$(newdir)
+build "$OW" d:repo/src f:repo/CLAUDE.md d:repo/.claude/agents f:repo/a/AGENTS.md l:repo/in=src \
+  j:repo/.claude/settings.json='{"model":"x"}' "f:repo/caf$(printf '\303\251').md"
+git init -q "$OW/repo"
+walks() { grep -c -x -e . -e ./. "$T/find.log"; }
+: > "$T/find.log"
+run "$OW/repo" "PATH=$T/logfind:$PATH"
+check "a tree with config, notes and links is walked once, before the refusal (#65)" test "$(walks)" = "${#SHELLS[@]}"
+check "... and refused for the config" ships .claude/agents
+rm -rf "$OW/repo/.claude/agents"
+: > "$T/find.log"
+run "$OW/repo" "PATH=$T/logfind:$PATH"
+check "... and walked once when it passes" test "$(walks)" = "${#SHELLS[@]}"
+check "... with its notes" test "$(cat "$T/out")" = "$(note CLAUDE.md)
+$(note a/AGENTS.md)
+$OK_LINE"
 
 # =================================================================================================
 # The parents up to the repository root, and the user's own configuration directory.

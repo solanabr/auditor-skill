@@ -51,6 +51,14 @@
 # CLAUDE.md is in or above the working directory), so each gets a "preflight: note:" line on stdout (at
 # most 20, then a count), and the run ends with "preflight: ok: ...".
 #
+# One walk of the tree gives the entry count, the matches and the links (#65): find prints every entry outside
+# .git as a NUL record, and before the record of each one the scan matches, whose name holds a byte outside
+# printable ASCII, or that is a link, that entry's -ls line. With NUL and newline swapped, every entry is one
+# line, so head stops the walk one entry past the limit, and sed passes on only the lines that do not start
+# with the walk's own "./.": those -ls lines, and find's status after the last entry. The walk starts at
+# "./.", so "/./" appears in a path only at its start, and a record's path is what follows its last newline
+# before "././".
+#
 # Exit: 0 clean · 64 refused, with one stderr line, "preflight: refused: <reason>", and nothing on stdout.
 # Needs bash >= 3.2, env, git, find, wc, head, tr, sort and sed, and jq when a .claude/settings*.json is present.
 
@@ -152,14 +160,14 @@ settings_ok() {
 }
 
 # settle <shown path> <absolute path>: a match is a note, a settings file that passes, or a hit; the hit
-# first in byte order is kept in HIT. Names are told apart in any letter case without a subprocess.
-HIT='' NOTES='' NNOTES=0
+# first in byte order is kept in HIT. Names are told apart in any letter case without a subprocess. The
+# notes are kept in an array, which grows in linear time, as a string does not (#65).
+HIT='' NOTES=()
 settle() {
   case "${2##*/}" in
     [cC][lL][aA][uU][dD][eE].[mM][dD]|[cC][lL][aA][uU][dD][eE].[lL][oO][cC][aA][lL].[mM][dD]|[aA][gG][eE][nN][tT][sS].[mM][dD]|[rR][uU][lL][eE][sS])
-      NNOTES=$((NNOTES + 1))
       confine_shown "$1"
-      NOTES="$NOTES$CONFINE_SHOWN"$'\n'
+      NOTES+=("$CONFINE_SHOWN")
       return 0 ;;
     [sS][eE][tT][tT][iI][nN][gG][sS].[jJ][sS][oO][nN]|[sS][eE][tT][tT][iI][nN][gG][sS].[lL][oO][cC][aA][lL].[jJ][sS][oO][nN])
       if [ ! -L "$2" ] && [ -f "$2" ]; then
@@ -223,6 +231,67 @@ matches() {
   printf 'status=%s\0' "$?"
 }
 
+# matched <path as the walk found it> <absolute path>: status 0 when the entry is one TESTS matches, by its
+# name, the name of the directory holding it in the walk, and its type, as find decides them.
+matched() {
+  local n=${1##*/} d=${1%/*}
+  d=${d##*/}
+  case "$n" in
+    .[cC][lL][aA][uU][dD][eE]) [ -L "$2" ] ;;
+    .[mM][cC][pP].[jJ][sS][oO][nN]) true ;;
+    [cC][lL][aA][uU][dD][eE].[mM][dD]|[cC][lL][aA][uU][dD][eE].[lL][oO][cC][aA][lL].[mM][dD]|[aA][gG][eE][nN][tT][sS].[mM][dD])
+      [ -L "$2" ] || [ ! -d "$2" ] ;;
+    *)
+      case "$d" in .[cC][lL][aA][uU][dD][eE]) ;; *) return 1 ;; esac
+      case "$n" in
+        [sS][kK][iI][lL][lL][sS]|[cC][oO][mM][mM][aA][nN][dD][sS]|[aA][gG][eE][nN][tT][sS]|[hH][oO][oO][kK][sS]|[oO][uU][tT][pP][uU][tT]-[sS][tT][yY][lL][eE][sS]|[wW][oO][rR][kK][fF][lL][oO][wW][sS]|[rR][uU][lL][eE][sS])
+          [ -L "$2" ] || [ -d "$2" ] ;;
+        [sS][cC][hH][eE][dD][uU][lL][eE][dD]_[tT][aA][sS][kK][sS].[jJ][sS][oO][nN]|[sS][eE][tT][tT][iI][nN][gG][sS].[jJ][sS][oO][nN]|[sS][eE][tT][tT][iI][nN][gG][sS].[lL][oO][cC][aA][lL].[jJ][sS][oO][nN])
+          true ;;
+        *) false ;;
+      esac ;;
+  esac
+}
+
+# walk <directory> <limit>: one find walk of <directory>, outside .git. WALK_N is the number of entries it
+# holds, the directory itself counting as one, or <limit> + 1 when it holds more (WALK_CUT is then 1 and
+# WALK_ST empty); WALK_ST is find's status; WALK_R holds, in walk order, the path of each entry the scan
+# matches (TESTS), whose name holds a byte outside printable ASCII, or that is a symbolic link, as
+# "././<path below <directory>>". Over the limit only the first <limit> entries count, and the walk is
+# stopped by its process IDs: a closed pipe stops find only where SIGPIPE keeps its default action, and on
+# GitHub's runners it is ignored.
+walk() {
+  local dir=$1 lim=$2 r sub swap
+  WALK_N='' WALK_ST='' WALK_CUT=0 WALK_R=()
+  exec 3< <(cd -- "$dir" 2>/dev/null || { printf 'S2\0'; exit 0; }
+            find ./. \( -name .git -type d -prune \) -o \( \( ! \( \( "${TESTS[@]}" \) -o "${ODD[@]}" -o -type l \) -o -ls \) \
+              -print0 \) 2>/dev/null &
+            w=$!
+            trap 'kill "$w" 2>/dev/null' TERM
+            wait "$w"
+            printf 'S%s\0' "$?")
+  sub=$!
+  exec 4< <(exec tr '\0\n' '\n\0' <&3)
+  swap=$!
+  exec 3<&-
+  while IFS= read -r -d '' r; do
+    case "$r" in
+      S*) WALK_ST=${r#S} ;;
+      *$'\n'././*) WALK_R+=("././${r##*$'\n'././}") ;;
+      *[!0-9]*|'') refuse "the working tree cannot be listed" ;;
+      *) WALK_N=$r ;;
+    esac
+  done < <(head -n "$((lim + 1))" <&4 4<&- | sed -n -e "1,${lim}{/^[^.S]/p;}" -e '${/^S/p;=;}' 4<&- | tr '\0\n' '\n\0' 4<&-)
+  exec 4<&-
+  [ -n "$WALK_N" ] || refuse "the working tree cannot be listed"
+  if [ -z "$WALK_ST" ]; then
+    WALK_CUT=1
+    kill "$sub" "$swap" 2>/dev/null
+  else
+    WALK_N=$((WALK_N - 1))
+  fi
+}
+
 [ $# -eq 0 ] || refuse "preflight takes no arguments"
 max=${AUDITOR_PREFLIGHT_MAX_ENTRIES-200000}
 bad_max() { refuse "AUDITOR_PREFLIGHT_MAX_ENTRIES must be a whole number from 1 to 999999999, not $(confine_text "$max")"; }
@@ -235,19 +304,12 @@ case "$(lower "$WT")/" in
       "run from a directory outside it (Rule 11e)" ;;
 esac
 
-# The size first: head stops reading at one entry over the limit. A closed pipe stops find only where
-# SIGPIPE keeps its default action; where it is ignored, as on GitHub's runners, find would walk on to the
-# end of the tree, so over the limit it is stopped by its process ID.
-exec 3< <(exec find . \( -name .git -type d -prune \) -o -print 2>/dev/null)
-walk=$!
-n=$(head -n "$((max + 1))" <&3 | wc -l)
-n=${n//[!0-9]/}
-[ -n "$n" ] && [ "$n" -le "$max" ] || kill "$walk" 2>/dev/null
-exec 3<&-
-[ -n "$n" ] || refuse "the working tree cannot be listed"
-[ "$n" -le "$max" ] ||
+# The size first: the walk stops one entry past the limit.
+walk "$WT" "$max"
+[ "$WALK_CUT" = 0 ] ||
   refuse "the working tree holds more than $max entries outside .git, too many to check; run from a smaller directory," \
     "such as a workspace of its own for this incident (AUDITOR_PREFLIGHT_MAX_ENTRIES raises the limit)"
+TREE_R=(${WALK_R[@]+"${WALK_R[@]}"}) TREE_ST=$WALK_ST
 
 # The parents up to the repository's top level, nearest first. A file git would wait on, or a .git or
 # commondir file the check cannot read, is refused here in this shell, for what it is; then the calls
@@ -380,46 +442,40 @@ done
   refuse "a parent of the working directory holds Claude Code project config ($(confine_text "$HIT")), which Claude Code" \
     "loads from every parent up to the repository root; run from a directory outside that repository (Rule 11e)"
 
-st=''
-while IFS= read -r -d '' p; do
-  case "$p" in status=*) st=${p#status=}; continue ;; esac
-  case "${p##*/}" in
-    *[![:print:]]*) folded "${p#./}" "$WT/${p#./}" ;;
-    *) settle "${p#./}" "$WT/${p#./}" ;;
+# The tree, from the walk: each entry it kept is settled by its name (folded() for a name outside printable
+# ASCII), and each link is checked. A link to a directory the scan does not read, outside the working
+# directory or in a .git directory, however the link spells it, is refused: Claude Code may find project
+# config there once it reads a file through the link. A .git that is itself a link (to a git directory kept
+# elsewhere) is skipped, as a .git directory is. Only a link that sorts before the one already found can
+# change that refusal.
+LINK=''
+for r in ${TREE_R[@]+"${TREE_R[@]}"}; do
+  p=$WT/${r#././} s=${r#././}
+  case "${r##*/}" in
+    *[![:print:]]*) folded "$s" "$p" ;;
+    *) ! matched "$r" "$p" || settle "$s" "$p" ;;
   esac
-done < <(matches .)
+  if [ -L "$p" ] && [ "${p##*/}" != .git ] && [ -d "$p" ] && { [ -z "$LINK" ] || [[ "$s" < "$LINK" ]]; }; then
+    if confine_phys "$p" && below "$CONFINE_PHYS"; then
+      in_git "$BELOW" || continue
+    fi
+    LINK=$s
+  fi
+done
 [ -z "$HIT" ] ||
   refuse "the working tree ships Claude Code project config ($(confine_text "$HIT")), which Claude Code may load" \
     "alongside this plugin; audit a copy without it (Rule 11e)"
-[ "$st" = 0 ] || refuse "find cannot read the whole working tree, so it cannot be checked for Claude Code project config"
-
-# A link to a directory the scan above does not read, outside the working directory or in a .git
-# directory, however the link spells it: Claude Code may find project config there once it reads a file
-# through the link. A .git that is itself a link (to a git directory kept elsewhere) is skipped, as a .git
-# directory is.
-LINK='' st=''
-while IFS= read -r -d '' p; do
-  case "$p" in status=*) st=${p#status=}; continue ;; esac
-  # Only a link that sorts before the one already found can change the refusal.
-  [ -z "$LINK" ] || [[ "${p#./}" < "$LINK" ]] || continue
-  [ -d "$p" ] || continue
-  if confine_phys "$p" && below "$CONFINE_PHYS"; then
-    in_git "$BELOW" || continue
-  fi
-  LINK=${p#./}
-done < <(find . \( -name .git -prune \) -o -type l -print0 2>/dev/null
-         printf 'status=%s\0' "$?")
-[ "$st" = 0 ] || refuse "find cannot read the whole working tree, so it cannot be checked for Claude Code project config"
+[ "$TREE_ST" = 0 ] || refuse "find cannot read the whole working tree, so it cannot be checked for Claude Code project config"
 [ -z "$LINK" ] ||
   refuse "the working tree has a symbolic link ($(confine_text "$LINK")) to a directory outside it or inside a .git" \
     "directory, where Claude Code may find project config this check does not read; audit a copy without it (Rule 11e)"
 
-if [ "$NNOTES" -gt 0 ]; then
-  printf '%s' "$NOTES" | LC_ALL=C sort | sed -n "1,${NOTES_MAX}p" |
+if [ "${#NOTES[@]}" -gt 0 ]; then
+  printf '%s\n' "${NOTES[@]}" | LC_ALL=C sort | sed -n "1,${NOTES_MAX}p" |
     while IFS= read -r p; do
       printf 'preflight: note: Claude Code reads %s %s\n' "$p" "$NOTE"
     done
-  [ "$NNOTES" -le "$NOTES_MAX" ] ||
-    printf 'preflight: note: and %s more that Claude Code reads as project instructions\n' "$((NNOTES - NOTES_MAX))"
+  [ "${#NOTES[@]}" -le "$NOTES_MAX" ] ||
+    printf 'preflight: note: and %s more that Claude Code reads as project instructions\n' "$((${#NOTES[@]} - NOTES_MAX))"
 fi
 printf 'preflight: ok: no Claude Code project config in the working tree or its parents up to the repository root\n'
