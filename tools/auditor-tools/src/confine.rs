@@ -23,6 +23,11 @@
 //! file's bytes on its stdin, no environment, killed past a time limit. A file is
 //! made through its directory's descriptor, never through a link and never over a
 //! name that exists.
+//!
+//! The mode (OUTPUT-RULES.md Rule 11f) is read once, as confine.sh's
+//! `confine_mode` reads it (`mode`): default, where a check that would refuse a
+//! repository for what it contains goes on, or strict, which keeps those
+//! refusals. The tools take no `--strict`.
 
 use std::cell::OnceCell;
 use std::ffi::{CString, OsStr, OsString};
@@ -34,6 +39,7 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 #[cfg(any(target_os = "android", target_os = "netbsd", target_os = "openbsd"))]
@@ -507,7 +513,7 @@ pub fn run_dir(wt: &Path, git: &mut Git, name: &[u8], what: &str) -> Result<Meta
         Err(_) => return Err(refuse(format!("{what} cannot be fully read: {s}"))),
     }
     git.files()?;
-    match git.tracked(name) {
+    match git.tracked(&[name]) {
         Some(listed) if listed.is_empty() => {}
         Some(_) => return Err(refuse(format!("{what} is tracked by git: {s}"))),
         None => {
@@ -522,6 +528,122 @@ pub fn run_dir(wt: &Path, git: &mut Git, name: &[u8], what: &str) -> Result<Meta
         )));
     }
     Ok(md)
+}
+
+/// The installation audit-scan and audit-mem were built in, as audit-logs takes
+/// its own: the safe-directory file (`Mode`) is read there.
+const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+
+/// The mode, as confine.sh's `confine_mode` reads it (OUTPUT-RULES.md Rule 11f).
+pub struct Mode {
+    /// Strict mode, which keeps the refusals Rule 11f lists; else default mode.
+    pub strict: bool,
+    /// For an `AUDITOR_STRICT` value read as on that is no word for on, the note
+    /// `AUDITOR_STRICT is '<v>', read as on`, which each tool prints once.
+    pub note: Option<String>,
+    /// What git reads as its global config (`CONFINE_GIT_GLOBAL`): no file in
+    /// strict mode; in default mode the installation's
+    /// `scripts/lib/safe-directory.gitconfig`, which trusts a repository another
+    /// user owns (git's safe.directory), or no file when the installation cannot
+    /// be resolved. `hgit`'s pins switch off every key known to name a program, so
+    /// git's ownership check adds nothing to these reads.
+    global: OsString,
+}
+
+static MODE: OnceLock<Mode> = OnceLock::new();
+
+/// The mode, read once. Strict mode is on when `AUDITOR_STRICT` is `1`, `true`,
+/// `yes` or `on` in any letter case, or any value but those, `0`, `false`, `no`
+/// and `off` (read as on, with a note); or when a run directory of WT holds a
+/// marker (`marked`). Nothing turns it off again.
+pub fn mode() -> &'static Mode {
+    MODE.get_or_init(|| {
+        let v = std::env::var_os("AUDITOR_STRICT").unwrap_or_default();
+        let is = |words: &[&str]| {
+            words
+                .iter()
+                .any(|w| v.as_bytes().eq_ignore_ascii_case(w.as_bytes()))
+        };
+        let (on, note) = if v.is_empty() || is(&["0", "false", "no", "off"]) {
+            (false, None)
+        } else if is(&["1", "true", "yes", "on"]) {
+            (true, None)
+        } else {
+            let v = shown(v.as_bytes());
+            (true, Some(format!("AUDITOR_STRICT is '{v}', read as on")))
+        };
+        let strict = on || working_tree().is_ok_and(|wt| marked(&wt));
+        let global = match Path::new(ROOT).canonicalize() {
+            Ok(root) if !strict => root
+                .join("scripts/lib/safe-directory.gitconfig")
+                .into_os_string(),
+            _ => OsString::from("/dev/null"),
+        };
+        Mode {
+            strict,
+            note,
+            global,
+        }
+    })
+}
+
+/// Whether strict mode is on (`mode`).
+pub fn strict() -> bool {
+    mode().strict
+}
+
+/// Whether a run directory of WT holds a marker that counts, as `confine_mode`
+/// reads the markers: an entry named `strict`, of any kind, in a directory whose
+/// name `is_run_dir_name` takes, unless git tracks anything under that directory,
+/// which is then the repository's. git is asked once, for them all, and only when
+/// there is one, with strict mode's global config (none), whatever the mode; when
+/// it cannot tell, every marker counts.
+fn marked(wt: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(wt) else {
+        return false;
+    };
+    let found: Vec<Vec<u8>> = entries
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().into_vec())
+        .filter(|n| {
+            is_run_dir_name(n)
+                && fs::symlink_metadata(wt.join(OsStr::from_bytes(n)).join("strict")).is_ok()
+        })
+        .collect();
+    if found.is_empty() {
+        return false;
+    }
+    let mut git = Git::with_global(wt, OsStr::new("/dev/null"));
+    let names: Vec<&[u8]> = found.iter().map(Vec::as_slice).collect();
+    let listed = match git.need() {
+        Ok(()) => git.tracked(&names),
+        Err(_) => None,
+    };
+    let Some(listed) = listed else {
+        return true;
+    };
+    let tracked: Vec<Vec<u8>> = listed
+        .split(|&b| b == b'\n')
+        .filter_map(run_dir_of)
+        .collect();
+    found.iter().any(|n| !tracked.contains(n))
+}
+
+/// The run directory a path `ls-files` printed lies under, as `confine_mode`
+/// reads it: past a quote git may open the path with, up to its first `/`, with
+/// `audit_` or `incident_` in lowercase.
+fn run_dir_of(line: &[u8]) -> Option<Vec<u8>> {
+    let line = line.strip_prefix(b"\"").unwrap_or(line);
+    let first = line.split(|&b| b == b'/').next()?;
+    let (kind, rest) = first.split_at(first.iter().position(|&b| b == b'_')?);
+    let kind: &[u8] = if kind.eq_ignore_ascii_case(b"audit") {
+        b"audit"
+    } else if kind.eq_ignore_ascii_case(b"incident") {
+        b"incident"
+    } else {
+        return None;
+    };
+    Some([kind, rest].concat())
 }
 
 /// The `-c` pins of confine.sh's `hgit`, in its order.
@@ -634,14 +756,22 @@ pub struct Git {
     found: Option<(PathBuf, OsString)>,
     /// Why git, asked from WT, would wait for good on a file it opens; found once.
     waits: OnceCell<Option<String>>,
+    /// What git reads as its global config (`Mode`).
+    global: OsString,
 }
 
 impl Git {
+    /// git with the mode's global config.
     pub fn new(wt: &Path) -> Git {
+        Git::with_global(wt, &mode().global)
+    }
+
+    fn with_global(wt: &Path, global: &OsStr) -> Git {
         Git {
             wt: wt.to_path_buf(),
             found: None,
             waits: OnceCell::new(),
+            global: global.to_os_string(),
         }
     }
 
@@ -703,9 +833,9 @@ impl Git {
 
     /// `hgit <dir> <args>` with GIT_CEILING_DIRECTORIES set to `ceiling`: no
     /// environment but its own, GIT_ALLOW_PROTOCOL empty (no transport, which no
-    /// config of the repository's can widen), the repository's config pinned off,
-    /// and its output read until it ends. Past `GIT_TIME` it is killed, and that is
-    /// an error.
+    /// config of the repository's can widen), no system config and the global
+    /// config `global`, the repository's config pinned off, and its output read
+    /// until it ends. Past `GIT_TIME` it is killed, and that is an error.
     fn run(&self, ceiling: &OsStr, dir: &Path, args: &[&OsStr]) -> io::Result<Output> {
         let (exe, path) = self
             .found
@@ -732,7 +862,7 @@ impl Git {
             )
             .env("GIT_NO_LAZY_FETCH", "1")
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_GLOBAL", &self.global)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_OPTIONAL_LOCKS", "0")
             .env("GIT_ALLOW_PROTOCOL", "")
@@ -752,12 +882,15 @@ impl Git {
         collect(cmd.spawn()?, Instant::now() + GIT_TIME)
     }
 
-    /// What git tracks at `path` (relative to WT), in any letter case, as
+    /// What git tracks at each of `paths` (relative to WT), in any letter case, as
     /// `confine_tracked` asks it: outside every repository nothing is tracked, and
     /// discovery may go above WT for this one question, since a repository there
     /// decides it. `None` when git cannot tell, cannot be run, has not answered
     /// within `GIT_TIME`, or would wait for good on a file it opens (`files`).
-    pub fn tracked(&self, path: &[u8]) -> Option<Vec<u8>> {
+    pub fn tracked(&self, paths: &[&[u8]]) -> Option<Vec<u8>> {
+        if paths.is_empty() {
+            return Some(Vec::new());
+        }
         if self.waits().is_some() {
             return None;
         }
@@ -773,19 +906,17 @@ impl Git {
             // Outside every repository only on git's own answer.
             return no_repository(inside.status.code(), &inside.stderr).then(Vec::new);
         }
-        let spec = OsString::from_vec([&b":(literal,icase)"[..], path].concat());
-        let listed = self
-            .run(
-                none,
-                &self.wt,
-                &[
-                    OsStr::new("--icase-pathspecs"),
-                    OsStr::new("ls-files"),
-                    OsStr::new("--"),
-                    &spec,
-                ],
-            )
-            .ok()?;
+        let specs: Vec<OsString> = paths
+            .iter()
+            .map(|p| OsString::from_vec([&b":(literal,icase)"[..], p].concat()))
+            .collect();
+        let mut args = vec![
+            OsStr::new("--icase-pathspecs"),
+            OsStr::new("ls-files"),
+            OsStr::new("--"),
+        ];
+        args.extend(specs.iter().map(OsString::as_os_str));
+        let listed = self.run(none, &self.wt, &args).ok()?;
         listed.status.success().then_some(listed.stdout)
     }
 

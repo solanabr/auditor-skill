@@ -531,7 +531,7 @@ impl Scan<'_> {
             return false;
         };
         let listed = match git.need() {
-            Ok(()) => git.tracked(name),
+            Ok(()) => git.tracked(&[name]),
             Err(_) => None,
         };
         if listed.is_none() {

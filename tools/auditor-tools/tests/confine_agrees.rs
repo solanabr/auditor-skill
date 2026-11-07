@@ -192,65 +192,90 @@ fn git_calls(dir: &Path) -> BTreeMap<String, Vec<String>> {
     calls
 }
 
+/// `Command`'s environment for the mode `strict` names, on both sides:
+/// `AUDITOR_STRICT=1`, or none.
+fn in_mode(cmd: &mut Command, strict: bool) -> &mut Command {
+    if strict {
+        cmd.env("AUDITOR_STRICT", "1")
+    } else {
+        cmd.env_remove("AUDITOR_STRICT")
+    }
+}
+
 #[test]
 fn confine_rs_runs_git_as_hgit_does() {
-    let wt = Wt::repo();
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .expect("the repository root resolves");
-    // One recording git for both, on one PATH, so that both clean the same PATH;
-    // the shell's calls are read before audit-mem runs, and moved aside.
-    let rec = wt.outside().join("rec");
-    recording_git(&rec);
-    let path = format!("{}:/usr/bin:/bin", rec.display());
-    // confine.sh asks it with confine_tracked, as rundir.sh store does.
-    let shell = Command::new("bash")
-        .args([
-            "-c",
-            ". \"$1/scripts/lib/confine.sh\" && confine_init agree \"$1\" && \
-             confine_tracked .audit-memory",
-            "agree",
-        ])
-        .arg(&root)
-        .current_dir(&wt.dir)
-        .env("PATH", &path)
-        .env_remove("CONFINE_ALLOW_PROTOCOL")
-        .stdin(Stdio::null())
-        .output()
-        .expect("run bash");
-    assert!(
-        shell.status.success(),
-        "confine_tracked: {}",
-        String::from_utf8_lossy(&shell.stderr)
-    );
-    let sh = git_calls(&rec);
-    fs::rename(rec.join("log"), wt.outside().join("log-sh")).expect("move the shell's calls");
-    fs::create_dir(rec.join("log")).expect("make the log directory again");
-    // confine.rs asks it with Git::tracked, as audit-mem does of its in-tree store.
-    let rust = Command::new(env!("CARGO_BIN_EXE_audit-mem"))
-        .args(["warm", "--program-id", "VaultProg1111"])
-        .current_dir(&wt.dir)
-        .env("PATH", &path)
-        .stdin(Stdio::null())
-        .output()
-        .expect("run audit-mem");
-    assert!(
-        rust.status.success(),
-        "audit-mem: {}",
-        String::from_utf8_lossy(&rust.stderr)
-    );
-    let rs = git_calls(&rec);
-    assert_eq!(sh.len(), 2, "hgit runs git twice: {sh:#?}");
-    assert_eq!(
-        rs, sh,
-        "confine.rs gives git the arguments and the environment hgit gives it"
-    );
-    for env in rs.values() {
+    // In each mode: in strict mode git reads no global config, and in default mode
+    // the installation's safe-directory file, from both sides.
+    for strict in [false, true] {
+        let wt = Wt::repo();
+        // The in-tree store, which audit-mem asks git about.
+        wt.run_dir(".audit-memory");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("the repository root resolves");
+        // One recording git for both, on one PATH, so that both clean the same PATH;
+        // the shell's calls are read before audit-mem runs, and moved aside.
+        let rec = wt.outside().join("rec");
+        recording_git(&rec);
+        let path = format!("{}:/usr/bin:/bin", rec.display());
+        // confine.sh asks it with confine_tracked, as rundir.sh store does.
+        let shell = in_mode(&mut Command::new("bash"), strict)
+            .args([
+                "-c",
+                ". \"$1/scripts/lib/confine.sh\" && confine_init agree \"$1\" && \
+                 confine_tracked .audit-memory",
+                "agree",
+            ])
+            .arg(&root)
+            .current_dir(&wt.dir)
+            .env("PATH", &path)
+            .env_remove("CONFINE_ALLOW_PROTOCOL")
+            .stdin(Stdio::null())
+            .output()
+            .expect("run bash");
         assert!(
-            env.iter().any(|v| v == "GIT_ALLOW_PROTOCOL="),
-            "no transport is allowed: {env:#?}"
+            shell.status.success(),
+            "confine_tracked: {}",
+            String::from_utf8_lossy(&shell.stderr)
         );
+        let sh = git_calls(&rec);
+        fs::rename(rec.join("log"), wt.outside().join("log-sh")).expect("move the shell's calls");
+        fs::create_dir(rec.join("log")).expect("make the log directory again");
+        // confine.rs asks it with Git::tracked, as audit-mem does of its in-tree store.
+        let rust = in_mode(&mut Command::new(env!("CARGO_BIN_EXE_audit-mem")), strict)
+            .args(["warm", "--program-id", "VaultProg1111"])
+            .current_dir(&wt.dir)
+            .env("PATH", &path)
+            .stdin(Stdio::null())
+            .output()
+            .expect("run audit-mem");
+        assert!(
+            rust.status.success(),
+            "audit-mem: {}",
+            String::from_utf8_lossy(&rust.stderr)
+        );
+        let rs = git_calls(&rec);
+        assert_eq!(sh.len(), 2, "hgit runs git twice: {sh:#?}");
+        assert_eq!(
+            rs, sh,
+            "strict {strict}: confine.rs gives git the arguments and the environment hgit gives it"
+        );
+        let global = if strict {
+            "GIT_CONFIG_GLOBAL=/dev/null".to_string()
+        } else {
+            format!(
+                "GIT_CONFIG_GLOBAL={}",
+                root.join("scripts/lib/safe-directory.gitconfig").display()
+            )
+        };
+        for env in rs.values() {
+            assert!(
+                env.iter().any(|v| v == "GIT_ALLOW_PROTOCOL="),
+                "no transport is allowed: {env:#?}"
+            );
+            assert!(env.contains(&global), "strict {strict}: {env:#?}");
+        }
     }
 }
 
@@ -272,7 +297,9 @@ fn confine_rs_drops_the_path_entries_of_the_tree_as_confine_init_does() {
     recording_git(&rec);
     let path = format!("{}:{}:/usr/bin:/bin", inner.display(), rec.display());
     let v = wt.path("programs/v");
-    let shell = Command::new("bash")
+    // The in-tree store, which audit-mem asks git about.
+    wt.run_dir("programs/v/.audit-memory");
+    let shell = in_mode(&mut Command::new("bash"), false)
         .args([
             "-c",
             ". \"$1/scripts/lib/confine.sh\" && confine_init agree \"$1\" && \
@@ -294,7 +321,7 @@ fn confine_rs_drops_the_path_entries_of_the_tree_as_confine_init_does() {
     let sh = git_calls(&rec);
     fs::rename(rec.join("log"), wt.outside().join("log-sh")).expect("move the shell's calls");
     fs::create_dir(rec.join("log")).expect("make the log directory again");
-    let rust = Command::new(env!("CARGO_BIN_EXE_audit-mem"))
+    let rust = in_mode(&mut Command::new(env!("CARGO_BIN_EXE_audit-mem")), false)
         .args(["warm", "--program-id", "VaultProg1111"])
         .current_dir(&v)
         .env("PATH", &path)
@@ -329,10 +356,11 @@ fn confine_rs_lists_what_a_config_includes_as_hgit_does() {
         &[&config[..], &b"[include]\n\tpath = extra.cfg\n"[..]].concat(),
     );
     wt.write(".git/extra.cfg", b"[core]\n");
+    wt.run_dir(".audit-memory");
     let rec = wt.outside().join("rec");
     recording_git(&rec);
     let path = format!("{}:/usr/bin:/bin", rec.display());
-    let shell = Command::new("bash")
+    let shell = in_mode(&mut Command::new("bash"), false)
         .args([
             "-c",
             ". \"$1/scripts/lib/confine.sh\" && confine_init agree \"$1\" && \
@@ -354,7 +382,7 @@ fn confine_rs_lists_what_a_config_includes_as_hgit_does() {
     let sh = git_calls(&rec);
     fs::rename(rec.join("log"), wt.outside().join("log-sh")).expect("move the shell's calls");
     fs::create_dir(rec.join("log")).expect("make the log directory again");
-    let rust = Command::new(env!("CARGO_BIN_EXE_audit-mem"))
+    let rust = in_mode(&mut Command::new(env!("CARGO_BIN_EXE_audit-mem")), false)
         .args(["warm", "--program-id", "VaultProg1111"])
         .current_dir(&wt.dir)
         .env("PATH", &path)
@@ -504,7 +532,7 @@ fn confine_rs_refuses_what_git_would_wait_on_in_confine_sh_s_words() {
             "sub/audit_1"
         };
         wt.run_dir(run_dir);
-        let shell = Command::new("bash")
+        let shell = in_mode(&mut Command::new("bash"), false)
             .args([
                 "-c",
                 ". \"$1/scripts/lib/confine.sh\" && confine_init agree \"$1\" && \
@@ -516,7 +544,7 @@ fn confine_rs_refuses_what_git_would_wait_on_in_confine_sh_s_words() {
             .stdin(Stdio::null())
             .output()
             .expect("run bash");
-        let rust = Command::new(env!("CARGO_BIN_EXE_audit-mem"))
+        let rust = in_mode(&mut Command::new(env!("CARGO_BIN_EXE_audit-mem")), false)
             .args(["init", "--db", "audit_1/audit-mem.db"])
             .current_dir(&from)
             .stdin(Stdio::null())
@@ -591,10 +619,11 @@ fn confine_rs_takes_only_git_s_own_answer_for_no_repository_as_confine_sh_does()
         ("unread", unread, 128, false),
     ] {
         let wt = Wt::new();
+        wt.run_dir(".audit-memory");
         let fake = wt.outside().join("fake");
         failing_git(&fake, message, status);
         let path = format!("{}:/usr/bin:/bin", fake.display());
-        let shell = Command::new("bash")
+        let shell = in_mode(&mut Command::new("bash"), false)
             .args([
                 "-c",
                 ". \"$1/scripts/lib/confine.sh\" && confine_init agree \"$1\" && \
@@ -608,7 +637,7 @@ fn confine_rs_takes_only_git_s_own_answer_for_no_repository_as_confine_sh_does()
             .stdin(Stdio::null())
             .output()
             .expect("run bash");
-        let rust = Command::new(env!("CARGO_BIN_EXE_audit-mem"))
+        let rust = in_mode(&mut Command::new(env!("CARGO_BIN_EXE_audit-mem")), false)
             .args(["warm", "--program-id", "VaultProg1111"])
             .current_dir(&wt.dir)
             .env("PATH", &path)

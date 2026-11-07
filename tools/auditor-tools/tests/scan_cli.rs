@@ -1618,3 +1618,51 @@ fn lists_a_file_brought_in_wherever_rustc_may_find_it() {
     assert_eq!(report["files_scanned"], 8);
     assert_eq!(skipped(&report), sorted(&[("./.git", GIT_DIR)]));
 }
+
+#[test]
+fn reads_the_mode_as_audit_mem_does() {
+    // git, asked whether --out's run directory is tracked, is given the
+    // installation's safe-directory file in default mode and no global config in
+    // strict mode, which AUDITOR_STRICT or a marker turns on.
+    let wt = Wt::repo();
+    wt.write("src/lib.rs", b"fn a() {}\n");
+    wt.run_dir("audit_1");
+    let dir = wt.outside().join("noting");
+    let path = common::noting_git(&dir, "");
+    let out = |env: &[(&str, &str)]| {
+        let mut all = vec![("PATH", path.as_str())];
+        all.extend_from_slice(env);
+        let o = common::run_env(
+            BIN,
+            &wt.dir,
+            &["src", "--out", "audit_1/prescan.json"],
+            &all,
+        );
+        assert_eq!(o.status.code(), Some(0), "{env:?}: {}", common::stderr(&o));
+        assert_eq!(stdout(&o), "", "{env:?}");
+        (
+            common::stderr(&o),
+            common::asked_with(&common::noted(&dir), "audit_1"),
+        )
+    };
+    let strict = vec!["/dev/null".to_string()];
+    assert_eq!(out(&[]), (String::new(), vec![common::safe_directory()]));
+    assert_eq!(
+        out(&[("AUDITOR_STRICT", "off")]),
+        (String::new(), vec![common::safe_directory()])
+    );
+    assert_eq!(
+        out(&[("AUDITOR_STRICT", "TRUE")]),
+        (String::new(), strict.clone())
+    );
+    assert_eq!(
+        out(&[("AUDITOR_STRICT", "sure")]),
+        (
+            "audit-scan: note: AUDITOR_STRICT is 'sure', read as on\n".to_string(),
+            strict.clone()
+        )
+    );
+    wt.run_dir("incident_5");
+    wt.write("incident_5/strict", b"strict\n");
+    assert_eq!(out(&[]), (String::new(), strict));
+}

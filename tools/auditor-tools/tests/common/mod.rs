@@ -157,18 +157,113 @@ pub fn pda_struct(name: &str, pdas: usize) -> String {
 }
 
 /// A binary run from `dir`, with stdin from /dev/null and the caller's
-/// environment.
+/// environment, less `AUDITOR_STRICT`: default mode, unless a marker says
+/// otherwise.
 pub fn run(bin: &str, dir: &Path, args: &[&str]) -> Output {
     run_env(bin, dir, args, &[])
 }
 
+/// `run`, with `env` set as well (`STRICT` for strict mode).
 pub fn run_env(bin: &str, dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd = Command::new(bin);
-    cmd.args(args).current_dir(dir).stdin(Stdio::null());
+    cmd.args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .env_remove("AUDITOR_STRICT");
     for (k, v) in env {
         cmd.env(k, v);
     }
     cmd.output().expect("run the binary")
+}
+
+/// The environment `run_env` takes for strict mode.
+pub const STRICT: (&str, &str) = ("AUDITOR_STRICT", "1");
+
+/// `run` in strict mode.
+pub fn run_strict(bin: &str, dir: &Path, args: &[&str]) -> Output {
+    run_env(bin, dir, args, &[STRICT])
+}
+
+/// An executable script at `to`, written by `/bin/sh`, not by this process: on
+/// Linux, a child another test starts while this process holds the file open for
+/// writing inherits that descriptor, and running the file then fails with ETXTBSY
+/// (`Text file busy`) until that child execs.
+pub fn script(to: &Path, text: &str) {
+    let status = Command::new("/bin/sh")
+        .args([
+            "-c",
+            "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
+            "sh",
+        ])
+        .arg(text)
+        .arg(to)
+        .stdin(Stdio::null())
+        .status()
+        .expect("run sh");
+    assert!(status.success(), "write {}", to.display());
+}
+
+/// A git in `dir`, outside the working tree, that notes each call in `dir/calls`,
+/// one line a call: the global config it is given (`GIT_CONFIG_GLOBAL`), a tab,
+/// then its arguments; and then runs the git first on the test's own PATH, after
+/// `before` (a line of shell, or none). Returns a PATH that puts it first.
+pub fn noting_git(dir: &Path, before: &str) -> String {
+    fs::create_dir_all(dir).expect("make the noting git's directory");
+    let found = Command::new("/bin/sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("run sh");
+    let git = String::from_utf8_lossy(&found.stdout).trim().to_string();
+    assert!(git.starts_with('/'), "git is on the test's PATH: {git:?}");
+    script(
+        &dir.join("git"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\t%s\\n' \"$GIT_CONFIG_GLOBAL\" \"$*\" >> '{}'\n{before}\nexec '{git}' \"$@\"\n",
+            dir.join("calls").display()
+        ),
+    );
+    format!(
+        "{}:{}",
+        dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
+/// The calls `noting_git` in `dir` noted, as (global config, arguments), and the
+/// note emptied.
+pub fn noted(dir: &Path) -> Vec<(String, String)> {
+    let calls = fs::read_to_string(dir.join("calls")).unwrap_or_default();
+    let _ = fs::remove_file(dir.join("calls"));
+    calls
+        .lines()
+        .map(|l| {
+            let (global, args) = l.split_once('\t').unwrap_or((l, ""));
+            (global.to_string(), args.to_string())
+        })
+        .collect()
+}
+
+/// The global config each `noted` call that asks whether `path` is tracked was
+/// given.
+pub fn asked_with(calls: &[(String, String)], path: &str) -> Vec<String> {
+    let spec = format!(":(literal,icase){path}");
+    calls
+        .iter()
+        .filter(|(_, args)| args.split(' ').any(|a| a == spec))
+        .map(|(global, _)| global.clone())
+        .collect()
+}
+
+/// The global config git is given in default mode: the safe-directory file of
+/// the installation the binaries were built in.
+pub fn safe_directory() -> String {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("the installation resolves")
+        .join("scripts/lib/safe-directory.gitconfig")
+        .display()
+        .to_string()
 }
 
 pub fn stdout(o: &Output) -> String {

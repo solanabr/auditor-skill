@@ -404,7 +404,7 @@ fn check_store(wt: &Path, arg: &OsStr) -> Result<Store, Stop> {
 fn in_tree_store(wt: &Path, git: &mut Git) -> Result<Store, Stop> {
     let d = ".audit-memory";
     git.need()?;
-    match git.tracked(STORE_DIR) {
+    match git.tracked(&[STORE_DIR]) {
         Some(listed) if listed.is_empty() => {}
         Some(_) => {
             return Err(refuse(format!(
@@ -1170,6 +1170,9 @@ fn run(args: &[OsString]) -> Result<ExitCode, Stop> {
     let wt = confine::working_tree()?;
     confine::plain_working_tree(&wt)?;
     confine::self_check(&wt)?;
+    if let Some(note) = &confine::mode().note {
+        eprintln!("audit-mem: note: {note}");
+    }
     let call = parse(args)?;
     let pid = match call.sub {
         Sub::Init => String::new(),

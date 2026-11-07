@@ -221,6 +221,9 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
     let wt = confine::working_tree()?;
     confine::plain_working_tree(&wt)?;
     confine::self_check(&wt)?;
+    if let Some(note) = &confine::mode().note {
+        eprintln!("audit-scan: note: {note}");
+    }
     let call = parse(args)?;
     let dir = confine::rel("the directory to scan", &call.dir, true)?;
     if confine::check(&wt, &dir, "the directory to scan")? != Kind::Dir {

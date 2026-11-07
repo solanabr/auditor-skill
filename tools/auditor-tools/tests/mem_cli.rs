@@ -2818,3 +2818,221 @@ fn mem_within_from(dir: &Path, args: &[&str], limit: std::time::Duration, pipe: 
     }
     child.wait_with_output().expect("read audit-mem's output")
 }
+
+/// audit-mem warm from `wt`, git noted by the `noting_git` in `dir`, with `env`
+/// as well: its output, and the global config git was given to ask whether the
+/// in-tree store is tracked.
+fn warm_noted(wt: &Wt, dir: &Path, path: &str, env: &[(&str, &str)]) -> (Output, Vec<String>) {
+    let mut all = vec![("PATH", path)];
+    all.extend_from_slice(env);
+    let o = run_env(BIN, &wt.dir, &["warm", "--program-id", P], &all);
+    let calls = common::noted(dir);
+    (o, common::asked_with(&calls, ".audit-memory"))
+}
+
+const EMPTY_WARM: &str =
+    "{\"profile\":null,\"invariants\":[],\"open_fp_rulings\":[],\"truncated\":0}\n";
+
+#[test]
+fn reads_the_mode_from_auditor_strict_as_confine_sh_does() {
+    // git is given the installation's safe-directory file in default mode, and no
+    // global config in strict mode; any value but the words for on and off is
+    // read as on, with a note.
+    let wt = Wt::repo();
+    wt.run_dir(".audit-memory");
+    let dir = wt.outside().join("noting");
+    let path = common::noting_git(&dir, "");
+    let default = common::safe_directory();
+    let strict = "/dev/null".to_string();
+    let (o, asked) = warm_noted(&wt, &dir, &path, &[]);
+    assert_eq!(ok(&o), EMPTY_WARM);
+    assert_eq!(asked, std::slice::from_ref(&default), "unset");
+    for (value, global, note) in [
+        ("", &default, ""),
+        ("0", &default, ""),
+        ("false", &default, ""),
+        ("No", &default, ""),
+        ("OFF", &default, ""),
+        ("1", &strict, ""),
+        ("true", &strict, ""),
+        ("YES", &strict, ""),
+        ("On", &strict, ""),
+        (
+            "2",
+            &strict,
+            "audit-mem: note: AUDITOR_STRICT is '2', read as on\n",
+        ),
+        (
+            "on please",
+            &strict,
+            "audit-mem: note: AUDITOR_STRICT is 'on please', read as on\n",
+        ),
+        (
+            "\u{1b}[1m",
+            &strict,
+            "audit-mem: note: AUDITOR_STRICT is '?[1m', read as on\n",
+        ),
+    ] {
+        let (o, asked) = warm_noted(&wt, &dir, &path, &[("AUDITOR_STRICT", value)]);
+        assert_eq!(o.status.code(), Some(0), "{value:?}: {}", stderr(&o));
+        assert_eq!(stderr(&o), note, "{value:?}");
+        assert_eq!(stdout(&o), EMPTY_WARM, "{value:?}");
+        assert_eq!(asked, std::slice::from_ref(global), "{value:?}");
+    }
+    // A note comes before a refusal, as confine_init prints it before it reads an
+    // argument.
+    let o = run_env(BIN, &wt.dir, &["warm"], &[("AUDITOR_STRICT", "maybe")]);
+    assert_eq!(
+        stderr(&o),
+        "audit-mem: note: AUDITOR_STRICT is 'maybe', read as on\n\
+         audit-mem: refused: warm needs --program-id\n"
+    );
+}
+
+#[test]
+fn reads_a_strict_marker_in_a_run_directory_as_confine_sh_does() {
+    // An entry named strict, of any kind, in a directory named as a run directory
+    // turns strict mode on; git is asked about it once, with no global config,
+    // whatever the mode, and not at all with no marker.
+    let default = common::safe_directory();
+    let strict = "/dev/null".to_string();
+    for (case, counts) in [
+        ("none", false),
+        ("audit_1/strict, a file", true),
+        ("incident_22/strict, a directory", true),
+        ("audit_3/strict, a dangling link", true),
+        (
+            "audit_4/strict, an empty file in a directory without a .gitignore",
+            true,
+        ),
+        ("audit_x/strict", false),
+        ("report_1/strict", false),
+        ("audit_1234567/strict", false),
+        ("audit_1/strictly", false),
+    ] {
+        let wt = Wt::repo();
+        wt.run_dir(".audit-memory");
+        match case {
+            "none" => {}
+            "audit_1/strict, a file" => {
+                wt.run_dir("audit_1");
+                wt.write("audit_1/strict", b"strict\n");
+            }
+            "incident_22/strict, a directory" => {
+                wt.run_dir("incident_22");
+                wt.mkdir("incident_22/strict");
+            }
+            "audit_3/strict, a dangling link" => {
+                wt.run_dir("audit_3");
+                wt.link("nowhere".as_ref(), "audit_3/strict");
+            }
+            "audit_4/strict, an empty file in a directory without a .gitignore" => {
+                wt.write("audit_4/strict", b"");
+            }
+            other => {
+                let marker = other.split(' ').next().unwrap_or(other);
+                wt.write(marker, b"strict\n");
+            }
+        }
+        let dir = wt.outside().join("noting");
+        let path = common::noting_git(&dir, "");
+        let o = run_env(
+            BIN,
+            &wt.dir,
+            &["warm", "--program-id", P],
+            &[("PATH", &path)],
+        );
+        assert_eq!(ok(&o), EMPTY_WARM, "{case}");
+        let calls = common::noted(&dir);
+        let asked = common::asked_with(&calls, ".audit-memory");
+        let want = if counts { &strict } else { &default };
+        assert_eq!(asked, std::slice::from_ref(want), "{case}: {calls:#?}");
+        let run_dir = case.split('/').next().unwrap_or(case);
+        let about_markers = common::asked_with(&calls, run_dir);
+        if counts {
+            assert_eq!(
+                about_markers,
+                std::slice::from_ref(&strict),
+                "{case}: {calls:#?}"
+            );
+        } else {
+            assert!(about_markers.is_empty(), "{case}: {calls:#?}");
+        }
+    }
+}
+
+#[test]
+fn a_marker_under_a_run_directory_the_repository_tracks_does_not_count() {
+    let wt = Wt::repo();
+    wt.run_dir(".audit-memory");
+    wt.write("audit_1/strict", b"strict\n");
+    wt.write("audit_1/notes.md", b"the repository's own\n");
+    wt.git(&["add", "-f", "audit_1/notes.md"]);
+    // An untracked marker beside it, in a run directory nothing tracks, counts.
+    let dir = wt.outside().join("noting");
+    let path = common::noting_git(&dir, "");
+    let (o, asked) = warm_noted(&wt, &dir, &path, &[]);
+    assert_eq!(ok(&o), EMPTY_WARM);
+    assert_eq!(asked, [common::safe_directory()], "a tracked run directory");
+    wt.run_dir("incident_2");
+    wt.write("incident_2/strict", b"strict\n");
+    let (o, asked) = warm_noted(&wt, &dir, &path, &[]);
+    assert_eq!(ok(&o), EMPTY_WARM);
+    assert_eq!(
+        asked,
+        ["/dev/null".to_string()],
+        "an untracked one beside it"
+    );
+    // When git cannot tell, the marker counts: here its index is unreadable, so
+    // the store is refused too.
+    fs::remove_dir_all(wt.path("incident_2")).expect("rm");
+    wt.write(".git/index", b"not an index");
+    let (o, asked) = warm_noted(&wt, &dir, &path, &[]);
+    refused(
+        &o,
+        "audit-mem",
+        "git cannot tell whether .audit-memory is tracked",
+    );
+    assert_eq!(asked, ["/dev/null".to_string()], "git cannot tell");
+}
+
+#[test]
+fn trusts_a_checkout_another_user_owns_in_default_mode_only() {
+    // git, told the repository is another user's (its own test knob), trusts it
+    // through the safe-directory file in default mode, and cannot tell in strict
+    // mode. A marker is asked about in strict mode's environment in both, so a
+    // tracked marker counts there, as it does for confine.sh (N5).
+    let wt = Wt::repo();
+    wt.run_dir(".audit-memory");
+    let dir = wt.outside().join("noting");
+    let path = common::noting_git(
+        &dir,
+        "GIT_TEST_ASSUME_DIFFERENT_OWNER=1\nexport GIT_TEST_ASSUME_DIFFERENT_OWNER",
+    );
+    let (o, _) = warm_noted(&wt, &dir, &path, &[]);
+    assert_eq!(ok(&o), EMPTY_WARM, "default mode");
+    let (o, _) = warm_noted(&wt, &dir, &path, &[common::STRICT]);
+    refused(
+        &o,
+        "audit-mem",
+        "git cannot tell whether .audit-memory is tracked",
+    );
+    wt.write("audit_1/strict", b"strict\n");
+    wt.git(&["add", "-f", "audit_1/strict"]);
+    let o = run_env(
+        BIN,
+        &wt.dir,
+        &["warm", "--program-id", P],
+        &[("PATH", &path)],
+    );
+    refused(
+        &o,
+        "audit-mem",
+        "git cannot tell whether .audit-memory is tracked",
+    );
+    let calls = common::noted(&dir);
+    assert!(
+        !calls.is_empty() && calls.iter().all(|(global, _)| global == "/dev/null"),
+        "a tracked marker counts: {calls:#?}"
+    );
+}

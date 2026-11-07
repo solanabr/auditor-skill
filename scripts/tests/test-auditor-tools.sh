@@ -28,6 +28,9 @@
 #      build refuses --contract=1 in every form a rule pre-approves, before any effect; without it, a loud SKIP.
 # bash >= 3.2, git, python3, cmp. No network beyond cargo's own fetch of the locked crates.
 set -uo pipefail
+# The binaries and scripts/rundir.sh read the mode (OUTPUT-RULES.md Rule 11f) from the environment: each check
+# below sets AUDITOR_STRICT itself.
+unset AUDITOR_STRICT
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"

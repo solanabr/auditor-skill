@@ -71,6 +71,28 @@ cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked
 A later contract would take `--contract=2`, which this build refuses with a line that
 says to rebuild it.
 
+### The mode
+
+`audit-scan` and `audit-mem` read the mode of `OUTPUT-RULES.md` Rule 11f once, as
+`scripts/lib/confine.sh`'s `confine_mode` reads it, and take no `--strict`. Strict
+mode is on when either says so:
+
+- `AUDITOR_STRICT`: `1`, `true`, `yes` or `on`, in any letter case, turn it on; `0`,
+  `false`, `no`, `off`, empty and unset leave it off; any other value turns it on,
+  with the note `<tool>: note: AUDITOR_STRICT is '<v>', read as on` on stderr, before
+  anything else the call prints.
+- A marker: an entry named `strict`, of any kind, in a run directory of the working
+  directory (`audit_<n>/strict` or `incident_<n>/strict`), unless git tracks anything
+  under that run directory, which is then the repository's. git is asked once, for
+  every marker, and only when there is one, with no global config whatever the mode;
+  when it cannot tell, the markers count.
+
+In default mode git reads the safe-directory file of the installation the tools were
+built in, `scripts/lib/safe-directory.gitconfig`, as its global config, so it reads a
+checkout another user owns; in strict mode it reads none, and cannot tell for such a
+checkout, as before. What else default mode changes is given with each check below;
+in strict mode each refusal keeps its words.
+
 ## `audit-scan`
 
 ```
