@@ -528,7 +528,7 @@ Under `claude -p` and in CI, export `AUDITOR_STRICT=1` in the job's environment 
 | `target.sh`: a revision with submodules | built with them empty, with a note | blocker |
 | `target.sh`: the copy's `rust-toolchain.toml` | its channel is used when rustup has it, with a note | not read |
 | `target.sh`: `.npmrc` registry lines | `https` registry lines kept, every other line dropped, with a note | every line dropped |
-| `target.sh`, `run.sh`: an `Incident*` folder that is not the auditor's own | passed over, with a note | passed over, with a note |
+| `target.sh`, `run.sh`: an `Incident*` folder that is not the auditor's own | passed over by the incident rule, with a note | not reached: the rule stops native builds, and strict mode builds isolated |
 | `deps.sh cargo-audit`: a lockfile that names another registry | runs with `--no-yanked`, with a note | blocker |
 | `sast.sh`: a link that resolves outside the tree; a very large tree | left out, with a note; the link check stops at 500,000 entries, with a note | refused |
 | `collect.sh`: a partial clone, or a target whose config git cannot read | read, with a note | stops (exit 3) |
