@@ -218,6 +218,10 @@ characters, as a snippet is. It is not a general YAML library, and it fails
 closed: what it does not read is listed in that workflow's `unknown`, with its
 line, and never guessed.
 
+- Each fact the report keeps cut at 200 characters (a `run:` script, an `if:`, a
+  `with:` or `env:` value, a trigger, a job id) is listed with its key path and the
+  line it starts on, in both modes: `jobs.build.steps[2].run: a value cut at 200
+  characters, from line 31`, or `a key cut …` for a key.
 - An alias (`*`), a tag (`!…`), a merge key (`<<`) and an explicit key (`?`) are
   listed with the lines they cover, which are not read; the read goes on after
   them. An anchor (`&`) is listed too, though its node is read. An alias is never
@@ -450,8 +454,9 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
       ],
       // what the parser did not read: a construct outside its subset (an
       // alias, tag, merge key or explicit key, with the lines it covers; an
-      // anchor, whose node is read), or the rest of the file from a line it
-      // could not place. Empty only when the whole file was read.
+      // anchor, whose node is read), the rest of the file from a line it
+      // could not place, or a fact above cut at 200 characters. Empty only
+      // when the whole file was read.
       "unknown": [ { "line": 0, "what": "string" } ] }
   ],
 

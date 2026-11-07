@@ -868,8 +868,9 @@ fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_caps_and_the_scans_t
 /// `*.yml` and `*.yaml` files the pass reads there; it does not recurse into
 /// `actions/` or `infra/`) gives the facts checked in for it, under
 /// `scripts/tests/fixtures/audit-scan/gha-facts/<fixture>.json`, and is read
-/// whole, with an empty `unknown`. A fixture with no expected facts fails, naming
-/// it; so does an expectation with no fixture, and a fixture not read whole.
+/// whole: its `unknown` lists nothing but a value cut at 200 characters, which
+/// the facts list too. A fixture with no expected facts fails, naming it; so does
+/// an expectation with no fixture, and a fixture not read whole.
 #[test]
 fn every_gha_fixture_gives_the_facts_checked_in_for_it() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/tests/fixtures");
@@ -904,7 +905,17 @@ fn every_gha_fixture_gives_the_facts_checked_in_for_it() {
         if let Some(w) = facts_of.as_object_mut() {
             w.remove("file");
         }
-        if facts_of.is_object() && facts_of["unknown"] != Value::Array(Vec::new()) {
+        let only_cuts = facts_of["unknown"].as_array().is_some_and(|u| {
+            u.iter().all(|e| {
+                e["what"].as_str().is_some_and(|w| {
+                    w.ends_with(&format!(
+                        ": a value cut at 200 characters, from line {}",
+                        e["line"]
+                    ))
+                })
+            })
+        });
+        if facts_of.is_object() && !only_cuts {
             problems.push(format!(
                 "{n}: not read whole; unknown is {}",
                 facts_of["unknown"]

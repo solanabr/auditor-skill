@@ -33,5 +33,10 @@
       ]
     }
   ],
-  "unknown": []
+  "unknown": [
+    {
+      "line": 16,
+      "what": "jobs.fetch.steps[0].with.script: a value cut at 200 characters, from line 16"
+    }
+  ]
 }
