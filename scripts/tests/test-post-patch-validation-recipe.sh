@@ -455,7 +455,7 @@ done
 if grep -qF 'Also write the answer with the Write tool, as one word, `isolated` or `native`, to `audit_<n>/exec-mode`' "$ROOT/commands/intake.md" \
    && grep -qF 'and `audit_<n>/exec-mode` holds `native`' "$ROOT/commands/intake.md" \
    && grep -qF 'the answer is also written as one word to audit_<n>/exec-mode, where' "$ROOT/templates/intake.md" \
-   && grep -qF 'templates/poc/run.sh --crate reads it (the stricter of it and AUDITOR_EXEC_MODE)' "$ROOT/templates/intake.md"
+   && grep -qF 'templates/poc/run.sh --crate reads it (the stricter of it, AUDITOR_EXEC_MODE and strict mode)' "$ROOT/templates/intake.md"
 then ok "/auditor:intake writes the Q46 answer as one word to audit_<n>/exec-mode (native under --auto), as §8 says"
 else bad "/auditor:intake does not write audit_<n>/exec-mode as one word, or §8 does not say where run.sh reads it"; fi
 
