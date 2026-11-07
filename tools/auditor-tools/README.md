@@ -274,7 +274,9 @@ so it must be safe whatever arguments follow. Its rules are those of
   `a-z`, `0-9` and `-`, directly in a run directory, `audit_<n>/` or `incident_<n>/`,
   that passes `scripts/rundir.sh check`: a real directory in the working directory,
   holding no symbolic link, tracked by no repository in any letter case, with a
-  `.gitignore` of exactly `*`. The file is made new (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode
+  `.gitignore` of exactly `*`. In default mode a link under it that resolves to it or
+  below it, as a PoC crate may hold, is taken; one that leads out of it, or cannot be
+  resolved, is refused in both modes. The file is made new (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode
   0600) through the run directory, opened once without following a link; a file
   already there is replaced only when it is a regular file with one name, as
   audit-scan's own earlier output is.
@@ -599,6 +601,10 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
 - Before it uses `.audit-memory/`, it checks it as `scripts/rundir.sh store` does:
   the repository tracks no `.audit-memory` in any letter case, and `.audit-memory/`
   is a real directory holding no symbolic link, with a `.gitignore` of exactly `*`.
+  In default mode a link under a run directory or `.audit-memory/` that resolves to it
+  or below it is taken; one that leads out of it, or cannot be resolved, is refused
+  in both modes. The database and SQLite's files beside it are checked by name, so
+  none of them may be a link.
   Whether you made the store yourself stays your judgement (OUTPUT-RULES.md
   Rule 11d). A store an earlier `init` made, before it wrote the `.gitignore`, has
   none and is refused: if the store is yours, write `.audit-memory/.gitignore`

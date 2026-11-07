@@ -1666,3 +1666,43 @@ fn reads_the_mode_as_audit_mem_does() {
     wt.write("incident_5/strict", b"strict\n");
     assert_eq!(out(&[]), (String::new(), strict));
 }
+
+#[test]
+fn writes_into_a_run_directory_holding_a_link_inside_it_in_default_mode_only() {
+    // A link under a run directory that resolves inside it (to a file there, or
+    // to the run directory itself), as a PoC crate may hold, is taken in default
+    // mode; strict mode refuses any link. One that leads out of it, to another run
+    // directory too, or that cannot be resolved, is refused in both.
+    let wt = Wt::repo();
+    wt.write("src/lib.rs", b"fn a() {}\n");
+    wt.run_dir("audit_1");
+    wt.mkdir("audit_1/poc/F-1");
+    wt.link("../../.gitignore".as_ref(), "audit_1/poc/F-1/ignore");
+    wt.link(".".as_ref(), "audit_1/self");
+    wt.run_dir("audit_2");
+    wt.link("nowhere".as_ref(), "audit_2/gone");
+    wt.run_dir("audit_3");
+    wt.link("../audit_1".as_ref(), "audit_3/next");
+    let args = ["src", "--out", "audit_1/prescan.json"];
+    refused(
+        &common::run_strict(BIN, &wt.dir, &args),
+        "audit-scan",
+        "--out holds a symbolic link: audit_1",
+    );
+    assert!(!wt.exists("audit_1/prescan.json"));
+    let o = run(BIN, &wt.dir, &args);
+    assert_eq!(o.status.code(), Some(0), "{}", common::stderr(&o));
+    assert_eq!(
+        (stdout(&o), common::stderr(&o)),
+        (String::new(), String::new())
+    );
+    let report: Value = serde_json::from_slice(&wt.read("audit_1/prescan.json")).expect("JSON");
+    assert_eq!(report["files_scanned"], 1);
+    for r in ["audit_2", "audit_3"] {
+        let args = ["src", "--out", &format!("{r}/prescan.json")];
+        let why = format!("--out holds a symbolic link: {r}");
+        refused(&run(BIN, &wt.dir, &args), "audit-scan", &why);
+        refused(&common::run_strict(BIN, &wt.dir, &args), "audit-scan", &why);
+        assert!(!wt.exists(&format!("{r}/prescan.json")));
+    }
+}

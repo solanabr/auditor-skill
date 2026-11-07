@@ -10,8 +10,9 @@
 //! characters; it does not start with `-` or `~`, has no empty, `.` or `..`
 //! component once one leading `./` is dropped, passes through no symbolic link and
 //! resolves inside WT. A run directory is `audit_<n>` or `incident_<n>` (n of 1 to
-//! 6 digits) directly in WT: a real directory, holding no symbolic link, tracked by
-//! no repository in any letter case, whose `.gitignore` holds exactly `*`, as
+//! 6 digits) directly in WT: a real directory, holding no symbolic link (in default
+//! mode, none that leads out of it), tracked by no repository in any letter case,
+//! whose `.gitignore` holds exactly `*`, as
 //! `scripts/rundir.sh check` checks it. git runs only as `hgit` runs it: found on
 //! a PATH with every entry inside WT, or inside the tree WT lies in, removed
 //! (by identity, not spelling), with an environment of its own that allows no
@@ -474,12 +475,22 @@ pub fn ignores_all(path: &Path) -> bool {
         && (text == b"*" || text == b"*\n")
 }
 
-/// Whether the tree under `dir` holds a symbolic link, never following one
-/// (`find <dir> -type l`); an entry that cannot be read is an error.
+/// Whether the tree under `dir`, an absolute path, holds a symbolic link,
+/// never following one (`find <dir> -type l`): in strict mode any link; in
+/// default mode one that cannot be resolved, or resolves neither to `dir` nor
+/// below it (`inside`), as `confine_rundir` takes it. An entry that cannot be
+/// read is an error.
 pub fn holds_link(dir: &Path) -> io::Result<bool> {
+    let any = strict();
     for entry in WalkDir::new(dir).follow_links(false) {
         let entry = entry.map_err(io::Error::from)?;
-        if entry.path_is_symlink() {
+        if entry.path_is_symlink()
+            && (any
+                || !entry
+                    .path()
+                    .canonicalize()
+                    .is_ok_and(|real| inside(&real, dir)))
+        {
             return Ok(true);
         }
     }
@@ -488,9 +499,10 @@ pub fn holds_link(dir: &Path) -> io::Result<bool> {
 
 /// Checks a run directory as `confine_rundir` does, in its words, with `what`
 /// naming the argument it came from: the name, then a real directory, holding no
-/// symbolic link, in a repository holding no file git would wait on (`Git::files`),
-/// tracked by no repository in any letter case, with a `.gitignore` of exactly
-/// `*`. Returns its lstat.
+/// symbolic link (`holds_link`: in default mode none that leads out of it), in a
+/// repository holding no file git would wait on (`Git::files`), tracked by no
+/// repository in any letter case, with a `.gitignore` of exactly `*`. Returns its
+/// lstat.
 pub fn run_dir(wt: &Path, git: &mut Git, name: &[u8], what: &str) -> Result<Metadata, Stop> {
     git.need()?;
     let s = shown(name);

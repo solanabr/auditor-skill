@@ -354,14 +354,18 @@ eq "audit-mem: the file outside with a second name in the working tree is unchan
 # 3b. Run directories and stores as scripts/rundir.sh sees them: rundir.sh
 #     check <R> and audit-scan --out <R>/prescan.json accept the same run
 #     directories and refuse the others for the same reason, in the same words;
-#     so do rundir.sh store and audit-mem warm, for the in-tree store.
+#     so do rundir.sh store and audit-mem warm, for the in-tree store. Each in
+#     strict mode, then in default mode.
 # ---------------------------------------------------------------------------
+# in_mode <strict|default> <command>...: the command, with AUDITOR_STRICT=1 in strict mode.
+in_mode() { if [ "$1" = strict ]; then shift; AUDITOR_STRICT=1 "$@"; else shift; "$@"; fi; }
 RUNDIR="$ROOT/scripts/rundir.sh"
 H="$T/rundirs"
 mkdir -p "$H/wt" "$H/outside"
 fgit init -q "$H/wt"
 W="$H/wt"
-for d in audit_1 audit_3 audit_4 audit_5 audit_6 audit_7 audit_8 audit_9 audit_10 audit_13 audit_15 audit_16 incident_1; do
+for d in audit_1 audit_3 audit_4 audit_5 audit_6 audit_7 audit_8 audit_9 audit_10 audit_13 audit_15 audit_16 audit_17 \
+         audit_18 incident_1; do
   mkdir "$W/$d"
 done
 mkdir "$W/audit_2"
@@ -383,7 +387,14 @@ fgit -C "$W" add -f audit_13/.gitignore
 mkdir "$W/audit_15/.gitignore"
 printf '*\n' > "$W/audit_16/.gitignore"
 printf '*\n' > "$W/incident_1/.gitignore"
-dirs="audit_1 audit_2 audit_3 audit_4 audit_5 audit_6 audit_7 audit_8 audit_9 audit_10 audit_11 audit_12 audit_13 audit_14 audit_15 incident_1"
+# A link that resolves inside the run directory, which default mode takes, and one that cannot be resolved.
+printf '*\n' > "$W/audit_17/.gitignore"
+mkdir "$W/audit_17/poc"
+ln -s ../.gitignore "$W/audit_17/poc/ignore"
+printf '*\n' > "$W/audit_18/.gitignore"
+ln -s nowhere "$W/audit_18/gone"
+dirs="audit_1 audit_2 audit_3 audit_4 audit_5 audit_6 audit_7 audit_8 audit_9 audit_10 audit_11 audit_12 audit_13 audit_14 audit_15 \
+  audit_17 audit_18 incident_1"
 if [ "$(id -u)" -ne 0 ]; then
   mkdir "$W/audit_16/locked"
   chmod 000 "$W/audit_16/locked"
@@ -391,15 +402,21 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 # said <file> <prefix>: the refusal line with its tool's prefix taken off, or "ok".
 said() { if [ -s "$1" ]; then sed -e "s/^$2//" "$1"; else printf 'ok'; fi; }
-for r in $dirs; do
-  ( cd "$W" && "$RUNDIR" check "$r" ) > "$T/a.out" 2> "$T/a.err" < /dev/null
-  [ $? -eq 0 ] && [ "$(cat "$T/a.out")" != "ok $r" ] && printf 'odd: %s\n' "$(cat "$T/a.out")" > "$T/a.err"
-  ( cd "$W" && "$SCAN" --contract=1 . --out "$r/prescan.json" ) > /dev/null 2> "$T/b.err" < /dev/null
-  eq "rundir.sh check and audit-scan --out agree on $r" \
-    "$(said "$T/b.err" 'audit-scan: refused: --out ')" "$(said "$T/a.err" 'rundir: refused: the run directory ')"
+for mode in strict default; do
+  for r in $dirs; do
+    ( cd "$W" && in_mode "$mode" "$RUNDIR" check "$r" ) > "$T/a.out" 2> "$T/a.err" < /dev/null
+    [ $? -eq 0 ] && [ "$(cat "$T/a.out")" != "ok $r" ] && printf 'odd: %s\n' "$(cat "$T/a.out")" > "$T/a.err"
+    ( cd "$W" && in_mode "$mode" "$SCAN" --contract=1 . --out "$r/prescan.json" ) > /dev/null 2> "$T/b.err" < /dev/null
+    eq "rundir.sh check and audit-scan --out agree on $r, $mode mode" \
+      "$(said "$T/b.err" 'audit-scan: refused: --out ')" "$(said "$T/a.err" 'rundir: refused: the run directory ')"
+  done
+  ( cd "$W" && in_mode "$mode" "$SCAN" --contract=1 . --out audit_17/prescan.json ) > /dev/null 2> "$T/b.err" < /dev/null
+  eq "audit-scan --out into a run directory holding a link inside it, $mode mode" "$(said "$T/b.err" 'audit-scan: refused: ')" \
+    "$(if [ "$mode" = strict ]; then printf -- '--out holds a symbolic link: audit_17'; else printf ok; fi)"
 done
 [ "$(id -u)" -ne 0 ] && chmod 700 "$W/audit_16/locked"
-for c in absent ok no-gitignore nul-gitignore link holds-link not-a-directory tracked database-a-directory; do
+for c in absent ok no-gitignore nul-gitignore link holds-link holds-inside-link holds-dangling-link not-a-directory tracked \
+         database-a-directory; do
   S="$T/store-$c"
   mkdir -p "$S/wt" "$S/real"
   fgit init -q "$S/wt"
@@ -409,17 +426,21 @@ for c in absent ok no-gitignore nul-gitignore link holds-link not-a-directory tr
     absent) ;;
     *) mkdir "$S/wt/.audit-memory" ;;
   esac
-  case $c in ok|holds-link|tracked|database-a-directory) printf '*\n' > "$S/wt/.audit-memory/.gitignore" ;; esac
+  case $c in ok|holds-*|tracked|database-a-directory) printf '*\n' > "$S/wt/.audit-memory/.gitignore" ;; esac
   case $c in
     nul-gitignore) printf '*\000' > "$S/wt/.audit-memory/.gitignore" ;;
     holds-link) ln -s ../../real "$S/wt/.audit-memory/out" ;;
+    holds-inside-link) ln -s .gitignore "$S/wt/.audit-memory/ignore" ;;
+    holds-dangling-link) ln -s nowhere "$S/wt/.audit-memory/gone" ;;
     tracked) fgit -C "$S/wt" add -f .audit-memory/.gitignore ;;
     database-a-directory) mkdir "$S/wt/.audit-memory/audit.db" ;;
   esac
-  ( cd "$S/wt" && "$RUNDIR" store ) > /dev/null 2> "$T/a.err" < /dev/null
-  ( cd "$S/wt" && "$MEM" warm --contract=1 --program-id VaultProg1111 ) > /dev/null 2> "$T/b.err" < /dev/null
-  eq "rundir.sh store and audit-mem agree on an in-tree store: $c" \
-    "$(said "$T/b.err" 'audit-mem: refused: ')" "$(said "$T/a.err" 'rundir: refused: ')"
+  for mode in strict default; do
+    ( cd "$S/wt" && in_mode "$mode" "$RUNDIR" store ) > /dev/null 2> "$T/a.err" < /dev/null
+    ( cd "$S/wt" && in_mode "$mode" "$MEM" warm --contract=1 --program-id VaultProg1111 ) > /dev/null 2> "$T/b.err" < /dev/null
+    eq "rundir.sh store and audit-mem agree on an in-tree store: $c, $mode mode" \
+      "$(said "$T/b.err" 'audit-mem: refused: ')" "$(said "$T/a.err" 'rundir: refused: ')"
+  done
 done
 
 # A repository holding a named pipe git would open on its way (as HEAD, or one its config includes): each
@@ -433,14 +454,16 @@ for c in head include; do
     head) rm "$S/wt/.git/HEAD" && mkfifo "$S/wt/.git/HEAD" ;;
     include) printf '[include]\n\tpath = ../pipe\n' >> "$S/wt/.git/config" && mkfifo "$S/wt/pipe" ;;
   esac
-  ( cd "$S/wt" && "$RUNDIR" check audit_1 ) > /dev/null 2> "$T/a.err" < /dev/null
-  ( cd "$S/wt" && "$SCAN" --contract=1 . --out audit_1/prescan.json ) > /dev/null 2> "$T/b.err" < /dev/null
-  eq "rundir.sh check and audit-scan --out refuse a named pipe git would open in the same words: $c" \
-    "$(sed -e 's/^audit-scan: refused: //' "$T/b.err")" "$(sed -e 's/^rundir: refused: //' "$T/a.err")"
-  ( cd "$S/wt" && "$RUNDIR" store ) > /dev/null 2> "$T/a.err" < /dev/null
-  ( cd "$S/wt" && "$MEM" warm --contract=1 --program-id VaultProg1111 ) > /dev/null 2> "$T/b.err" < /dev/null
-  eq "rundir.sh store and audit-mem agree on a named pipe git would open: $c" \
-    "$(said "$T/b.err" 'audit-mem: refused: ')" "$(said "$T/a.err" 'rundir: refused: ')"
+  for mode in strict default; do
+    ( cd "$S/wt" && in_mode "$mode" "$RUNDIR" check audit_1 ) > /dev/null 2> "$T/a.err" < /dev/null
+    ( cd "$S/wt" && in_mode "$mode" "$SCAN" --contract=1 . --out audit_1/prescan.json ) > /dev/null 2> "$T/b.err" < /dev/null
+    eq "rundir.sh check and audit-scan --out refuse a named pipe git would open in the same words: $c, $mode mode" \
+      "$(sed -e 's/^audit-scan: refused: //' "$T/b.err")" "$(sed -e 's/^rundir: refused: //' "$T/a.err")"
+    ( cd "$S/wt" && in_mode "$mode" "$RUNDIR" store ) > /dev/null 2> "$T/a.err" < /dev/null
+    ( cd "$S/wt" && in_mode "$mode" "$MEM" warm --contract=1 --program-id VaultProg1111 ) > /dev/null 2> "$T/b.err" < /dev/null
+    eq "rundir.sh store and audit-mem agree on a named pipe git would open: $c, $mode mode" \
+      "$(said "$T/b.err" 'audit-mem: refused: ')" "$(said "$T/a.err" 'rundir: refused: ')"
+  done
 done
 
 # ---------------------------------------------------------------------------

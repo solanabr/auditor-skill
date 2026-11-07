@@ -19,8 +19,9 @@
 //!   `scripts/rundir.sh check`. Before it uses the in-tree store, audit-mem checks
 //!   it as `scripts/rundir.sh store` does: untracked in any letter case (asked of
 //!   git as confine.sh's `hgit` asks it), a real directory holding no symbolic
-//!   link, with a `.gitignore` of exactly `*`; git that cannot answer is a
-//!   refusal. The database is a regular file with one name.
+//!   link (in default mode, `confine::mode`, none that leads out of it), with a
+//!   `.gitignore` of exactly `*`; git that cannot answer is a refusal. The
+//!   database is a regular file with one name.
 //! - `warm`, `check` and `regressions` open the store read-only and never make
 //!   it; with no store they print an empty answer, and beside a write to it that
 //!   did not finish they read nothing (`init` rolls that write back). `init` makes

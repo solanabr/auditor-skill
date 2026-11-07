@@ -3036,3 +3036,35 @@ fn trusts_a_checkout_another_user_owns_in_default_mode_only() {
         "a tracked marker counts: {calls:#?}"
     );
 }
+
+#[test]
+fn takes_a_store_holding_a_link_inside_it_in_default_mode_only() {
+    // A link that resolves inside the store's directory is taken in default mode,
+    // in a run directory and in .audit-memory; strict mode refuses any link. One
+    // that leads out, or that cannot be resolved, is refused in both.
+    let wt = Wt::repo();
+    wt.run_dir("audit_1");
+    wt.link(".gitignore".as_ref(), "audit_1/ignore");
+    let init = ["init", "--db", "audit_1/audit-mem.db"];
+    let warm = ["warm", "--db", "audit_1/audit-mem.db", "--program-id", P];
+    refused(
+        &common::run_strict(BIN, &wt.dir, &init),
+        "audit-mem",
+        "--db holds a symbolic link: audit_1",
+    );
+    assert!(!wt.exists("audit_1/audit-mem.db"));
+    assert_eq!(ok(&mem(&wt, &init)), "initialized audit_1/audit-mem.db\n");
+    assert_eq!(ok(&mem(&wt, &warm)), EMPTY_WARM);
+    let wt = store();
+    wt.link(".gitignore".as_ref(), ".audit-memory/ignore");
+    let warm = ["warm", "--program-id", P];
+    let why = format!(".audit-memory holds a symbolic link{USE_R}");
+    refused(&common::run_strict(BIN, &wt.dir, &warm), "audit-mem", &why);
+    assert_eq!(ok(&mem(&wt, &warm)), EMPTY_WARM);
+    for (name, target) in [("out", wt.outside()), ("gone", PathBuf::from("nowhere"))] {
+        wt.link(&target, &format!(".audit-memory/{name}"));
+        refused(&mem(&wt, &warm), "audit-mem", &why);
+        refused(&common::run_strict(BIN, &wt.dir, &warm), "audit-mem", &why);
+        fs::remove_file(wt.path(&format!(".audit-memory/{name}"))).expect("rm");
+    }
+}
