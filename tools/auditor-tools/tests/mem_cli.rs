@@ -523,19 +523,55 @@ fn checks_the_in_tree_store_with_git() {
     assert!(!broken.exists(".audit-memory"));
     broken.run_dir("audit_1");
     refused(
-        &mem(&broken, &["init", "--db", "audit_1/audit-mem.db"]),
+        &common::run_strict(BIN, &broken.dir, &["init", "--db", "audit_1/audit-mem.db"]),
         "audit-mem",
         "git cannot tell whether --db is tracked: audit_1",
     );
-    // No git: a refusal, before anything is read.
-    let empty = wt.outside();
-    let o = run_env(
-        BIN,
-        &wt.dir,
-        &["warm", "--program-id", P],
-        &[("PATH", empty.to_str().unwrap_or("/x"))],
+    assert!(!broken.exists("audit_1/audit-mem.db"));
+    // In default mode a run directory's .gitignore of * alone decides, as
+    // confine_rundir takes it there.
+    assert_eq!(
+        ok(&mem(&broken, &["init", "--db", "audit_1/audit-mem.db"])),
+        "initialized audit_1/audit-mem.db\n"
     );
+    // No git: the in-tree store is refused, before anything is read. A store in a
+    // run directory is taken by its .gitignore of * in default mode only.
+    let empty = wt.outside();
+    let no_git = [("PATH", empty.to_str().unwrap_or("/x"))];
+    let o = run_env(BIN, &wt.dir, &["warm", "--program-id", P], &no_git);
     refused(&o, "audit-mem", "git is not on PATH");
+    wt.run_dir("audit_2");
+    wt.mkdir("audit_3");
+    let init = ["init", "--db", "audit_2/audit-mem.db"];
+    refused(
+        &run_env(BIN, &wt.dir, &init, &[no_git[0], common::STRICT]),
+        "audit-mem",
+        "git is not on PATH",
+    );
+    assert!(!wt.exists("audit_2/audit-mem.db"));
+    assert_eq!(
+        ok(&run_env(BIN, &wt.dir, &init, &no_git)),
+        "initialized audit_2/audit-mem.db\n"
+    );
+    assert_eq!(
+        ok(&run_env(
+            BIN,
+            &wt.dir,
+            &["warm", "--db", "audit_2/audit-mem.db", "--program-id", P],
+            &no_git
+        )),
+        EMPTY_WARM
+    );
+    refused(
+        &run_env(
+            BIN,
+            &wt.dir,
+            &["init", "--db", "audit_3/audit-mem.db"],
+            &no_git,
+        ),
+        "audit-mem",
+        "--db has no .gitignore holding exactly *: audit_3",
+    );
     // A PATH whose every entry is inside the working tree.
     wt.mkdir("bin");
     let inside = wt.path("bin");
@@ -2610,6 +2646,9 @@ fn refuses_when_git_does_not_answer_in_time() {
         .expect("run sh");
     assert!(status.success(), "write the slow git");
     let path = format!("{}:/usr/bin:/bin", slow.display());
+    let in_time = |took: std::time::Duration| {
+        took >= std::time::Duration::from_secs(10) && took < std::time::Duration::from_secs(40)
+    };
     for (args, why) in [
         (
             vec!["warm", "--program-id", P],
@@ -2621,15 +2660,24 @@ fn refuses_when_git_does_not_answer_in_time() {
         ),
     ] {
         let start = std::time::Instant::now();
-        let o = run_env(BIN, &wt.dir, &args, &[("PATH", &path)]);
+        let o = run_env(BIN, &wt.dir, &args, &[("PATH", &path), common::STRICT]);
         let took = start.elapsed();
         refused(&o, "audit-mem", why);
-        assert!(
-            took >= std::time::Duration::from_secs(10) && took < std::time::Duration::from_secs(40),
-            "{args:?}: {took:?}"
-        );
+        assert!(in_time(took), "{args:?}: {took:?}");
     }
     assert!(!wt.exists("audit_1/audit-mem.db"), "nothing made");
+    // In default mode the run directory's .gitignore of * decides once git has
+    // been killed.
+    let start = std::time::Instant::now();
+    let o = run_env(
+        BIN,
+        &wt.dir,
+        &["init", "--db", "audit_1/audit-mem.db"],
+        &[("PATH", &path)],
+    );
+    let took = start.elapsed();
+    assert_eq!(ok(&o), "initialized audit_1/audit-mem.db\n");
+    assert!(in_time(took), "{took:?}");
 }
 
 #[test]

@@ -501,10 +501,17 @@ pub fn holds_link(dir: &Path) -> io::Result<bool> {
 /// naming the argument it came from: the name, then a real directory, holding no
 /// symbolic link (`holds_link`: in default mode none that leads out of it), in a
 /// repository holding no file git would wait on (`Git::files`), tracked by no
-/// repository in any letter case, with a `.gitignore` of exactly `*`. Returns its
+/// repository in any letter case, with a `.gitignore` of exactly `*`. In default
+/// mode, when git cannot tell whether it is tracked, or is not on PATH, the
+/// `.gitignore` alone decides, as `confine_rundir` takes it there. Returns its
 /// lstat.
 pub fn run_dir(wt: &Path, git: &mut Git, name: &[u8], what: &str) -> Result<Metadata, Stop> {
-    git.need()?;
+    let strict = strict();
+    let found = if strict {
+        git.need().map(|()| true)?
+    } else {
+        git.found()?
+    };
     let s = shown(name);
     if !is_run_dir_name(name) {
         return Err(refuse(format!(
@@ -524,14 +531,17 @@ pub fn run_dir(wt: &Path, git: &mut Git, name: &[u8], what: &str) -> Result<Meta
         Ok(true) => return Err(refuse(format!("{what} holds a symbolic link: {s}"))),
         Err(_) => return Err(refuse(format!("{what} cannot be fully read: {s}"))),
     }
-    git.files()?;
-    match git.tracked(&[name]) {
-        Some(listed) if listed.is_empty() => {}
-        Some(_) => return Err(refuse(format!("{what} is tracked by git: {s}"))),
-        None => {
-            return Err(refuse(format!(
-                "git cannot tell whether {what} is tracked: {s}"
-            )))
+    if found {
+        git.files()?;
+        match git.tracked(&[name]) {
+            Some(listed) if listed.is_empty() => {}
+            Some(_) => return Err(refuse(format!("{what} is tracked by git: {s}"))),
+            None if strict => {
+                return Err(refuse(format!(
+                    "git cannot tell whether {what} is tracked: {s}"
+                )))
+            }
+            None => {}
         }
     }
     if !ignores_all(&dir.join(".gitignore")) {
@@ -765,7 +775,9 @@ fn repository_top(wt: &Path) -> Option<&Path> {
 /// cleans it.
 pub struct Git {
     wt: PathBuf,
-    found: Option<(PathBuf, OsString)>,
+    /// git and the PATH it runs with, once looked for; `None` inside when git
+    /// is not on that PATH.
+    found: Option<Option<(PathBuf, OsString)>>,
     /// Why git, asked from WT, would wait for good on a file it opens; found once.
     waits: OnceCell<Option<String>>,
     /// What git reads as its global config (`Mode`).
@@ -788,15 +800,25 @@ impl Git {
     }
 
     /// Refuses, in confine.sh's words, when no PATH entry is left outside WT or
-    /// git is not on what is left. Call it before any other method.
+    /// git is not on what is left. Call it, or `found`, before any other method.
     pub fn need(&mut self) -> Result<(), Stop> {
+        if self.found()? {
+            Ok(())
+        } else {
+            Err(refuse("git is not on PATH".into()))
+        }
+    }
+
+    /// Whether git is on PATH, looked for once; refuses, in confine.sh's words,
+    /// when no PATH entry is left outside WT.
+    pub fn found(&mut self) -> Result<bool, Stop> {
         if self.found.is_none() {
             self.found = Some(self.find()?);
         }
-        Ok(())
+        Ok(matches!(self.found, Some(Some(_))))
     }
 
-    fn find(&self) -> Result<(PathBuf, OsString), Stop> {
+    fn find(&self) -> Result<Option<(PathBuf, OsString)>, Stop> {
         let path = std::env::var_os("PATH").unwrap_or_default();
         let top = repository_top(&self.wt);
         let mut clean: Vec<PathBuf> = Vec::new();
@@ -826,13 +848,11 @@ impl Git {
                 "no PATH entry is left outside the working directory".into(),
             ));
         }
-        let exe = clean
-            .iter()
-            .map(|d| d.join("git"))
-            .find(|g| {
-                fs::metadata(g).is_ok_and(|md| md.is_file() && md.permissions().mode() & 0o111 != 0)
-            })
-            .ok_or_else(|| refuse("git is not on PATH".into()))?;
+        let Some(exe) = clean.iter().map(|d| d.join("git")).find(|g| {
+            fs::metadata(g).is_ok_and(|md| md.is_file() && md.permissions().mode() & 0o111 != 0)
+        }) else {
+            return Ok(None);
+        };
         let joined = OsString::from_vec(
             clean
                 .iter()
@@ -840,7 +860,7 @@ impl Git {
                 .collect::<Vec<_>>()
                 .join(&b':'),
         );
-        Ok((exe, joined))
+        Ok(Some((exe, joined)))
     }
 
     /// `hgit <dir> <args>` with GIT_CEILING_DIRECTORIES set to `ceiling`: no
@@ -852,7 +872,8 @@ impl Git {
         let (exe, path) = self
             .found
             .as_ref()
-            .ok_or_else(|| invalid("git was not looked for"))?;
+            .and_then(Option::as_ref)
+            .ok_or_else(|| invalid("git was not looked for, or is not on PATH"))?;
         let mut cmd = Command::new(exe);
         cmd.env_clear();
         if let Some(home) = std::env::var_os("HOME") {

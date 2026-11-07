@@ -978,16 +978,31 @@ fn refuses_an_out_it_may_not_write() {
 }
 
 #[test]
-fn refuses_an_out_when_git_cannot_answer() {
+fn refuses_an_out_when_git_cannot_answer_in_strict_mode_only() {
     let wt = Wt::repo();
     wt.run_dir("audit_1");
+    wt.mkdir("audit_2");
     wt.write(".git/index", b"not an index");
+    let args = [".", "--out", "audit_1/prescan.json"];
     refused(
-        &run(BIN, &wt.dir, &[".", "--out", "audit_1/prescan.json"]),
+        &common::run_strict(BIN, &wt.dir, &args),
         "audit-scan",
         "git cannot tell whether --out is tracked: audit_1",
     );
     assert!(!wt.exists("audit_1/prescan.json"));
+    // In default mode the run directory's .gitignore of * alone decides, as
+    // confine_rundir takes it there.
+    let o = run(BIN, &wt.dir, &args);
+    assert_eq!(
+        (o.status.code(), stdout(&o), common::stderr(&o)),
+        (Some(0), String::new(), String::new())
+    );
+    assert!(wt.exists("audit_1/prescan.json"));
+    refused(
+        &run(BIN, &wt.dir, &[".", "--out", "audit_2/prescan.json"]),
+        "audit-scan",
+        "--out has no .gitignore holding exactly *: audit_2",
+    );
     // Printing to stdout needs no answer from git: a run directory git cannot
     // answer for is scanned.
     wt.write("audit_1/poc/F-1/src/lib.rs", b"fn poc() {}\n");
@@ -1704,5 +1719,54 @@ fn writes_into_a_run_directory_holding_a_link_inside_it_in_default_mode_only() {
         refused(&run(BIN, &wt.dir, &args), "audit-scan", &why);
         refused(&common::run_strict(BIN, &wt.dir, &args), "audit-scan", &why);
         assert!(!wt.exists(&format!("{r}/prescan.json")));
+    }
+}
+
+#[test]
+fn takes_an_out_with_no_git_on_path_in_default_mode_only() {
+    // With no git on PATH, default mode takes a run directory by its .gitignore
+    // of * alone; strict mode refuses, and so do both modes when no PATH entry is
+    // left outside the working directory.
+    let wt = Wt::repo();
+    wt.write("src/lib.rs", b"fn a() {}\n");
+    wt.run_dir("audit_1");
+    wt.mkdir("audit_2");
+    let empty = wt.outside().join("empty");
+    fs::create_dir(&empty).expect("mkdir");
+    let path = empty.display().to_string();
+    let args = ["src", "--out", "audit_1/prescan.json"];
+    refused(
+        &common::run_env(BIN, &wt.dir, &args, &[("PATH", &path), common::STRICT]),
+        "audit-scan",
+        "git is not on PATH",
+    );
+    assert!(!wt.exists("audit_1/prescan.json"));
+    let o = common::run_env(BIN, &wt.dir, &args, &[("PATH", &path)]);
+    assert_eq!(
+        (o.status.code(), stdout(&o), common::stderr(&o)),
+        (Some(0), String::new(), String::new())
+    );
+    assert!(wt.exists("audit_1/prescan.json"));
+    refused(
+        &common::run_env(
+            BIN,
+            &wt.dir,
+            &["src", "--out", "audit_2/prescan.json"],
+            &[("PATH", &path)],
+        ),
+        "audit-scan",
+        "--out has no .gitignore holding exactly *: audit_2",
+    );
+    wt.mkdir("bin");
+    let inside = wt.path("bin").display().to_string();
+    for env in [
+        vec![("PATH", inside.as_str())],
+        vec![("PATH", inside.as_str()), common::STRICT],
+    ] {
+        refused(
+            &common::run_env(BIN, &wt.dir, &args, &env),
+            "audit-scan",
+            "no PATH entry is left outside the working directory",
+        );
     }
 }

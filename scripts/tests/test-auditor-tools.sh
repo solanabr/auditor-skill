@@ -443,6 +443,25 @@ for c in absent ok no-gitignore nul-gitignore link holds-link holds-inside-link 
   done
 done
 
+# A repository git cannot answer for (its index unreadable): strict mode refuses the run directory on each side;
+# default mode takes it on its .gitignore of * alone, and refuses one without it, in the same words.
+S="$T/broken-index"
+mkdir -p "$S/wt"
+fgit init -q "$S/wt"
+printf 'not an index' > "$S/wt/.git/index"
+run_dir "$S/wt/audit_1"
+mkdir "$S/wt/audit_2"
+for mode in strict default; do
+  for r in audit_1 audit_2; do
+    ( cd "$S/wt" && in_mode "$mode" "$RUNDIR" check "$r" ) > /dev/null 2> "$T/a.err" < /dev/null
+    ( cd "$S/wt" && in_mode "$mode" "$SCAN" --contract=1 . --out "$r/prescan.json" ) > /dev/null 2> "$T/b.err" < /dev/null
+    # Each names the run directory by its own word for it: --out, or "the run directory".
+    eq "rundir.sh check and audit-scan --out agree when git cannot tell: $r, $mode mode" \
+      "$(said "$T/b.err" 'audit-scan: refused: ' | sed -e 's/--out /<R> /')" \
+      "$(said "$T/a.err" 'rundir: refused: ' | sed -e 's/the run directory /<R> /')"
+  done
+done
+
 # A repository holding a named pipe git would open on its way (as HEAD, or one its config includes): each
 # side refuses before git starts, in the same words.
 for c in head include; do

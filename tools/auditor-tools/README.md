@@ -297,9 +297,11 @@ so it must be safe whatever arguments follow. Its rules are those of
   `confine_git_check` finds; `--out` is then refused for that reason. It asks for
   `--out`, and, in a scan of `.` that has time left, for a run directory or
   `.audit-memory/` that holds a `.gitignore` of exactly `*`. When git cannot
-  answer, or has not answered within 10 s (it is then killed), `--out` is refused,
-  and such a directory is scanned, as is each one after it in that scan, for which
-  git is not asked again; once the scan's time is spent, such a directory is
+  answer, or has not answered within 10 s (it is then killed), strict mode refuses
+  `--out`, and default mode takes it on its run directory's `.gitignore` of `*`, as
+  `confine_rundir` does there; with no git on `PATH` the same holds. Such a
+  directory in a scan of `.` is scanned, as is each one after it in that scan, for
+  which git is not asked again; once the scan's time is spent, such a directory is
   scanned without asking. With neither, git is not run.
 - It refuses to run from an installation inside the working directory, or from a
   path, as it was invoked or with its links resolved, holding a quote, `$`, a
@@ -621,7 +623,9 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   confine.sh's `confine_git_check` finds one: `--db <R>/audit-mem.db` is refused for
   that reason, as `rundir.sh check` refuses it, and the in-tree store because git
   cannot tell, as `rundir.sh store` refuses it. When git cannot answer, or has not
-  answered within 10 s (it is then killed), it refuses.
+  answered within 10 s (it is then killed), or is not on `PATH`, it refuses the
+  in-tree store; for `--db <R>/audit-mem.db` strict mode refuses too, and default
+  mode takes `<R>` on its `.gitignore` of `*`, as `confine_rundir` does there.
 - The database is a regular file with one name, in rollback-journal mode: a database
   in WAL mode is refused, since a read-only open of one makes a file beside it. No
   `-wal` or `-shm` file may sit beside it (audit-mem never makes one, and SQLite would
