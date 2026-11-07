@@ -17,7 +17,9 @@
 #      stderr, changing nothing.
 #   3b. scripts/rundir.sh and the binaries over the same run directories and stores: rundir.sh check and
 #      audit-scan --out, and rundir.sh store and audit-mem, accept the same ones and refuse the others in the same
-#      words, a repository holding a named pipe git would open included.
+#      words, in each mode, a repository git cannot answer for and one holding a named pipe git would open
+#      included; in default mode audit-mem's writers keep rundir.sh store's rules, and its readers are checked on
+#      their own.
 #   3c. git as the binaries run it allows no transport: in a partial clone whose own config permits ext::, on a git
 #      that ignores GIT_NO_LAZY_FETCH (a shim), audit-scan --out, audit-mem --db and audit-mem's in-tree store run
 #      nothing outside the tree.
