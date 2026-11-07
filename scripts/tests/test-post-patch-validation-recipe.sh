@@ -7,7 +7,8 @@
 #     with strict mode on (AUDITOR_STRICT on, or a {R}/strict file), which counts as isolated; probe.sh
 #     --only isolation must print the line the real probe.sh prints when nothing is readable (read from it, and
 #     both gates compare with it), the vendored runner and uv must be there, and git-ro.sh copy must take the
-#     checkout (a checkout that borrows objects is refused). Each refusal
+#     checkout (in strict mode a checkout that borrows objects is refused; default mode copies it with a note,
+#     OUTPUT-RULES.md Rule 11c). Each refusal
 #     prints its not-run line and runs nothing: no copy, no scratch directory, no clone, no runner call;
 #   - the copy and the clone, run from the client checkout's top level (also with TMPDIR ending in /): exactly
 #     two clones, git-ro.sh's bare copy into {R} and then
@@ -244,8 +245,11 @@ else bad "cannot write audit_1/strict"; fi
 CA="$T/client-alt"; OTHER="$T/other"
 if client "$CA" && git -c init.defaultBranch=main init -q "$OTHER" \
    && printf '%s/.git/objects\n' "$OTHER" > "$CA/.git/objects/info/alternates"; then
-  notrun "isolated, a checkout that borrows objects" isolated "" "$OKLINE" "$T/root" "git-ro.sh copy refused the checkout" "" "$CA" \
+  # strict mode keeps the refusal (Rule 11f); in default mode git-ro.sh copies such a checkout with a note
+  STRICT_ENV=1
+  notrun "isolated, strict mode, a checkout that borrows objects" isolated "" "$OKLINE" "$T/root" "git-ro.sh copy refused the checkout" "" "$CA" \
     "git-ro: refused: copy's repository borrows objects from another repository (objects/info/alternates); audit a full copy: ."
+  STRICT_ENV=
 else bad "cannot make the checkout with alternates"; fi
 
 # ---- isolated: the clone of git-ro.sh's copy is the only repository the runner touches ---------------------------

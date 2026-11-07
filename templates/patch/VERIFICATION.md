@@ -125,8 +125,9 @@ nothing, and prints the line to record, unless the stricter of the recorded mode
 `intake.md` §8 without it) and `AUDITOR_EXEC_MODE` is isolated (`none` stops it, as it stops `run.sh`;
 strict mode, from `AUDITOR_STRICT` or a `{R}/strict` file, makes native count as isolated, as it does for
 `run.sh`: Rule 11f), `probe.sh --only isolation` finds none of the credentials it checks readable, the vendored skill and `uv` are
-there, and `git-ro.sh copy` takes the checkout. That copy refuses a partial clone, a git without the May-2024
-clone fixes, borrowed objects (alternates) and links. When a block stops on an error instead, record "not run:
+there, and `git-ro.sh copy` takes the checkout. That copy refuses a partial clone; in strict mode it also refuses
+a git without the May-2024 clone fixes, borrowed objects (alternates) and links in the git directory, which
+default mode copies, noting the first two (`OUTPUT-RULES.md` Rule 11c). When a block stops on an error instead, record "not run:
 <its first error line>". Each block asks for approval: it is shell code, and it runs the Trail of Bits
 runner, which no bundled tool wraps.
 
