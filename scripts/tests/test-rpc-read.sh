@@ -28,6 +28,22 @@ check() { # check <name> <command>...: on a failure, also show the last run
 }
 has()   { grep -qF -- "$2" "$1"; }
 hasnt() { ! grep -qF -- "$2" "$1"; }
+# link_leaves <link> <run directory>: status 0 when the link, followed to its end, leads outside the run
+# directory or to nothing, which default and strict mode both refuse; one that ends inside it is refused
+# in strict mode only.
+link_leaves() {
+  local p=$1 t r n=0
+  [ -L "$p" ] || return 1
+  [ -e "$p" ] || return 0
+  while [ -L "$p" ] && [ "$n" -lt 40 ]; do
+    t=$(readlink "$p") || return 1
+    case "$t" in /*) p=$t ;; *) p=${p%/*}/$t ;; esac
+    n=$((n + 1))
+  done
+  if [ -d "$p" ]; then p=$(cd -P "$p" && pwd -P)/; else p=$(cd -P "${p%/*}" && pwd -P)/${p##*/}/ || return 1; fi
+  r=$(cd -P "$2" && pwd -P)/ || return 1
+  case "$p" in "$r"*) return 1 ;; esac
+}
 
 ADDR="AddrA111111111111111111111111111111111111111"   # base58, 32 bytes
 PID="ProgTest11111111111111111111111111111111111"     # base58, 32 bytes
@@ -391,6 +407,7 @@ check "a disclosures.tsv that cannot take the row is refused (exit 64), before a
 G2=$(cd "$W" && "$RUNDIR" new incident); ln -s "$T" "$W/$G2/rpc"
 run account "$ADDR" --run "$G2"
 check "an R/rpc that is a symbolic link is refused (exit 64)" refused "--run holds a symbolic link: $G2"
+check "... a link that leads outside the run directory, which both modes refuse" link_leaves "$W/$G2/rpc" "$W/$G2"
 G3=$(cd "$W" && "$RUNDIR" new incident); printf 'x\n' > "$W/$G3/rpc"
 run account "$ADDR" --run "$G3"
 check "an R/rpc that is a file is refused (exit 64)" refused "$G3/rpc is not a directory"

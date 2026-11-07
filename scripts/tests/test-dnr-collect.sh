@@ -23,6 +23,22 @@ fails=0
 ok()   { printf 'ok   %s\n' "$1"; }
 bad()  { printf 'FAIL %s\n' "$1" >&2; fails=$((fails+1)); }
 eq()   { if [[ "$2" == "$3" ]]; then ok "$1 ($2)"; else bad "$1: expected '$3', got '$2'"; fi; }
+# link_leaves <link> <run directory>: status 0 when the link, followed to its end, leads outside the run
+# directory or to nothing, which default and strict mode both refuse; one that ends inside it is refused
+# in strict mode only.
+link_leaves() {
+  local p=$1 t r n=0
+  [ -L "$p" ] || return 1
+  [ -e "$p" ] || return 0
+  while [ -L "$p" ] && [ "$n" -lt 40 ]; do
+    t=$(readlink "$p") || return 1
+    case "$t" in /*) p=$t ;; *) p=${p%/*}/$t ;; esac
+    n=$((n + 1))
+  done
+  if [ -d "$p" ]; then p=$(cd -P "$p" && pwd -P)/; else p=$(cd -P "${p%/*}" && pwd -P)/${p##*/}/ || return 1; fi
+  r=$(cd -P "$2" && pwd -P)/ || return 1
+  case "$p" in "$r"*) return 1 ;; esac
+}
 
 for tool in jq python3 awk sed; do
   command -v "$tool" >/dev/null 2>&1 || { echo "test-dnr-collect: missing required tool: $tool" >&2; exit 3; }
@@ -949,6 +965,8 @@ for case in "bin|$TT/link-out" "LEDGER.md|$TT/link-out/ledger"; do
   else
     bad "re-check: $name link made during the dump -> exit $code, outside: $(ls -A "$TT/link-out" | tr '\n' ' ') ($(tr '\n' ' ' < "$P.out"))"
   fi
+  if link_leaves "$WT/$(run_of "$P")/$name" "$WT/$(run_of "$P")"; then ok "re-check: ... a $name link that leads outside the run directory, which both modes refuse"
+  else bad "re-check: the $name link stays inside $(run_of "$P"), which only strict mode refuses"; fi
 done
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,22 @@ fails=0
 ok()   { printf 'ok   %s\n' "$1"; }
 bad()  { printf 'FAIL %s\n' "$1" >&2; fails=$((fails+1)); }
 eq()   { if [[ "$2" == "$3" ]]; then ok "$1 ($2)"; else bad "$1: expected '$3', got '$2'"; fi; }
+# link_leaves <link> <run directory>: status 0 when the link, followed to its end, leads outside the run
+# directory or to nothing, which default and strict mode both refuse; one that ends inside it is refused
+# in strict mode only.
+link_leaves() {
+  local p=$1 t r n=0
+  [ -L "$p" ] || return 1
+  [ -e "$p" ] || return 0
+  while [ -L "$p" ] && [ "$n" -lt 40 ]; do
+    t=$(readlink "$p") || return 1
+    case "$t" in /*) p=$t ;; *) p=${p%/*}/$t ;; esac
+    n=$((n + 1))
+  done
+  if [ -d "$p" ]; then p=$(cd -P "$p" && pwd -P)/; else p=$(cd -P "${p%/*}" && pwd -P)/${p##*/}/ || return 1; fi
+  r=$(cd -P "$2" && pwd -P)/ || return 1
+  case "$p" in "$r"*) return 1 ;; esac
+}
 
 for tool in jq python3 awk sed; do
   command -v "$tool" >/dev/null 2>&1 || { echo "test-dnr: missing required tool: $tool" >&2; exit 3; }
@@ -686,6 +702,10 @@ mkrun incident_2; mkrun incident_4; mkrun INCIDENT_6; mkrun incident_5
 ln -s "$X/canary" "$REPO/incident_2/LEDGER.md"
 ln -s "$X/bin" "$REPO/incident_2/bin"
 ln -s "$X/corpus" "$REPO/incident_2/corpus"
+for l in LEDGER.md bin corpus; do
+  if link_leaves "$REPO/incident_2/$l" "$REPO/incident_2"; then ok "run dir: the link incident_2/$l leads outside it, which both modes refuse"
+  else bad "run dir: the link incident_2/$l stays inside incident_2, which only strict mode refuses"; fi
+done
 ln -s "$X/b3" "$REPO/incident_3"
 for f in incident_4/LEDGER.md INCIDENT_6/LEDGER.md incident_5/LEDGER.md; do printf 'prior\n' > "$REPO/$f"; done
 if git -C "$REPO" init -q >/dev/null 2>&1 && git -C "$REPO" add -f incident_4/LEDGER.md INCIDENT_6/LEDGER.md; then

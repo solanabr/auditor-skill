@@ -57,6 +57,22 @@ collect() {
 rc() { (cd "$W" && "$COLLECT" "$@") >/dev/null 2>"$T/rc.err"; echo $?; }
 rc_in() { local d=$1; shift; (cd "$d" && "$COLLECT" "$@") >/dev/null 2>"$T/rc.err"; echo $?; }
 refused_with() { [ "$(cat "$T/rc.err")" = "collect.sh: refused: $1" ]; }
+# link_leaves <link> <run directory>: status 0 when the link, followed to its end, leads outside the run
+# directory or to nothing, which default and strict mode both refuse; one that ends inside it is refused
+# in strict mode only.
+link_leaves() {
+  local p=$1 t r n=0
+  [ -L "$p" ] || return 1
+  [ -e "$p" ] || return 0
+  while [ -L "$p" ] && [ "$n" -lt 40 ]; do
+    t=$(readlink "$p") || return 1
+    case "$t" in /*) p=$t ;; *) p=${p%/*}/$t ;; esac
+    n=$((n + 1))
+  done
+  if [ -d "$p" ]; then p=$(cd -P "$p" && pwd -P)/; else p=$(cd -P "${p%/*}" && pwd -P)/${p##*/}/ || return 1; fi
+  r=$(cd -P "$2" && pwd -P)/ || return 1
+  case "$p" in "$r"*) return 1 ;; esac
+}
 
 # =================================================================================================
 # Target fixture: guard edits, attribute anchoring, quiet fix, whole-message keyword, revert.
@@ -1003,6 +1019,7 @@ check "T-n: a bootstrap dir that is a symbolic link is refused (exit 2)" test "$
 check "T-n: ... also when --out ends in a slash" test "$(rc_in "$RD" --offline --repo . --out audit_1/bootstrap/)" = 2
 check "T-n: a bootstrap dir that holds a symbolic link is refused (exit 2)" test "$(rc_in "$RD" --offline --repo . --out audit_2/bootstrap)" = 2
 check "T-n: ... saying the run directory holds one" refused_with "the run directory holds a symbolic link: audit_2"
+check "T-n: ... a link that leads outside it, which both modes refuse" link_leaves "$RD/audit_2/bootstrap/.gitignore" "$RD/audit_2"
 check "T-n: an audit_<n> that is a symbolic link is refused (exit 2)" test "$(rc_in "$RD" --offline --repo . --out audit_4/bootstrap)" = 2
 check "T-n: a . component cannot hide the audit_<n> parent (exit 2)" test "$(rc_in "$RD" --offline --repo . --out audit_4/./bootstrap)" = 2
 check "T-n: --detect refuses an --out through a symbolic link too (exit 2)" test "$(rc_in "$RD" --detect --repo . --out audit_4/bootstrap)" = 2
@@ -1063,6 +1080,7 @@ if command -v jq >/dev/null 2>&1; then
   check "T-n: a link that appears during the run is refused before any output is copied in (exit 2)" \
     test "$(cd "$RD" && PATH="$T/plantjq:$PATH" TM_JSON_TOOL=jq "$COLLECT" --offline --repo . --out audit_10/bootstrap --vulns late.json >/dev/null 2>"$T/rc.err"; echo $?)" = 2
   check "T-n: ... saying the run directory holds a link" refused_with "the run directory holds a symbolic link: audit_10"
+  check "T-n: ... a link that leads outside it, which both modes refuse" link_leaves "$RD/audit_10/late" "$RD/audit_10"
   check "T-n: ... and nothing was copied in" test ! -e "$RD/audit_10/bootstrap"
   check "T-n: ... nor through the link" test -z "$(ls -A "$T/elsewhere")"
 else

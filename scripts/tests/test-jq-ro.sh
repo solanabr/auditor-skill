@@ -62,6 +62,22 @@ no_ctl() { [ "$(LC_ALL=C tr -d '\000-\010\013-\037\177' < "$1" | wc -c)" = "$(wc
 tree() { (cd "$1" && find . -print | LC_ALL=C sort); }
 tgit() { git -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@"; }
 mkrun() { mkdir -p "$1" && printf '*\n' > "$1/.gitignore"; }
+# link_leaves <link> <run directory>: status 0 when the link, followed to its end, leads outside the run
+# directory or to nothing, which default and strict mode both refuse; one that ends inside it is refused
+# in strict mode only.
+link_leaves() {
+  local p=$1 t r n=0
+  [ -L "$p" ] || return 1
+  [ -e "$p" ] || return 0
+  while [ -L "$p" ] && [ "$n" -lt 40 ]; do
+    t=$(readlink "$p") || return 1
+    case "$t" in /*) p=$t ;; *) p=${p%/*}/$t ;; esac
+    n=$((n + 1))
+  done
+  if [ -d "$p" ]; then p=$(cd -P "$p" && pwd -P)/; else p=$(cd -P "${p%/*}" && pwd -P)/${p##*/}/ || return 1; fi
+  r=$(cd -P "$2" && pwd -P)/ || return 1
+  case "$p" in "$r"*) return 1 ;; esac
+}
 
 # =================================================================================================
 # The fixture working directory: a repository whose config names a program that must never run.
@@ -83,6 +99,8 @@ ln -s incident_1 "$W/incident_2"
 mkrun "$W/incident_3"
 printf '{"a":3}\n' > "$W/incident_3/data.json"
 ln -s ../notes/t.json "$W/incident_3/link.json"
+check "fixture: incident_3/link.json leads outside incident_3, so both modes refuse the case that reads incident_3" \
+  link_leaves "$W/incident_3/link.json" "$W/incident_3"
 mkdir "$W/incident_4"
 printf '{"a":4}\n' > "$W/incident_4/data.json"
 mkrun "$W/incident_5"
