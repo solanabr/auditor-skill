@@ -3,7 +3,8 @@
 # templates/patch/VERIFICATION.md §4 exactly as written, with stand-ins for the Trail of Bits runner (uv), for
 # scripts/runner/probe.sh, for git-lfs and, logging every clone, for git; the real scripts/git-ro.sh and
 # scripts/lib/confine.sh make the copy. It checks:
-#   - the gate: the stricter of {R}/exec-mode and AUDITOR_EXEC_MODE must be isolated (none stops it), probe.sh
+#   - the gate: the stricter of {R}/exec-mode and AUDITOR_EXEC_MODE must be isolated (none stops it), or native
+#     with strict mode on (AUDITOR_STRICT on, or a {R}/strict file), which counts as isolated; probe.sh
 #     --only isolation must print the line the real probe.sh prints when nothing is readable (read from it, and
 #     both gates compare with it), the vendored runner and uv must be there, and git-ro.sh copy must take the
 #     checkout (a checkout that borrows objects is refused). Each refusal
@@ -39,7 +40,7 @@
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 VER="$ROOT/templates/patch/VERIFICATION.md"
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_NAMESPACE CDPATH AUDITOR_EXEC_MODE
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_NAMESPACE CDPATH AUDITOR_EXEC_MODE AUDITOR_STRICT
 T=$(mktemp -d "${TMPDIR:-/tmp}/ppv-recipe.XXXXXX") || exit 1
 trap 'chmod -R u+rwX "$T" 2>/dev/null; rm -rf "$T"' EXIT
 # A TMPDIR that ends in / (as on macOS) leaves // in $T; the checks compare physical paths.
@@ -180,9 +181,11 @@ open(out, "w", encoding="utf-8").write(b)
 PY
 }
 # run_block FILE TMPDIR AUDITOR_EXEC_MODE PROBE_LINE [PATH] [CLIENT]: run a filled block from the client checkout's
-# top level, with the caller's global config naming the lfs filter; output in $T/out, exit status in $code.
+# top level, with the caller's global config naming the lfs filter, and AUDITOR_STRICT set to $STRICT_ENV when that
+# is not empty; output in $T/out, exit status in $code.
+STRICT_ENV=
 run_block() {
-  ( cd "${6:-$C}" && env ${3:+AUDITOR_EXEC_MODE=$3} TMPDIR="$2" PROBE_LINE="$4" PATH="${5:-$T/bin:$PATH}" \
+  ( cd "${6:-$C}" && env ${3:+AUDITOR_EXEC_MODE=$3} ${STRICT_ENV:+AUDITOR_STRICT=$STRICT_ENV} TMPDIR="$2" PROBE_LINE="$4" PATH="${5:-$T/bin:$PATH}" \
       GIT_CONFIG_GLOBAL="$T/global.gitconfig" UV_LOG="$T/uv.log" "$BASH" "$1" ) > "$T/out" 2>&1
   code=$?
 }
@@ -219,6 +222,25 @@ notrun "isolated, but probe.sh could not check" isolated "" "isolation: not chec
   "this is not the isolated runner (scripts/runner/probe.sh --only isolation)"
 notrun "isolated, no vendored runner" isolated "" "$OKLINE" "$T/root-nr" "needs the vendored post-patch-validation skill and uv"
 notrun "isolated, no uv on PATH" isolated "" "$OKLINE" "$T/root" "needs the vendored post-patch-validation skill and uv" "$T/emptybin"
+# Strict mode (OUTPUT-RULES.md Rule 11f) makes native count as isolated, as run.sh takes it: AUDITOR_STRICT on, in
+# any letter case and for any value but the off words, or a strict file in the run directory. Such a run reaches the
+# isolation check, which a readable credential stops; the off words leave native, and none still stops it.
+CRED="isolation: readable: SSH keys (1); ~/.ssh/id_ed25519"
+NOTISO="this is not the isolated runner (scripts/runner/probe.sh --only isolation)"
+for sv in 1 yes TRUE On maybe; do
+  STRICT_ENV=$sv; notrun "exec-mode native, AUDITOR_STRICT=$sv, a credential readable" native "" "$CRED" "$T/root" "$NOTISO"
+done
+STRICT_ENV=1; notrun "exec-mode empty, AUDITOR_STRICT=1, a credential readable" "" "" "$CRED" "$T/root" "$NOTISO"
+for sv in 0 no FALSE Off; do
+  STRICT_ENV=$sv; notrun "exec-mode native, AUDITOR_STRICT=$sv" native "" "$OKLINE" "$T/root" "needs isolated mode"
+done
+STRICT_ENV=1; notrun "exec-mode none, AUDITOR_STRICT=1" none "" "$OKLINE" "$T/root" "needs isolated mode"
+STRICT_ENV=1; notrun "exec-mode isolated, AUDITOR_EXEC_MODE none, AUDITOR_STRICT=1" isolated none "$OKLINE" "$T/root" "needs isolated mode"
+STRICT_ENV=
+if : > "$C/audit_1/strict"; then
+  notrun "exec-mode native, a strict file in audit_1, a credential readable" native "" "$CRED" "$T/root" "$NOTISO"
+  rm -f "$C/audit_1/strict"
+else bad "cannot write audit_1/strict"; fi
 CA="$T/client-alt"; OTHER="$T/other"
 if client "$CA" && git -c init.defaultBranch=main init -q "$OTHER" \
    && printf '%s/.git/objects\n' "$OTHER" > "$CA/.git/objects/info/alternates"; then
@@ -296,6 +318,9 @@ if [ "$copy_ok" = 1 ]; then
   if [ -z "$extra" ] && [ -d "$C/audit_1/src.git" ] && [ -d "$C/audit_1/src-2.git" ]; then
     ok "audit_1 holds only its own files and git-ro.sh's two copies"
   else bad "audit_1 holds more: $extra"; fi
+  STRICT_ENV=1
+  isolated "exec-mode native, AUDITOR_STRICT=1, which counts as isolated" native "" "$T/tmp" "a signer check the withdraw path skips"
+  STRICT_ENV=
 elif [ "${CI:-}" = true ]; then
   bad "git $v lacks the May-2024 clone fixes, which git-ro.sh copy needs; on CI the copy cases must run"
 else
@@ -354,6 +379,14 @@ notrun2 "isolated, but probe.sh finds a credential (a retry outside the sandbox)
   "isolation: readable: SSH keys (1); ~/.ssh/id_ed25519" "this is not the isolated runner (scripts/runner/probe.sh --only isolation)"
 notrun2 "isolated, but probe.sh could not check" isolated "" "isolation: not checked (python3 is not on PATH)" \
   "this is not the isolated runner (scripts/runner/probe.sh --only isolation)"
+STRICT_ENV=1; notrun2 "exec-mode native, AUDITOR_STRICT=1, a credential readable (a retry outside the sandbox)" native "" "$CRED" "$NOTISO"
+STRICT_ENV=0; notrun2 "exec-mode native, AUDITOR_STRICT=0" native "" "$OKLINE" "needs isolated mode"
+STRICT_ENV=1; notrun2 "exec-mode none, AUDITOR_STRICT=1" none "" "$OKLINE" "needs isolated mode"
+STRICT_ENV=
+if : > "$C/audit_1/strict"; then
+  notrun2 "exec-mode native, a strict file in audit_1, a credential readable" native "" "$CRED" "$NOTISO"
+  rm -f "$C/audit_1/strict"
+else bad "cannot write audit_1/strict"; fi
 rm -f "$T/uv.log"
 if block 2 isolated "$T/root" "$G" "$T/b.sh"; then
   run_block "$T/b.sh" "$T/tmp" "" "$OKLINE"
