@@ -117,9 +117,12 @@ either, in both modes, so the PoC code in it is not reported as the target's. A
 directory with such a name that is not one, such as one the target's repository
 tracks, is scanned like any other. The walk follows no symbolic link, goes no deeper than 128 directories below
 `<dir>`, and parses only regular files with one name, of at most 4 MiB, in byte
-order of their names; every directory it does not enter, those above and those
-nested too deeply, every link it meets, and every `*.rs` file it does not parse
-(not a regular file, a second name, larger than 4 MiB, unreadable, not UTF-8,
+order of their names; in default mode a file with more than one name (a hard link,
+as `cp -al` or a deduplicating tool makes) is parsed under the first name the walk
+meets, and each later name of it is listed as `another name of <first>`, while
+strict mode parses none of its names. Every directory it does not enter, those
+above and those nested too deeply, every link it meets, and every `*.rs` file it
+does not parse (not a regular file, a second name in strict mode, larger than 4 MiB, unreadable, not UTF-8,
 nested or chained too deeply, not Rust that `syn` parses, one the parser could not
 finish, or one past the report's size or the scan's time), is listed in `skipped`
 with the reason. So is every file a parsed file brings in, by a module's `#[path =

@@ -12,6 +12,7 @@
 //! characters, each token's text kept only as far as a snippet can show it, so a
 //! snippet costs no more for a long literal or a long chain than for a short one.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
@@ -420,7 +421,9 @@ pub fn scan_path_until(root: &Path, until: Option<Instant>) -> io::Result<ScanRe
 ///
 /// The walk opens each directory from its parent's descriptor without following a
 /// link, so a name swapped for a link while it runs is not entered, and reads only
-/// regular files with one name of at most 4 MiB, each opened the same way. Every
+/// regular files of at most 4 MiB with one name (in default mode, a `*.rs` file
+/// with more under the first name it meets, `Scan::file`), each opened the same
+/// way. Every
 /// link it meets, every directory nested more than `MAX_WALK` levels down, and
 /// every `*.rs` file it does not parse (not regular, too large, unreadable, not
 /// UTF-8, nested or chained too deeply, not Rust that `syn` parses, one the parser
@@ -464,6 +467,7 @@ fn scan_until(
         listed: HashSet::new(),
         entered: HashSet::new(),
         reachable: Vec::new(),
+        names: HashMap::new(),
     };
     match open_root(root) {
         Ok(dir) => scan.dir(&dir, root, 0),
@@ -491,8 +495,9 @@ pub(crate) fn open_root(root: &Path) -> io::Result<OwnedFd> {
 /// holds), git in the working directory, found on first use (`own_output`;
 /// `Some(None)` when the working directory cannot be resolved, and once git has
 /// not answered), each file parsed, each path listed in `skipped` and each
-/// directory entered so far, as `folded` gives them, and the files parsed ones
-/// bring in, listed once the walk is done (`unreached`).
+/// directory entered so far, as `folded` gives them, the files parsed ones
+/// bring in, listed once the walk is done (`unreached`), and the first name met
+/// of each `*.rs` file with more than one, by its device and inode (`file`).
 struct Scan<'p> {
     report: ScanReport,
     root: PathBuf,
@@ -507,6 +512,7 @@ struct Scan<'p> {
     listed: HashSet<PathBuf>,
     entered: HashSet<PathBuf>,
     reachable: Vec<Reachable>,
+    names: HashMap<(u64, u64), String>,
 }
 
 impl Scan<'_> {
@@ -722,7 +728,10 @@ impl Scan<'_> {
     }
 
     /// A `*.rs` file, its bytes parsed by `parse`, its report added under its path
-    /// while the report has room for it and the scan has time.
+    /// while the report has room for it and the scan has time. A file with more
+    /// than one name is parsed, in default mode, under the first name the walk
+    /// meets, each later one listed as another name of it; strict mode parses
+    /// none of its names.
     fn file(&mut self, dir: &OwnedFd, name: &[u8], path: &Path) {
         const FULL: &str = "not parsed: the report is full";
         const SPENT: &str = "not parsed: the scan's time is spent";
@@ -732,7 +741,21 @@ impl Scan<'_> {
         if self.spent() {
             return self.skip(path, SPENT);
         }
-        let one = read_bytes(dir.as_raw_fd(), name).and_then(|bytes| {
+        let strict = confine::strict();
+        let names = &mut self.names;
+        let one = read_once(dir.as_raw_fd(), name, &mut |id| {
+            if strict {
+                return Err(SECOND_NAME.to_string());
+            }
+            match names.entry(id) {
+                Entry::Occupied(first) => Err(format!("another name of {}", first.get())),
+                Entry::Vacant(first) => {
+                    first.insert(path.display().to_string());
+                    Ok(())
+                }
+            }
+        })
+        .and_then(|bytes| {
             (self.parse)(&bytes)
                 .and_then(|out| Some((out.len(), serde_json::from_slice::<ScanReport>(&out).ok()?)))
                 .ok_or_else(|| "the parser could not finish".to_string())
@@ -1025,10 +1048,23 @@ fn file_starts_with(dir: &OwnedFd, name: &[u8], start: &[u8]) -> bool {
         && head == start
 }
 
+/// Why a file with more than one name is not read.
+const SECOND_NAME: &str = "has more than one name (a hard link)";
+
 /// A file's bytes: a regular file with one name (a second name could be a
 /// file outside the tree) of at most 4 MiB, opened from its directory without
 /// following a link or blocking on a FIFO.
 pub(crate) fn read_bytes(dir: RawFd, name: &[u8]) -> Result<Vec<u8>, String> {
+    read_once(dir, name, &mut |_| Err(SECOND_NAME.to_string()))
+}
+
+/// `read_bytes`, with `second` deciding, by the file's device and inode, whether
+/// a file with more than one name is read: `Err` says why not.
+fn read_once(
+    dir: RawFd,
+    name: &[u8],
+    second: &mut dyn FnMut((u64, u64)) -> Result<(), String>,
+) -> Result<Vec<u8>, String> {
     let unreadable = |e: io::Error| format!("cannot be read: {}", os_message(&e));
     let file = confine::open_file(dir, name).map_err(unreadable)?;
     let md = file.metadata().map_err(unreadable)?;
@@ -1036,7 +1072,7 @@ pub(crate) fn read_bytes(dir: RawFd, name: &[u8]) -> Result<Vec<u8>, String> {
         return Err("not a regular file".to_string());
     }
     if md.nlink() != 1 {
-        return Err("has more than one name (a hard link)".to_string());
+        second((md.dev(), md.ino()))?;
     }
     let mut bytes = Vec::new();
     file.take(MAX_FILE + 1)

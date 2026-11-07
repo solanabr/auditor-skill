@@ -513,31 +513,84 @@ fn skips_large_irregular_and_unparsable_files() {
         .status()
         .expect("mkfifo");
     assert!(status.success());
-    let report = json(&run(BIN, &wt.dir, &["."]));
+    let reasons = |report: &Value| -> Vec<String> {
+        report["skipped"]
+            .as_array()
+            .expect("skipped")
+            .iter()
+            .map(|s| {
+                format!(
+                    "{} {}",
+                    s["file"].as_str().unwrap_or(""),
+                    s["reason"].as_str().unwrap_or("")
+                )
+            })
+            .collect()
+    };
+    // Strict mode parses no file with a second name, which could be a file
+    // outside the tree.
+    let report = json(&common::run_strict(BIN, &wt.dir, &["."]));
     assert_eq!(
         report["files_scanned"], 1,
         "only edge.rs, of exactly 4 MiB less one byte"
     );
-    let reasons: Vec<String> = report["skipped"]
-        .as_array()
-        .expect("skipped")
-        .iter()
-        .map(|s| {
-            format!(
-                "{} {}",
-                s["file"].as_str().unwrap_or(""),
-                s["reason"].as_str().unwrap_or("")
-            )
-        })
-        .collect();
     assert_eq!(
-        reasons,
+        reasons(&report),
         vec![
             "./bad.rs does not parse as Rust",
             "./big.rs larger than 4 MiB",
             "./latin1.rs not UTF-8",
             "./linked.rs has more than one name (a hard link)",
             "./pipe.rs not a regular file",
+        ]
+    );
+    // Default mode parses it under the first name the walk meets, its only one
+    // in the tree here.
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(report["files_scanned"], 2, "edge.rs and linked.rs");
+    assert_eq!(
+        files(&report, "functions"),
+        vec!["./edge.rs", "./linked.rs"]
+    );
+    assert_eq!(
+        reasons(&report),
+        vec![
+            "./bad.rs does not parse as Rust",
+            "./big.rs larger than 4 MiB",
+            "./latin1.rs not UTF-8",
+            "./pipe.rs not a regular file",
+        ]
+    );
+}
+
+#[test]
+fn parses_a_file_with_several_names_under_the_first_in_default_mode_only() {
+    let wt = Wt::new();
+    wt.write("src/a.rs", b"fn twice() {}\n");
+    wt.mkdir("src/c");
+    fs::hard_link(wt.path("src/a.rs"), wt.path("src/b.rs")).expect("ln");
+    fs::hard_link(wt.path("src/a.rs"), wt.path("src/c/d.rs")).expect("ln");
+    wt.write("src/e.rs", b"fn once() {}\n");
+    let report = json(&run(BIN, &wt.dir, &["src"]));
+    assert_eq!(report["files_scanned"], 2);
+    assert_eq!(files(&report, "functions"), vec!["src/a.rs", "src/e.rs"]);
+    assert_eq!(
+        skipped(&report),
+        [
+            ("src/b.rs".into(), "another name of src/a.rs".into()),
+            ("src/c/d.rs".into(), "another name of src/a.rs".into()),
+        ]
+    );
+    let report = json(&common::run_strict(BIN, &wt.dir, &["src"]));
+    assert_eq!(report["files_scanned"], 1);
+    assert_eq!(files(&report, "functions"), vec!["src/e.rs"]);
+    let second = "has more than one name (a hard link)".to_string();
+    assert_eq!(
+        skipped(&report),
+        [
+            ("src/a.rs".into(), second.clone()),
+            ("src/b.rs".into(), second.clone()),
+            ("src/c/d.rs".into(), second),
         ]
     );
 }
