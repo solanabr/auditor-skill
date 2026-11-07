@@ -29,7 +29,9 @@
 # fails this is refused (exit 2), naming --network. --network reads such a repository: its git directory
 # is searched for named pipes and devices git would open, but not where a link to a directory there leads,
 # nor the object directories objects/info/alternates names, so a read that meets one there waits until
-# the caller stops the run.
+# the caller stops the run. A --vulns file is copied into the run directory, and a pre-approved read must
+# not copy a file such as a key from outside the tree into the run folder: the commands pre-approve
+# --detect and --offline, never --network.
 #
 # Options (each at most once, except the repeatable --paths, --parent-paths and --vulns; a value is
 # at most 1024 bytes, with no control character):
