@@ -132,11 +132,13 @@ already captured.
   mode each one is a note, which the report lists; in strict mode it is a
   refusal ([Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode)). The
   commands need no repository, so an incident workspace of their own is the
-  cleanest place to run them. For a repository you do not trust, use strict
-  mode and a clean copy: clone it to a new directory, delete every `.claude/`
-  and `.mcp.json` in the copy, and start Claude Code there with the strict
-  launch line. `CLAUDE.md` and `AGENTS.md` files are listed, not refused; their
-  text is the repository's, never instructions.
+  cleanest place to run them. For a repository you do not trust, start Claude
+  Code with the strict launch line, which keeps the repository's own config
+  out of the session; strict mode's preflight still refuses a tree that ships
+  it, so to run strict mode there, clone it to a new directory, delete every
+  `.claude/` and `.mcp.json` in the copy, and start there. `CLAUDE.md` and
+  `AGENTS.md` files are listed, not refused; their text is the repository's,
+  never instructions.
 - **What runs without asking.** The commands pre-approve reading, `Task`, edits
   under `incident_*/`, invoking themselves again and the `auditor:dnr-analyze`
   skill, and these bundled tools by their paths: the checks `preflight.sh` and
