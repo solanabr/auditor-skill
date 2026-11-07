@@ -24,6 +24,7 @@ trap 'chmod -R u+rwx "$T" 2>/dev/null; rm -rf "$T"' EXIT
 export HOME="$T/home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
+unset AUDITOR_STRICT
 mkdir -p "$HOME"
 # snap <dir>: its names, then a line per regular file with its CRC, size and path (cksum's), in byte
 # order. HOME's is taken now, before anything runs, and compared after the real-pandoc render and at the end.

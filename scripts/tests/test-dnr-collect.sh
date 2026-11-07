@@ -13,6 +13,7 @@
 # fixtures/snapshot-program/cases.txt run under each bash on the machine.
 
 set -uo pipefail
+unset AUDITOR_STRICT
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 DNR="$HERE/../dnr"

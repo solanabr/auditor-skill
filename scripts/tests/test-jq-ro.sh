@@ -20,6 +20,7 @@ export HOME="$T/home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
 export JQ_RO_CANARY="$CANARY" RPC_URL="https://rpc.example.invalid/$CANARY"
+unset AUDITOR_STRICT
 mkdir -p "$HOME" "$T/bin" "$T/marks" "$T/outside"
 printf 'def homejq: "home-jq-%s";\n' "$CANARY" > "$HOME/.jq"
 

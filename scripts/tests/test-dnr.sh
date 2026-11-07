@@ -9,6 +9,7 @@
 # fixtures, so "validated" claims in the docs point at a real check.
 
 set -uo pipefail
+unset AUDITOR_STRICT
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DNR="$HERE/../dnr"

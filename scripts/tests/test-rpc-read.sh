@@ -16,6 +16,7 @@ T=$(cd -P "$T" && pwd -P) || exit 1
 trap 'chmod -R u+rwx "$T" 2>/dev/null; rm -rf "$T"' EXIT
 PY=$(python3 -I -c 'import sys; print(sys.executable)') || { echo "FAIL - python3 is needed"; exit 1; }
 export HOME="$T/home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
+unset AUDITOR_STRICT
 mkdir -p "$HOME" "$T/sol"
 
 pass=0 fail=0 skip=0
