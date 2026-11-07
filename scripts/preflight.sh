@@ -10,8 +10,9 @@
 #
 # Two modes (Rule 11f). Strict mode is on when AUDITOR_STRICT reads as on, with --strict, or while a run directory of the
 # working directory holds a strict marker (scripts/lib/confine.sh decides); default mode otherwise.
-#   - Strict mode refuses each finding below with one stderr line, as 7.7.0 did, but for one change: an untracked
-#     .claude/settings.local.json in a repository is the user's own and is not read (see below).
+#   - Strict mode refuses each finding below with one stderr line, as 7.7.0 did, but for two changes: a link to a
+#     directory outside the tree is scanned as the tree is (#69), and an untracked .claude/settings.local.json in a
+#     repository is the user's own and is not read (see below).
 #   - Default mode refuses none of them. Each is a "preflight: note:" line, and the run goes on.
 # stdout's first line names the mode and lists each strict marker. The notes follow, and the last line is
 # "preflight: ok: ...": in default mode, it says what strict mode would refuse when a note named any of it.
@@ -48,8 +49,11 @@
 #   - a symbolic link in the working directory, outside .git, to a directory outside it or inside a .git directory, as
 #     the filesystem opens names (where they fold, .GIT/x is in .git, and a target spelling the working directory's path
 #     in other letters lies in it). Claude Code may load project config there once it reads a file through the link. A
-#     .git that is a link is skipped. Default mode notes such a link and does not read its target; strict mode refuses
-#     it;
+#     .git that is a link is skipped. Default mode notes such a link and does not read its target. Strict mode refuses a
+#     link into a .git, one it cannot resolve, and one whose target holds the working directory; any other target is
+#     walked as the tree is, its entries counting toward the limit, and the link is refused only when the target holds
+#     project config (named in the refusal), cannot be read in full, takes the walk past the limit, or holds a link to a
+#     directory outside both, which is refused, not followed;
 #   - a working directory inside a .claude directory or a git directory;
 #   - a working directory in a linked git worktree: Claude Code also loads its main checkout's
 #     .claude/settings.local.json, and that checkout's project skills when the worktree has none. Default mode reads that
@@ -166,11 +170,11 @@ below() {
   done
 }
 
-# in_git <path below the working directory, as below sets it>: status 0 when one of its directories is
-# its parent's .git as the filesystem opens names (where they fold, .GIT is). Only a name holding git in
-# any letter case, or a byte outside printable ASCII, can open as .git, so only such a name is looked up.
+# in_git <directory> <path below it>: status 0 when one of the path's directories is its parent's .git as the filesystem
+# opens names (where they fold, .GIT is). Only a name holding git in any letter case, or a byte outside printable ASCII,
+# can open as .git, so only such a name is looked up.
 in_git() {
-  local q=${WT%/} rest=${1:+$1/} c
+  local q=${1%/} rest=${2:+$2/} c
   while [ -n "$rest" ]; do
     c=${rest%%/*}
     rest=${rest#*/}
@@ -207,8 +211,8 @@ settings_read() {
 }
 
 # hit <shown> <absolute path> [n]: config the scan found, in the context CTX names: t the working tree, p a parent, m the
-# main checkout of a linked worktree. HIT_S holds the shown paths, HIT_A the absolute ones, and HIT_C
-# "<context>:<kind>" for each, the kind c, or n for a settings file jq was not there to read.
+# main checkout of a linked worktree, l the target of a link (strict mode). HIT_S holds the shown paths, HIT_A the
+# absolute ones, and HIT_C "<context>:<kind>" for each, the kind c, or n for a settings file jq was not there to read.
 HIT_S=() HIT_A=() HIT_C=()
 hit() {
   HIT_S+=("$1") HIT_A+=("$2") HIT_C+=("$CTX:${3:-c}")
@@ -246,7 +250,7 @@ settings() {
   case "${p##*/}" in
     [sS][eE][tT][tT][iI][nN][gG][sS].[lL][oO][cC][aA][lL].[jJ][sS][oO][nN])
       if [ "$CTX" = m ]; then bound=$main ask=$main rel=${shown#"$main"/}; fi
-      if own "$p" "$bound" "$ask" "$rel"; then
+      if [ "$CTX" != l ] && own "$p" "$bound" "$ask" "$rel"; then
         [ "$STRICT" = 0 ] || return 0
         command -v jq >/dev/null 2>&1 || return 0
         settings_read "$p"
@@ -403,12 +407,13 @@ esac
 
 # The size first: the walk stops one entry past the limit.
 walk "$WT" "$max"
-TREE_R=(${WALK_R[@]+"${WALK_R[@]}"}) TREE_ST=$WALK_ST TREE_CUT=$WALK_CUT
+TREE_R=(${WALK_R[@]+"${WALK_R[@]}"}) TREE_ST=$WALK_ST TREE_CUT=$WALK_CUT used=$WALK_N
 if [ "$TREE_CUT" = 1 ]; then
   [ "$STRICT" = 0 ] ||
     refuse "the working tree holds more than $max entries outside .git, too many to check; run from a smaller directory," \
       "such as a workspace of its own for this incident (AUDITOR_PREFLIGHT_MAX_ENTRIES raises the limit)"
   note "the walk stopped at $max entries; the rest of the working tree was not checked (Rule 11f)"
+  used=$max
 fi
 
 # ---- the repository and the parents to read ---------------------------------------------------------------------------
@@ -611,22 +616,22 @@ fi
 
 # ---- the working tree ---------------------------------------------------------------------------------------------------
 # Each entry the walk kept is settled by its name (folded() for a name outside printable ASCII), and a link is kept in LK_*
-# for the link check: its shown path, and what it is (git: a directory in a .git of the tree; out: outside the tree;
-# unres: one that cannot be resolved).
-LK_S=() LK_K=()
+# for the link check: its shown path, what it is (git: a directory in a .git of the tree; out: outside the tree; unres: one
+# that cannot be resolved) and the directory it leads to.
+LK_S=() LK_K=() LK_T=()
 # keep_link <shown> <absolute path>: a symbolic link the walk found, to a directory the scan does not read, kept in LK_*. A .git
 # that is itself a link (to a git directory kept elsewhere) is skipped, as a .git directory is.
 keep_link() {
   [ "${2##*/}" != .git ] && [ -d "$2" ] || return 0
   if confine_phys "$2"; then
     if below "$CONFINE_PHYS"; then
-      in_git "$BELOW" || return 0
-      LK_S+=("$1") LK_K+=(git)
+      in_git "$WT" "$BELOW" || return 0
+      LK_S+=("$1") LK_K+=(git) LK_T+=("$CONFINE_PHYS")
     else
-      LK_S+=("$1") LK_K+=(out)
+      LK_S+=("$1") LK_K+=(out) LK_T+=("$CONFINE_PHYS")
     fi
   else
-    LK_S+=("$1") LK_K+=(unres)
+    LK_S+=("$1") LK_K+=(unres) LK_T+=('')
   fi
 }
 CTX=t
@@ -651,7 +656,9 @@ if [ "$TREE_CUT" = 0 ] && [ "$TREE_ST" != 0 ]; then
 fi
 
 # ---- links --------------------------------------------------------------------------------------------------------------
-# In default mode each link LK_* holds is a note; strict mode refuses the first in byte order of their shown paths.
+# In default mode each link LK_* holds is a note. In strict mode they are taken in byte order of their shown paths: a link
+# into a .git, one that cannot be resolved, or one whose target holds the working directory is refused; any other target
+# is walked as the tree is (#69).
 order=() i=0
 while [ "$i" -lt "${#LK_S[@]}" ]; do
   j=${#order[@]}
@@ -663,13 +670,53 @@ while [ "$i" -lt "${#LK_S[@]}" ]; do
   order[j]=$i
   i=$((i + 1))
 done
+linked() {
+  refuse "the working tree has a symbolic link ($(confine_text "$1")) to a directory outside it or inside a .git" \
+    "directory, where Claude Code may find project config this check does not read; audit a copy without it (Rule 11e)"
+}
 for i in ${order[@]+"${order[@]}"}; do
-  s=${LK_S[i]}
-  [ "$STRICT" = 0 ] ||
-    refuse "the working tree has a symbolic link ($(confine_text "$s")) to a directory outside it or inside a .git" \
-      "directory, where Claude Code may find project config this check does not read; audit a copy without it (Rule 11e)"
+  s=${LK_S[i]} t=${LK_T[i]}
   confine_shown "$s"
-  LNK+=("$CONFINE_SHOWN"$'\t'"${LK_K[i]}")
+  sh=$CONFINE_SHOWN
+  if [ "$STRICT" = 0 ]; then
+    LNK+=("$sh"$'\t'"${LK_K[i]}")
+    continue
+  fi
+  [ "${LK_K[i]}" = out ] || linked "$s"
+  ! confine_inside "$WT" "$t" || linked "$s"
+  ! in_git "" "${t#/}" || linked "$s"
+  [ "$used" -lt "$max" ] ||
+    refuse "the working tree holds more than $max entries outside .git, too many to check; run from a smaller directory," \
+      "such as a workspace of its own for this incident (AUDITOR_PREFLIGHT_MAX_ENTRIES raises the limit)"
+  walk "$t" "$((max - used))"
+  [ "$WALK_CUT" = 0 ] ||
+    refuse "the working tree holds more than $max entries outside .git, too many to check; run from a smaller directory," \
+      "such as a workspace of its own for this incident (AUDITOR_PREFLIGHT_MAX_ENTRIES raises the limit)"
+  used=$((used + WALK_N))
+  [ "$WALK_ST" = 0 ] ||
+    refuse "find cannot read all of the directory the symbolic link $(confine_text "$s") leads to, so it cannot be" \
+      "checked for Claude Code project config"
+  CTX=l
+  for r in ${WALK_R[@]+"${WALK_R[@]}"}; do
+    p=$t/${r#././} q=$s/${r#././}
+    case "${r##*/}" in
+      *[![:print:]]*) folded "$q" "$p" ;;
+      *) ! matched "$r" "$p" || settle "$q" "$p" ;;
+    esac
+    if [ -L "$p" ] && [ "${p##*/}" != .git ] && [ -d "$p" ]; then
+      if confine_phys "$p" && { confine_inside "$CONFINE_PHYS" "$t" || { below "$CONFINE_PHYS" && ! in_git "$WT" "$BELOW"; }; }; then
+        :
+      else
+        linked "$q"
+      fi
+    fi
+  done
+  first l
+  [ -z "$FIRST" ] ||
+    refuse "the working tree has a symbolic link ($(confine_text "$s")) to a directory outside it that holds Claude Code" \
+      "project config ($(confine_text "$FIRST")), which Claude Code may load once it reads a file through the link;" \
+      "audit a copy without it (Rule 11e)"
+  LNK+=("$sh"$'\t'read)
 done
 
 # ---- output ---------------------------------------------------------------------------------------------------------------
@@ -713,16 +760,21 @@ say() { # say <list> <line>: the note one line of a list stands for
     CFG:p:*) printf 'a parent of the working directory holds Claude Code project config (%s), which Claude Code loads too; strict mode refuses it (Rule 11f)' "$s" ;;
     CFG:m:*) printf 'the main checkout of this worktree holds Claude Code project config (%s), which Claude Code loads too; strict mode refuses a linked worktree (Rule 11f)' "$s" ;;
     CFG:*) printf 'the working tree ships Claude Code project config (%s), %s' "$s" "$CONFIG_TEXT" ;;
-    LNK:out) printf 'the working tree has a symbolic link (%s) to a directory outside it, which preflight does not read; strict mode refuses it (Rule 11f)' "$s" ;;
+    LNK:out) printf 'the working tree has a symbolic link (%s) to a directory outside it, which preflight does not read; strict mode reads it and refuses project config there (Rule 11f)' "$s" ;;
     LNK:git) printf 'the working tree has a symbolic link (%s) to a directory inside a .git directory, which preflight does not read; strict mode refuses it (Rule 11f)' "$s" ;;
     LNK:unres) printf 'the working tree has a symbolic link (%s) to a directory preflight cannot resolve, which it does not read; strict mode refuses it (Rule 11f)' "$s" ;;
+    LNK:read) printf 'the working tree has a symbolic link (%s) to a directory outside it, which preflight read as part of the working tree: it holds no Claude Code project config (Rule 11f)' "$s" ;;
     LOC:repo) printf '%s sets hooks or env, which Claude Code applies to this session; git does not track it, so preflight takes it for your own settings (Rule 11f)' "$s" ;;
     LOC:*) printf '%s sets hooks or env, which Claude Code applies to this session; it lies in no git repository, so preflight takes it for your own settings, and strict mode for the repository'\''s (Rule 11f)' "$s" ;;
     INSTR:*) printf 'Claude Code reads %s %s' "$s" "$NOTE" ;;
   esac
 }
 emit CFG "Claude Code project config paths, which strict mode refuses (Rule 11f)"
-emit LNK "symbolic links to directories that preflight does not read, which strict mode refuses (Rule 11f)"
+if [ "$STRICT" = 1 ]; then
+  emit LNK "symbolic links to directories outside the working tree, which preflight read as part of it (Rule 11f)"
+else
+  emit LNK "symbolic links to directories that preflight does not read, which strict mode reads or refuses (Rule 11f)"
+fi
 emit LOC "settings files that preflight takes for your own and that set hooks or env (Rule 11f)"
 emit INSTR "that Claude Code reads as project instructions"
 n=${#CFG[@]}

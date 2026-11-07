@@ -7,7 +7,7 @@
 # cannot use, and a git directory kept elsewhere included) and the user's own configuration directory, linked worktrees
 # and their main checkout, submodule checkouts, a working directory below the top level, where a settings.local.json
 # comes from, names the filesystem folds (link targets included), a large tree, the one walk and the note list (#65),
-# links out of the tree, the entry count where SIGPIPE is ignored, what the link check and folded()
+# the targets of links out of the tree (#69), the entry count where SIGPIPE is ignored, what the link check and folded()
 # cost (path lookups counted, not timed), trees find cannot read, a missing jq, control characters in a path, and the
 # installation or PATH entries inside the working directory. Every run goes under each bash on the machine (/bin/bash
 # and the bash running this suite, when they differ) and must print the same under each. Needs git and jq; no network.
@@ -84,8 +84,9 @@ CFG_T='which Claude Code loads beside this plugin: its commands, agents, hooks, 
 n_ships() { printf 'preflight: note: the working tree ships Claude Code project config (%s), %s' "$1" "$CFG_T"; }
 n_above() { printf 'preflight: note: a parent of the working directory holds Claude Code project config (%s), which Claude Code loads too; strict mode refuses it (Rule 11f)' "$1"; }
 n_main() { printf 'preflight: note: the main checkout of this worktree holds Claude Code project config (%s), which Claude Code loads too; strict mode refuses a linked worktree (Rule 11f)' "$1"; }
-n_link() { printf 'preflight: note: the working tree has a symbolic link (%s) to a directory outside it, which preflight does not read; strict mode refuses it (Rule 11f)' "$1"; }
+n_link() { printf 'preflight: note: the working tree has a symbolic link (%s) to a directory outside it, which preflight does not read; strict mode reads it and refuses project config there (Rule 11f)' "$1"; }
 n_glink() { printf 'preflight: note: the working tree has a symbolic link (%s) to a directory inside a .git directory, which preflight does not read; strict mode refuses it (Rule 11f)' "$1"; }
+n_read() { printf 'preflight: note: the working tree has a symbolic link (%s) to a directory outside it, which preflight read as part of the working tree: it holds no Claude Code project config (Rule 11f)' "$1"; }
 n_unread() { printf 'preflight: note: find cannot read %s, so it was not checked for Claude Code project config; strict mode refuses this (Rule 11f)' "$1"; }
 N_TREE_UNREAD='preflight: note: find cannot read all of the working tree, so what it cannot read was not checked for Claude Code project config; strict mode refuses this (Rule 11f)'
 n_cap() { printf 'preflight: note: the walk stopped at %s entries; the rest of the working tree was not checked (Rule 11f)' "$1"; }
@@ -402,8 +403,8 @@ for mode in strict default; do
   done
 done
 # One walk of the tree (#65): a find that logs each call, then runs the real find, sees the tree walked once, however
-# much config, how many notes and links it holds. 7.7.0 walked it three times. The calls on one parent or one directory
-# (-maxdepth 1, -prune) are no walks.
+# much config, how many notes and links it holds. 7.7.0 walked it three times. In strict mode each target of a link out
+# of the tree is walked once more. The calls on one parent or one directory (-maxdepth 1, -prune) are no walks.
 mkdir -p "$T/logfind"
 cat > "$T/logfind/find" <<EOF
 #!/bin/sh
@@ -422,6 +423,11 @@ check "default mode walks the tree once (#65)" test "$(walks)" = "${#SHELLS[@]}"
 : > "$T/find.log"
 run "$OW/repo" "PATH=$T/logfind:$PATH" AUDITOR_STRICT=1
 check "strict mode walks it once too, before refusing" test "$(walks)" = "${#SHELLS[@]}"
+rm -rf "$OW/repo/.claude/agents"
+: > "$T/find.log"
+run "$OW/repo" "PATH=$T/logfind:$PATH" AUDITOR_STRICT=1
+check "... and once more for the target of a link out of the tree, which it reads" \
+  sh -c '[ "$1" = "$((2 * $2))" ] && [ "$3" = 0 ]' _ "$(walks)" "${#SHELLS[@]}" "$RC"
 
 # =================================================================================================
 # The parents up to the repository root, and the user's own configuration directory.
@@ -875,9 +881,9 @@ for t in .GIT/p .Git/p /.GIT/p; do
   else run "$C" AUDITOR_STRICT=1; check "a link to $what passes where names do not fold case: it leads nowhere" just_ok; fi
 done
 # A link that spells the working directory's own path in other letters, or in another Unicode normalization: where the
-# filesystem opens that spelling, a link into the tree passes, as the scan reads its target, and one into .git or beside
-# the tree is refused; where it does not, the link leads nowhere and passes. The working directory is <C>/<w>, beside
-# <C>/beside; @W@ is <C>/<w> in capitals, @C@ is <C>.
+# filesystem opens that spelling, a link into the tree passes, as the scan reads its target, and one into .git is refused,
+# and one beside the tree is read in strict mode (#69) and refused for the config there; where it does not, the link leads
+# nowhere and passes. The working directory is <C>/<w>, beside <C>/beside; @W@ is <C>/<w> in capitals, @C@ is <C>.
 spelled() { # spelled <name> <pass, git or beside> <link target> [<w>, default w]
   local name=$1 want=$2 v=$3 w=${4:-w} C
   C=$(newdir) && build "$C" "d:$w/realdocs" "d:$w/.git/p/.claude/skills" d:beside/.claude/skills ||
@@ -888,7 +894,11 @@ spelled() { # spelled <name> <pass, git or beside> <link target> [<w>, default w
   if [ ! -d "$C/$w/docs" ]; then run "$C/$w" AUDITOR_STRICT=1; check "$name passes where the filesystem does not open that spelling: it leads nowhere" just_ok
   elif [ "$want" = pass ]; then run "$C/$w" AUDITOR_STRICT=1; check "$name passes" just_ok
   elif [ "$want" = git ]; then both "$name is refused" "$C/$w" linked docs "$(n_glink docs)"
-  else both "$name is refused" "$C/$w" linked docs "$(n_link docs)"
+  else
+    run "$C/$w" AUDITOR_STRICT=1
+    check "strict: $name is read, and refused for the config there" found docs docs/.claude/skills
+    run "$C/$w"
+    check "default: $name is noted" noted "$(n_link docs)"
   fi
 }
 spelled "a link to the working directory's absolute path in capitals, then REALDOCS," pass @W@/REALDOCS
@@ -914,22 +924,62 @@ else
 fi
 
 # =================================================================================================
-# Links to directories outside the working tree. Default mode notes each and does not read its target; strict mode
-# refuses it.
+# Links to directories outside the working tree (#69). Default mode notes each and does not read its target. Strict mode
+# walks the target as the tree, its entries counting toward the limit, and refuses only when it holds project config, when
+# find cannot read all of it, when the walk passes the limit, or when it holds a link to a directory outside both.
 # =================================================================================================
 K=$(newdir)
 build "$K" d:r11/sub/src d:r11/sibling/.claude/skills l:r11/sub/programs=../sibling
 git init -q "$K/r11"
-both "a link in the tree to a directory beside it, holding config, is refused" "$K/r11/sub" linked programs \
-  "$(n_link programs)"
-check "... default: then the ok line" last_is "$OK_O"
+run "$K/r11/sub" AUDITOR_STRICT=1
+check "strict: a link in the tree to a directory beside it, holding config, is still refused, and names what was found" \
+  found programs programs/.claude/skills
+run "$K/r11/sub"
+check "default: ... and noted, unread" body_is "$(n_link programs)
+$OK_O"
 for st in 1 0; do
   run "$K/r11" "AUDITOR_STRICT=$st"
   [ "$st" = 1 ] && check "strict: ... and from the repository's top level the config itself is" ships sibling/.claude/skills
   [ "$st" = 0 ] && check "default: ... and from the top level noted" noted "$(n_ships sibling/.claude/skills)"
 done
+build "$K" d:s1/w/src d:s1/shared/lib f:s1/shared/CLAUDE.md l:s1/w/shared=../shared l:s1/w/dup=../shared/lib
+run "$K/s1/w" AUDITOR_STRICT=1
+check "strict: links to a sibling with no config pass, each with a note, and the target's instructions are noted (#69)" \
+  body_is "$(n_read dup)
+$(n_read shared)
+$(note shared/CLAUDE.md)
+$OK_LINE"
+run "$K/s1/w"
+check "default: ... noted, unread" body_is "$(n_link dup)
+$(n_link shared)
+$OK_O"
+build "$K" d:s2/w d:s2/shared/x l:s2/w/shared=../shared l:s2/shared/x/out=../../elsewhere d:s2/elsewhere
+both "a link in the target to a directory outside it and the tree is refused, not followed" "$K/s2/w" linked shared/x/out \
+  "$(n_link shared)"
+build "$K" d:s3/w d:s3/shared/x l:s3/w/shared=../shared l:s3/shared/x/back=../../w l:s3/shared/x/in=..
+run "$K/s3/w" AUDITOR_STRICT=1
+check "strict: ... while links in the target back into the tree, or within the target, pass" body_is "$(n_read shared)
+$OK_LINE"
 build "$K" d:s4/w d:s4/repo/.git/objects l:s4/w/objects=../repo/.git/objects
 both "a link to a directory in another repository's .git is refused" "$K/s4/w" linked objects "$(n_link objects)"
+build "$K" d:s5/w d:s5/shared/a d:s5/shared/b l:s5/w/shared=../shared
+nt=$(cd "$K/s5/w" && find . -name .git -type d -prune -o -print | wc -l | tr -d ' ')
+run "$K/s5/w" AUDITOR_STRICT=1 "AUDITOR_PREFLIGHT_MAX_ENTRIES=$((nt + 3))"
+check "strict: the target's entries count toward the limit: tree and target at exactly the limit pass" body_is "$(n_read shared)
+$OK_LINE"
+both "... and one entry under it is refused" "$K/s5/w" capped "$((nt + 2))" "$(n_link shared)" \
+  "AUDITOR_PREFLIGHT_MAX_ENTRIES=$((nt + 2))"
+if [ "$(id -u)" = 0 ]; then
+  skp "running as root, every directory is readable"
+else
+  build "$K" d:s6/w d:s6/shared/locked/x l:s6/w/shared=../shared
+  chmod 000 "$K/s6/shared/locked"
+  both "a target find cannot read in full is refused" "$K/s6/w" refused \
+    "find cannot read all of the directory the symbolic link shared leads to, so it cannot be checked for Claude Code project config" \
+    "$(n_link shared)"
+  chmod 700 "$K/s6/shared/locked"
+fi
+
 # =================================================================================================
 # What the checks cost, counted rather than timed: preflight, unchanged, is sourced by a bash whose DEBUG trap counts the
 # path lookups ([ -e ... ] and [ ... -ef ... ]) made inside the functions named.
