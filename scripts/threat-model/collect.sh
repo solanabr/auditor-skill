@@ -4,8 +4,9 @@
 # Gathers history-derived leads for /auditor:threat-model: security-keyword commits, reverts, removed
 # or quietly added account guards, churn, an optional fork-parent comparison, provenance signals,
 # prior-vulnerability inputs and the audit-mem warm block. It never checks out, builds, runs, fetches
-# into or modifies the target: lazy fetching and transport protocols are off, and a partial clone is
-# refused. Output contract: references/audit-lifecycle/threat-model-bootstrap.md.
+# into or modifies the target: lazy fetching and transport protocols are off, so a partial clone is read
+# for what it holds, with a note, and strict mode refuses it (OUTPUT-RULES.md Rule 11f). Output contract:
+# references/audit-lifecycle/threat-model-bootstrap.md.
 # Git hardening follows OUTPUT-RULES.md Rule 11c (the hardened call in scripts/lib/confine.sh); the
 # output directory follows Rule 11d.
 #
@@ -74,12 +75,13 @@
 #              run directory that fails the checks above or that git or find cannot check, a disclosure
 #              that cannot be recorded, or an output that cannot be written),
 #              3 --repo is not the top level of a git repository that git can read (or a bare
-#              repository), the pin does not resolve, or the target is a partial clone (reading it could
-#              fetch from its promisor remote) or git cannot read its config.
+#              repository), the pin does not resolve, or, in strict mode, the target is a partial clone
+#              or git cannot read its config (default mode notes either and goes on).
 
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES CDPATH
-# No git call may fetch a missing object from a promisor remote (partial clones are refused below too).
+# No git call may fetch a missing object from a promisor remote (a partial clone is noted below, or refused
+# in strict mode).
 export GIT_NO_LAZY_FETCH=1 LC_ALL=C
 
 case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
@@ -275,12 +277,20 @@ else
   esac
 fi
 confine_repo_top "$REPO_ABS" || not_a_repo
+# Lazy fetching and every transport are off, so a partial clone is read for what it holds: a read that
+# needs an object it lacks finds nothing. Default mode notes it, and a config git cannot read, which could
+# hide one; strict mode refuses both (OUTPUT-RULES.md Rule 11f). PARTIAL says which, for the history header.
 confine_partial_clone "$REPO_ABS" >/dev/null
-case $? in
-  0) echo "collect.sh: the target is a partial clone: reading missing objects would fetch from its promisor remote. Make a full copy you control first (OUTPUT-RULES Rule 11c)." >&2
-     exit 3 ;;
-  2) echo "collect.sh: git cannot read the target's config, so a partial clone cannot be ruled out: $(confine_text "$REPO")" >&2
-     exit 3 ;;
+case "$?:$CONFINE_STRICT" in
+  0:1) echo "collect.sh: the target is a partial clone: reading missing objects would fetch from its promisor remote. Make a full copy you control first (OUTPUT-RULES Rule 11c)." >&2
+       exit 3 ;;
+  2:1) echo "collect.sh: git cannot read the target's config, so a partial clone cannot be ruled out: $(confine_text "$REPO")" >&2
+       exit 3 ;;
+  0:*) PARTIAL=clone
+       confine_note "the target is a partial clone: missing objects are not fetched, so history and contents may be incomplete; strict mode stops here (Rule 11f)" ;;
+  2:*) PARTIAL=config
+       confine_note "git cannot read the target's config, so a partial clone cannot be ruled out: missing objects are not fetched, so history and contents may be incomplete; strict mode stops here (Rule 11f)" ;;
+  *)   PARTIAL="" ;;
 esac
 if [ "$OFFLINE" -eq 1 ]; then
   CONFINE_HINT=$NET_HINT
@@ -651,7 +661,11 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
   echo "| Collector | scripts/threat-model/collect.sh v$COLLECTOR_VERSION, cap $CAP rows, quiet-fix ceiling $SMALL lines, fix ceiling $FIX_CEILING lines |"
   echo
   echo "Leads, not findings: every row points at history to re-derive from the code at the pinned commit."
-  echo "Git ran with the system and global config dropped and without pager, fsmonitor, hooks, signature helpers, textconv or external diff (OUTPUT-RULES.md Rule 11c), with lazy fetching and every transport protocol off (a partial clone is refused), and with its grep, colour, path-quoting, log-encoding, big-file, hunk-fusing, diff-context and root-commit settings pinned."
+  echo "Git ran with the system and global config dropped and without pager, fsmonitor, hooks, signature helpers, textconv or external diff (OUTPUT-RULES.md Rule 11c), with lazy fetching and every transport protocol off ($([ "$CONFINE_STRICT" = 1 ] && echo 'a partial clone is refused' || echo 'nothing a partial clone lacks is fetched')), and with its grep, colour, path-quoting, log-encoding, big-file, hunk-fusing, diff-context and root-commit settings pinned."
+  case "$PARTIAL" in
+    clone)  echo "Partial clone: the objects it lacks are not fetched, so a NOT FOUND or a short list below may only mean that they are missing." ;;
+    config) echo "git could not read the target's config, so it may be a partial clone: objects it lacks are not fetched, so a NOT FOUND or a short list below may only mean that they are missing." ;;
+  esac
   if [ "$SHALLOW" = true ]; then
     echo "Shallow clone: history before the shallow boundary is missing, so a NOT FOUND or a short list below may only mean that history is cut."
   fi

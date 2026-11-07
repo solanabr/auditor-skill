@@ -233,7 +233,7 @@ collect --offline --repo tgt --keywords --network
 check "an option-shaped word after --keywords is its value, not a mode (exit 0, still offline)" \
   sh -c "grep -q '^| Network | offline |' '$OUT/history.md' && grep -q 'oracle|--network' '$OUT/history.md'"
 check "--help prints the whole header, exit statuses included" \
-  sh -c "cd '$W' && '$COLLECT' --help | grep -q 'Exit status:' && '$COLLECT' --help | grep -q 'promisor remote)'"
+  sh -c "cd '$W' && '$COLLECT' --help | grep -q 'Exit status:' && '$COLLECT' --help | grep -q 'default mode notes either and goes on)'"
 check "--help names the mode-first forms" sh -c "cd '$W' && '$COLLECT' --help | grep -q 'collect.sh\" --offline --repo <dir> --out audit_<n>/bootstrap'"
 
 # =================================================================================================
@@ -1088,8 +1088,9 @@ else
 fi
 
 # =================================================================================================
-# T-p: partial and shallow clones. A partial clone is refused (exit 3) before any object is read, so
-# its promisor remote is never contacted; a shallow clone is collected with a note that history is cut.
+# T-p: partial and shallow clones. A partial clone is read for what it holds, with a note, and never
+# contacts its promisor remote; strict mode refuses it (exit 3) before any object is read. A shallow
+# clone is collected with a note that history is cut.
 # =================================================================================================
 git_at_least() { # git_at_least <major> <minor>
   local v; v=$(git --version | sed -E 's/^git version ([0-9]+)\.([0-9]+).*/\1 \2/')
@@ -1115,11 +1116,25 @@ else
   else skp "T-p sanity: this git did not fetch a missing object"; fi
   rm -f "$T/marks/promisor-fetch"
   PRUN=$(newrun)
-  check "T-p: a partial clone is refused in --detect (exit 3)" test "$(rc --detect --repo partial --out audit_900/bootstrap)" = 3
-  check "T-p: ... and in a full run (exit 3)" test "$(rc --offline --repo partial --out "$PRUN/bootstrap")" = 3
-  check "T-p: ... with a message naming the promisor remote" has "$T/rc.err" "the target is a partial clone"
+  check "T-p (strict): a partial clone is refused in --detect (exit 3)" test "$(AUDITOR_STRICT=1 rc --detect --repo partial --out audit_900/bootstrap)" = 3
+  check "T-p (strict): ... and in a full run (exit 3)" test "$(AUDITOR_STRICT=1 rc --offline --repo partial --out "$PRUN/bootstrap")" = 3
+  check "T-p (strict): ... with today's line, naming the promisor remote" test "$(cat "$T/rc.err")" = \
+    "collect.sh: the target is a partial clone: reading missing objects would fetch from its promisor remote. Make a full copy you control first (OUTPUT-RULES Rule 11c)."
+  check "T-p (strict): the promisor remote is never contacted" test ! -e "$T/marks/promisor-fetch"
+  check "T-p (strict): nothing is written for a refused target" test ! -e "$W/$PRUN/bootstrap"
+  PNOTE="collect.sh: note: the target is a partial clone: missing objects are not fetched, so history and contents may be incomplete; strict mode stops here (Rule 11f)"
+  DP=$(cd "$W" && "$COLLECT" --detect --repo partial --out audit_900/bootstrap 2>"$T/rc.err"); DRC=$?
+  check "T-p: --detect reads a partial clone (exit 0)" test "$DRC" = 0
+  check "T-p: ... with the note as stderr's one line" test "$(cat "$T/rc.err")" = "$PNOTE"
+  check "T-p: ... and prints both triggers, from the objects the clone holds" \
+    test "$(printf '%s\n' "$DP" | cut -d' ' -f1-3 | tr '\n' ' ')" = "T3 yes readme-phrase T4 no none "
+  collect --offline --repo partial; PRC=$?
+  check "T-p: a full run reads a partial clone (exit 0)" test "$PRC" = 0
+  check "T-p: ... with the note as stderr's first line" test "$(sed -n 1p "$T/stderr.log")" = "$PNOTE"
+  check "T-p: ... and history.md says what that means" \
+    has "$OUT/history.md" "Partial clone: the objects it lacks are not fetched, so a NOT FOUND or a short list below may only mean that they are missing."
+  check "T-p: ... and that nothing a partial clone lacks is fetched" has "$OUT/history.md" "every transport protocol off (nothing a partial clone lacks is fetched)"
   check "T-p: the promisor remote is never contacted" test ! -e "$T/marks/promisor-fetch"
-  check "T-p: nothing is written for a refused target" test ! -e "$W/$PRUN/bootstrap"
   rm -f "$T/marks/promisor-fetch"
   collect --offline --repo tgt --parent partial
   check "T-p: a local --parent that is a partial clone is not used" has "$OUT/history.md" "is a partial clone"
@@ -1344,10 +1359,11 @@ check "T-u: ... and the parent's fix the fork never applied is listed as absent"
   sh -c "grep -q 'require!(amount > 0, AmmError::ZeroAmount);.*\[text absent from target @ pin - verify\]' '$OUTFO/history.md'"
 
 # =================================================================================================
-# T-v: the run-directory and partial-clone checks refuse when git or find cannot answer, rather than
-# treating "no answer" as "not tracked" or "no links". A stand-in git reports the error git gives for a
-# repository owned by another user (safe.directory) for the calls under test and runs the real git
-# for everything else.
+# T-v: the run-directory and partial-clone checks never take "no answer" from git or find for "not
+# tracked", "no links" or "not partial". A stand-in git reports the error git gives for a repository
+# owned by another user (safe.directory) for the calls under test and runs the real git for everything
+# else. Strict mode refuses each such run; default mode refuses all but a config git cannot read, which
+# it notes and goes on (Rule 11f).
 # =================================================================================================
 mkdir -p "$T/gitwrap-tracked" "$T/gitwrap-config"
 printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --is-inside-work-tree|ls-files) echo "fatal: detected dubious ownership in repository at '"'"'$PWD'"'"'" >&2; exit 128 ;; esac; done\nexec "%s" "$@"\n' "$REALGIT" > "$T/gitwrap-tracked/git"
@@ -1367,9 +1383,14 @@ check "T-v: a run directory that cannot be fully read (a 0300 subdirectory) is r
   test "$(rc_in "$FC" --offline --repo . --out "$FR2/bootstrap")" = 2
 chmod 0700 "$FC/$FR2/bootstrap/sub"
 check "T-v: ... and nothing is written through the link it hides" test -z "$(ls -A "$T/elsewhere")"
-check "T-v: when git cannot read the target's config, the partial-clone check refuses (exit 3)" \
-  test "$(cd "$FC" && PATH="$T/gitwrap-config:$PATH" "$COLLECT" --offline --repo . --out "$FR3/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 3
-check "T-v: ... and nothing is written" test ! -e "$FC/$FR3/bootstrap"
+check "T-v (strict): when git cannot read the target's config, the partial-clone check refuses (exit 3)" \
+  test "$(cd "$FC" && AUDITOR_STRICT=1 PATH="$T/gitwrap-config:$PATH" "$COLLECT" --offline --repo . --out "$FR3/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 3
+check "T-v (strict): ... and nothing is written" test ! -e "$FC/$FR3/bootstrap"
+check "T-v: in default mode a config git cannot read is noted, and the run goes on (exit 0)" \
+  test "$(cd "$FC" && PATH="$T/gitwrap-config:$PATH" "$COLLECT" --offline --repo . --out "$FR3/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 0
+check "T-v: ... the note is stderr's first line" test "$(sed -n 1p "$T/rc.err")" = \
+  "collect.sh: note: git cannot read the target's config, so a partial clone cannot be ruled out: missing objects are not fetched, so history and contents may be incomplete; strict mode stops here (Rule 11f)"
+check "T-v: ... and history.md says what that means" has "$FC/$FR3/bootstrap/history.md" "git could not read the target's config, so it may be a partial clone"
 check "T-v: git missing from PATH is refused (exit 2)" \
   test "$(cd "$FC" && PATH="$T/bin" /bin/bash "$COLLECT" --offline --repo . --out "$FR3/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 2
 
