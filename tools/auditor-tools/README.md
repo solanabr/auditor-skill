@@ -653,8 +653,10 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   audit-mem's tables, each `CREATE TABLE`
   exactly as audit-mem writes it (a column, constraint, default or table option of
   another's is refused), the indexes SQLite makes for their primary keys, and
-  `sqlite_sequence` as SQLite makes it; a view, a trigger, a virtual table or any
-  other object is refused. SQLite never follows a link (`SQLITE_OPEN_NOFOLLOW`)
+  `sqlite_sequence` as SQLite makes it; in default mode also the tables `ANALYZE`
+  or `PRAGMA optimize` makes, `sqlite_stat1` (and `sqlite_stat2` to `sqlite_stat4`
+  where SQLite makes them), each as SQLite writes it. A view, a trigger, a virtual
+  table or any other object is refused. SQLite never follows a link (`SQLITE_OPEN_NOFOLLOW`)
   and runs in its defensive mode (`SQLITE_DBCONFIG_DEFENSIVE`), with triggers and views
   off, `trusted_schema` off, temporary tables in memory and no value read or written
   past 1 MiB (`SQLITE_LIMIT_LENGTH`; the writers store at most 4096 bytes a field).

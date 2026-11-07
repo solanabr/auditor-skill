@@ -3261,3 +3261,49 @@ fn readers_take_a_run_directory_with_no_gitignore_in_default_mode_only() {
     wt.write(".git/index", b"not an index");
     refused(&mem(&wt, &warm), "audit-mem", why);
 }
+
+#[test]
+fn takes_the_tables_analyze_makes_in_default_mode_only() {
+    // ANALYZE (or PRAGMA optimize) adds sqlite_stat1, which holds the query
+    // planner's statistics: default mode reads and writes such a store; strict
+    // mode refuses it, as any table audit-mem never makes. A table of that name
+    // that SQLite would not make is refused in both.
+    let wt = Wt::repo();
+    wt.run_dir("audit_1");
+    let path = "audit_1/audit-mem.db";
+    assert_eq!(
+        ok(&mem(&wt, &["init", "--db", path])),
+        "initialized audit_1/audit-mem.db\n"
+    );
+    craft(&wt.path(path), "ANALYZE;");
+    let warm = ["warm", "--db", path, "--program-id", P];
+    let put = [
+        "put-finding",
+        "--db",
+        path,
+        "--program-id",
+        P,
+        "--signature",
+        SIG,
+        "--root-cause",
+        "r",
+        "--title",
+        "t",
+        "--severity",
+        "3",
+    ];
+    let why = format!(
+        "{path}: it holds the table sqlite_stat1, which audit-mem never makes, so it is not a store audit-mem wrote"
+    );
+    for args in [&warm[..], &put] {
+        refused(&common::run_strict(BIN, &wt.dir, args), "audit-mem", &why);
+    }
+    assert_eq!(ok(&mem(&wt, &warm)), EMPTY_WARM);
+    assert!(ok(&mem(&wt, &put)).starts_with("OPEN "));
+    craft(
+        &wt.path(path),
+        "PRAGMA writable_schema = ON; UPDATE sqlite_schema SET sql = \
+         'CREATE TABLE sqlite_stat1(tbl,idx,stat,more)' WHERE name = 'sqlite_stat1';",
+    );
+    refused(&mem(&wt, &warm), "audit-mem", &why);
+}
