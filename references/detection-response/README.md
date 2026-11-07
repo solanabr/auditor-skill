@@ -202,17 +202,19 @@ states it is fixed (unverified)".
 ## Run directory: `incident_<n>/`
 
 Make one with `"<auditor-skill root>/scripts/rundir.sh" new incident`, which takes
-the highest existing `<n>` + 1, writes its `.gitignore` of `*` first and makes
+the next free `<n>`, writes its `.gitignore` of `*` first and makes
 `bin/`, `poc/`, `patches/`, `exec/` and `logs/`. Reuse one only after the human
 confirms which, and only when
 `"<auditor-skill root>/scripts/rundir.sh" check incident_<k>` prints
 `ok incident_<k>`: a real directory directly in the working directory, holding no
-symbolic link, tracked by no repository in any letter case, whose `.gitignore`
-holds exactly `*`. Never write into a tracked `incident_*`. `collect.sh` and
+symbolic link that leads out of it (in strict mode, none at all), tracked by no
+repository in any letter case, whose `.gitignore` holds exactly `*`
+(`OUTPUT-RULES.md` Rule 11d). Never write into a tracked `incident_*`. `collect.sh` and
 `snapshot-program.sh` refuse, with exit 2 and before writing anything, a run
-directory that fails those checks or that git or find cannot check, and a path
-to it with a `.` or `..` component or a symbolic link on its way inside the
-working directory.
+directory that fails those checks, one that `find` cannot check, one that git
+cannot check in strict mode (in default mode its `.gitignore` of `*` is
+enough), and a path to it with a `.` or `..` component or a symbolic link on its
+way inside the working directory.
 The **first** thing written in a new run directory is a `.gitignore` containing a
 single line, `*` (Rule 11d) — a raw transaction corpus and off-chain logs can
 carry PII and must never be committed; the repo `.gitignore` also ignores
@@ -268,7 +270,7 @@ turn up no new entity; the ledger becomes the appendix of the incident report.
 
 Inside each run, the command keeps the human in the loop (arguments, the run
 directory, the program snapshot, the collection approval and the collector, the
-execution-mode question, `context-builder` and `poc-engineer`), and the
+execution mode it reads, `context-builder` and `poc-engineer`), and the
 `incident-responder` agent does all reading and analysis of the corpus: the
 ledger, the profile, the sweeps, the verdict, `INCIDENTS.json`, the report and the
 plan. It runs one phase at a time, as the fork of the `auditor:dnr-analyze` skill;
@@ -290,7 +292,7 @@ and the `auditor:dnr-analyze` skill, and, by their exact paths in the installati
 `preflight.sh`, `rundir.sh`, the snapshot and the collector (which reach only the
 user's `$RPC_URL`, within the caps the user's environment sets, after the human's
 yes), `rpc-read.sh`, `git-ro.sh` and the runners `probe.sh`, `target.sh` and
-`run.sh`, which build and run code only in the recorded execution mode. Inside its
+`run.sh`, which build and run code only in the execution mode in force. Inside its
 fork, that skill pre-approves the offline
 analysis tools by their exact paths in the installation, run directly with nothing
 in front: `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` and `audit-logs`. The
