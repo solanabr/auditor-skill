@@ -534,4 +534,4 @@ Under `claude -p` and in CI, export `AUDITOR_STRICT=1` in the job's environment 
 | `collect.sh`: a partial clone, or a target whose config git cannot read | read, with a note | stops (exit 3) |
 | `audit-scan`: a missing `--workflows` directory; a file with a second name | that pass is skipped; the file is scanned once, under its first name | refused; both names skipped |
 | `audit-scan`, `audit-mem`: a link inside a run directory or the store that resolves inside it; git cannot answer | accepted; a run directory whose `.gitignore` is `*` is accepted | refused |
-| `audit-mem`: `warm` and `regressions` with no store; readers of a store that lacks its `.gitignore`; the tables `ANALYZE` makes | `store: absent`; read; accepted | refused |
+| `audit-mem`: `warm`, `check` and `regressions` with no store; readers of a store that lacks its `.gitignore`; the tables `ANALYZE` makes | an empty answer, without asking git; read; accepted | refused |
