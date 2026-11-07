@@ -116,7 +116,8 @@
 # confine_init cleaned it; HOME, a throwaway directory holding a fresh Solana keypair at
 # .config/solana/id.json; TMPDIR, a scratch directory; LC_ALL=C; USER, LOGNAME, LANG, TERM,
 # RUSTUP_TOOLCHAIN, CARGO_NET_OFFLINE, SSL_CERT_FILE and SSL_CERT_DIR when they are set; the user's
-# CARGO_HOME and RUSTUP_HOME, resolved against the real HOME; and the variables its caller adds. A child
+# CARGO_HOME and RUSTUP_HOME, resolved against the real HOME, and AVM_HOME, resolved the same way, when that
+# directory exists (avm's anchor shim finds its releases there); and the variables its caller adds. A child
 # that only downloads (cargo fetch or cargo update, which run no build script, or an installer) also gets
 # the proxy variables http_proxy, https_proxy, all_proxy and no_proxy, in either case, when they are set:
 # a sandbox's network allowlist works through them, and its proxy URL can carry a session token, so
@@ -1196,6 +1197,10 @@ iso_env() { # iso_env <dir> [keep-home]
   fi
   ISO_ENV=("PATH=$PATH" "HOME=$ISO_HOME" "TMPDIR=$ISO_TMP" "LC_ALL=C"
     "CARGO_HOME=${CARGO_HOME:-${real:-/nonexistent}/.cargo}" "RUSTUP_HOME=${RUSTUP_HOME:-${real:-/nonexistent}/.rustup}")
+  # avm keeps the Anchor releases its anchor shim runs in AVM_HOME, else ~/.avm, which the throwaway HOME
+  # lacks; it holds no credential.
+  value=${AVM_HOME:-${real:+$real/.avm}}
+  [ -z "$value" ] || [ ! -d "$value" ] || ISO_ENV+=("AVM_HOME=$value")
   for v in USER LOGNAME LANG TERM RUSTUP_TOOLCHAIN CARGO_NET_OFFLINE SSL_CERT_FILE SSL_CERT_DIR; do
     value=${!v:-}
     [ -z "$value" ] || ISO_ENV+=("$v=$value")

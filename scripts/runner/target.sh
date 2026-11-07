@@ -69,12 +69,15 @@
 # A Corepack npm shim takes no npm release from the copy's packageManager field. Only these get the proxy
 # variables.
 # Every build and test after them runs offline (CARGO_NET_OFFLINE=true), without the proxy variables, in
-# the throwaway HOME, whose .cache/solana links to the real one. Anchor.toml's [toolchain] can still make
-# anchor fetch another Solana or Anchor release; that would land in the throwaway HOME, and offline it
-# fails. A cargo build-sbf that lacks any of --install-only, --skip-tools-install and --offline stops the run
-# in native mode (exit 3), where its build would get the real HOME and the network; in isolated mode the
-# build (cargo build-sbf, or anchor build) runs without those options, with the real HOME and the proxy
-# variables and cargo not held offline, as templates/poc/run.sh builds each arm then, and a note says so.
+# the throwaway HOME, whose .cache/solana links to the real one, and so, for the anchor actions, does its
+# .avm. Anchor.toml's [toolchain] can still make anchor fetch another Solana or Anchor release; that would
+# land in the throwaway HOME, and offline it fails. With a cargo build-sbf that lacks any of --install-only,
+# --skip-tools-install and --offline, the build (cargo build-sbf, or anchor build) runs without those options,
+# and a note says how. In native mode it runs offline in the throwaway HOME as well, which links only the
+# version directory of the platform tools it uses from ~/.cache/solana: the version cargo build-sbf --version
+# names, or TOOLS_VERSION, which must be there, or the run stops (exit 3) and says how to install it. In
+# isolated mode it runs with the real HOME and the proxy variables, cargo not held offline, as
+# templates/poc/run.sh builds each arm then.
 #
 # The watchdog. AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default 1800) bounds the whole run, and a
 # --timeout no higher than it lowers the bound. Each step runs in a session of its own, under ulimit -t of
@@ -681,6 +684,8 @@ if [ -n "$DIR_ARG" ]; then
 fi
 at=${DIR_ARG:-the top of the copy}
 real_file() { [ -f "$1" ] && [ ! -L "$1" ]; }
+note() { echo ">> note: $1"; printf '>> note: %s\n' "$1" >&9; }
+
 # no_npmrc: npm takes a project's settings from the .npmrc of the package root it finds from its working
 # directory up (a workspace's root above it among them), and expands ${VAR} in them from its environment, the
 # proxy variables included. Before npm ci, every .npmrc from the top of the copy down to AD goes, of any kind.
@@ -727,25 +732,72 @@ esac
 TV=()
 [ -z "${TOOLS_VERSION:-}" ] || TV=(--tools-version "$TOOLS_VERSION")
 # SBF_SPLIT=1: cargo build-sbf --install-only puts the platform tools in the real HOME, and the build runs
-# offline in the throwaway HOME. A cargo build-sbf without those options builds with the real HOME and the
-# proxy variables, as templates/poc/run.sh builds each arm then (SBF_SPLIT=0): in isolated mode only, since
-# natively the build's code would get the real home folder and the network.
+# offline in the throwaway HOME. A cargo build-sbf without those options (SBF_SPLIT=0) builds without them,
+# with SBF_ENV: natively offline in the throwaway HOME still, so its build's code gets neither the real home
+# folder nor the network, and the platform tools must already be in ~/.cache/solana (sbf_tools); in isolated
+# mode with the real HOME and the proxy variables, as templates/poc/run.sh builds each arm then.
+link_tools() {
+  { confine_mkdir "$ISO_HOME/.cache" && ln -s "$ISO_REAL_HOME/.cache/solana" "$ISO_HOME/.cache/solana"; } ||
+    finish 3 "cannot link the platform tools into the throwaway HOME $ISO_HOME"
+}
+# sbf_tools: the platform tools such a cargo build-sbf builds with natively, TOOLS_VERSION or the version its
+# --version names, which the offline build cannot fetch: sets TOOLS ("platform-tools v1.43") when
+# ~/.cache/solana holds them; otherwise the run stops and names the install.
+sbf_tools() {
+  local v="" kind="" k line out lacks="this cargo build-sbf has no --install-only, --skip-tools-install or --offline, so in native mode it builds offline in the throwaway HOME, with only the platform tools already in ~/.cache/solana"
+  if [ -n "${TOOLS_VERSION:-}" ]; then
+    v=$TOOLS_VERSION
+  else
+    out=$(cd "$S" && iso_run cargo build-sbf --version 2>/dev/null </dev/null) || out=""
+    # Line by line with no here-string: bash 3.2 writes a here-string to a file in the working directory.
+    while [ -n "$out" ]; do
+      line=${out%%$'\n'*}
+      case "$out" in *$'\n'*) out=${out#*$'\n'} ;; *) out="" ;; esac
+      case "$line" in
+        'platform-tools v'*|'sbf-tools v'*|'bpf-tools v'*) kind=${line%% *}; v=${line#* }; v=${v%% *}; break ;;
+      esac
+    done
+  fi
+  [[ "$v" =~ $TOOLS_SPEC ]] ||
+    finish 3 "$lacks, and its --version names no platform tools version to look for there; set TOOLS_VERSION to the one it uses"
+  for k in ${kind:-platform-tools sbf-tools bpf-tools}; do
+    if [ -d "$ISO_REAL_HOME/.cache/solana/$v/$k" ]; then TOOLS="$k $v"; return 0; fi
+  done
+  finish 3 "$lacks, and ${kind:-platform-tools} $v is not there; install it once outside the audit (cargo build-sbf --tools-version $v in any program crate downloads it), then run this again"
+}
 SBF_SPLIT=1
+SBF_ENV=()
 case "$ACTION" in
   anchor-*|build-sbf)
     sbf_help=$(cd "$S" && iso_run cargo build-sbf --help 2>/dev/null </dev/null) || sbf_help=""
     [[ "$sbf_help" == *--install-only* && "$sbf_help" == *--skip-tools-install* && "$sbf_help" == *--offline* ]] || SBF_SPLIT=0
-    [ "$SBF_SPLIT" = 1 ] || [ "$MODE" = isolated ] ||
-      finish 3 "this cargo build-sbf has no --install-only, --skip-tools-install or --offline, which target.sh needs in native mode to keep the real HOME and the proxy variables away from the build; isolated mode builds with them"
     [ -n "$ISO_REAL_HOME" ] || finish 3 "HOME is not set, and cargo build-sbf keeps its platform tools there"
     if [ "$SBF_SPLIT" = 1 ]; then
       step "$S" ${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME" cargo build-sbf --install-only ${TV[@]+"${TV[@]}"}
       fetched "cargo build-sbf --install-only, the install of the platform tools,"
-      { confine_mkdir "$ISO_HOME/.cache" && ln -s "$ISO_REAL_HOME/.cache/solana" "$ISO_HOME/.cache/solana"; } ||
+      link_tools
+    elif [ "$MODE" = native ]; then
+      sbf_tools
+      # Only that version's directory is linked: such a cargo build-sbf that finds its tools unusable removes
+      # their version directory to install them again (Agave 2.1.15 does, with v1.51's), which then removes the
+      # link, not the real tools.
+      { confine_mkdir "$ISO_HOME/.cache" && confine_mkdir "$ISO_HOME/.cache/solana" &&
+        ln -s "$ISO_REAL_HOME/.cache/solana/${TOOLS#* }" "$ISO_HOME/.cache/solana/${TOOLS#* }"; } ||
         finish 3 "cannot link the platform tools into the throwaway HOME $ISO_HOME"
+      SBF_ENV=("${OFF[@]}")
+      note "this cargo build-sbf has no --install-only, --skip-tools-install or --offline: in native mode the build runs offline in the throwaway HOME, with $TOOLS from ~/.cache/solana"
     else
+      SBF_ENV=(${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME")
       echo ">> note: this cargo build-sbf has no --install-only, --skip-tools-install or --offline: in isolated mode the build runs with the real HOME and the proxy variables"
       printf '>> no --install-only: the build runs with the real HOME and the proxy variables\n' >&9
+    fi ;;
+esac
+# avm's anchor shim looks for its releases in AVM_HOME (isolation.sh sets it), and avm releases that predate
+# it look in ~/.avm: the throwaway HOME links the real one.
+case "$ACTION" in
+  anchor-*)
+    if [ -d "$ISO_REAL_HOME/.avm" ]; then
+      ln -s "$ISO_REAL_HOME/.avm" "$ISO_HOME/.avm" || finish 3 "cannot link ~/.avm into the throwaway HOME $ISO_HOME"
     fi ;;
 esac
 if [ "$ACTION" = anchor-test ]; then
@@ -789,7 +841,7 @@ print(path)' "$S/metadata.json" "$PACKAGE" "$S/src") 2>/dev/null) && [ -n "$mp" 
     if [ "$SBF_SPLIT" = 1 ]; then
       step "$AD" "${OFF[@]}" cargo build-sbf --skip-tools-install --offline --sbf-out-dir "$S/out" ${TV[@]+"${TV[@]}"} ${MP[@]+"${MP[@]}"}
     else
-      step "$AD" ${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME" cargo build-sbf --sbf-out-dir "$S/out" ${TV[@]+"${TV[@]}"} ${MP[@]+"${MP[@]}"}
+      step "$AD" ${SBF_ENV[@]+"${SBF_ENV[@]}"} cargo build-sbf --sbf-out-dir "$S/out" ${TV[@]+"${TV[@]}"} ${MP[@]+"${MP[@]}"}
     fi
     outcome "cargo build-sbf"
     finish 0 "ok (exit 0)" ;;
@@ -814,7 +866,7 @@ print(path)' "$S/metadata.json" "$PACKAGE" "$S/src") 2>/dev/null) && [ -n "$mp" 
     else
       SBF_ARGS=()
       [ -z "${TV[*]-}" ] || SBF_ARGS=(-- "${TV[@]}")
-      step "$AD" ${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME" anchor build --ignore-keys ${PKG[@]+"${PKG[@]}"} ${SBF_ARGS[@]+"${SBF_ARGS[@]}"}
+      step "$AD" ${SBF_ENV[@]+"${SBF_ENV[@]}"} anchor build --ignore-keys ${PKG[@]+"${PKG[@]}"} ${SBF_ARGS[@]+"${SBF_ARGS[@]}"}
     fi
     outcome "anchor build"
     [ "$ACTION" = anchor-test ] || finish 0 "ok (exit 0)"

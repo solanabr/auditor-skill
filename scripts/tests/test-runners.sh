@@ -379,16 +379,39 @@ check "--package builds that member, and TOOLS_VERSION goes to the install and t
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src . --package nope
 check "a --package the workspace does not have: exit 3, nothing built" \
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: the workspace at the top of the copy has no member package nope' '$T/err' && ! grep -q '^== cargo build-sbf --skip' '$T/calls'"
-# A cargo build-sbf without --install-only, --skip-tools-install and --offline: natively the run stops, since
-# the build would get the real HOME and the network; in isolated mode the build runs with the real HOME and the
-# proxy variables, as templates/poc/run.sh builds each arm then, and a note says so.
+# A cargo build-sbf without --install-only, --skip-tools-install and --offline. Natively the build runs without
+# those options, offline in the throwaway HOME still, so its code gets neither the real HOME nor the network,
+# with the platform tools already in ~/.cache/solana: the version its --version names (the stand-in says
+# platform-tools v1.43), or TOOLS_VERSION. When they are not there the run stops before the build and names the
+# install. In isolated mode the build runs with the real HOME and the proxy variables, as templates/poc/run.sh
+# builds each arm then, and a note says so.
 settings FAKE_SBF_HELP=old
+LACKS='this cargo build-sbf has no --install-only, --skip-tools-install or --offline, so in native mode it builds offline in the throwaway HOME, with only the platform tools already in ~/.cache/solana'
+run "$TARGET" "$WT" HTTPS_PROXY="$PROXY" -- build-sbf --run audit_1 --src .
+check "natively, such a cargo build-sbf whose platform tools are not in ~/.cache/solana: exit 3 before the build, naming the install" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: $LACKS, and platform-tools v1.43 is not there; install it once outside the audit (cargo build-sbf --tools-version v1.43 in any program crate downloads it), then run this again; log audit_1/exec/build-sbf-[0-9]*[.]log\$' '$T/err' && ! grep -q '^== cargo build-sbf --install' '$T/calls' && ! grep -q '^== cargo build-sbf --sbf' '$T/calls'"
+mkdir -p "$CLEANHOME/.cache/solana/v1.43/platform-tools"
+OLDNAT='>> note: this cargo build-sbf has no --install-only, --skip-tools-install or --offline: in native mode the build runs offline in the throwaway HOME, with platform-tools v1.43 from ~/.cache/solana'
+run "$TARGET" "$WT" HTTPS_PROXY="$PROXY" -- build-sbf --run audit_1 --src .
+check "... with them there: exit 0, the .so kept, and a note names native mode" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '$OLDNAT' '$T/out' && sed -n '\$p' '$T/out' | grep -q '^>> build-sbf: ok (exit 0); log audit_1/exec/build-sbf-[0-9]*[.]log; 1 .so in audit_1/exec/build-sbf-[0-9]*/: demo.so\$'"
+check "... no install, the version asked, and the build without --skip-tools-install and --offline" calls_are \
+  "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --version|cargo build-sbf --sbf-out-dir $S/out|"
+check "... in the copy, in the throwaway HOME with its keypair and that version's tools linked from the real cache, not the cache itself, offline, without the proxy" \
+  sh -c "awk '/^== cargo build-sbf --sbf-out-dir/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'cwd: $S/src' '$T/blk' && grep -qxF 'home: $S/home' '$T/blk' && grep -qxF 'keypair: yes' '$T/blk' && grep -qxF 'tools: ' '$T/blk' && grep -qxF 'tool-links: v1.43 -> $CLEANHOME/.cache/solana/v1.43 ' '$T/blk' && grep -qxF 'env: CARGO_NET_OFFLINE=true' '$T/blk' && ! grep -q '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]=' '$T/blk'"
+rm -rf "$CLEANHOME/.cache"
+mkdir -p "$CLEANHOME/.cache/solana/v1.51/platform-tools"
+run "$TARGET" "$WT" TOOLS_VERSION=v1.51 HTTPS_PROXY="$PROXY" -- anchor-build --run audit_1 --src . --program demo
+check "natively, anchor-build with that cargo build-sbf and TOOLS_VERSION's tools there: anchor build without those options, TOOLS_VERSION after --, its version not asked" calls_are \
+  "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|anchor build --ignore-keys -p demo -- --tools-version v1.51|"
+check "... offline in the throwaway HOME, that version's tools linked, without the proxy, and the note" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '>> note: this cargo build-sbf has no --install-only, --skip-tools-install or --offline: in native mode the build runs offline in the throwaway HOME, with platform-tools v1.51 from ~/.cache/solana' '$T/out' && awk '/^== anchor build/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'home: $S/home' '$T/blk' && grep -qxF 'tool-links: v1.51 -> $CLEANHOME/.cache/solana/v1.51 ' '$T/blk' && grep -qxF 'env: CARGO_NET_OFFLINE=true' '$T/blk' && ! grep -q '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]=' '$T/blk'"
+rm -rf "$CLEANHOME/.cache"
+settings FAKE_SBF_HELP=old FAKE_SBF_TOOLS=none
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
-check "natively, a cargo build-sbf without --install-only and --skip-tools-install: exit 3, nothing installed or built" \
-  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: this cargo build-sbf has no --install-only, --skip-tools-install or --offline, which target.sh needs in native mode to keep the real HOME and the proxy variables away from the build; isolated mode builds with them; log ' '$T/err' && ! grep -q '^== cargo build-sbf --install' '$T/calls' && ! grep -q '^== cargo build-sbf --s' '$T/calls'"
-run "$TARGET" "$WT" -- anchor-build --run audit_1 --src .
-check "... and natively anchor-build stops there too: exit 3, anchor never runs" \
-  sh -c "[ '$RC' = 3 ] && grep -q 'has no --install-only, --skip-tools-install or --offline, which target.sh needs in native mode' '$T/err' && ! grep -q '^== anchor' '$T/calls' && ! grep -q '^== cargo build-sbf --install' '$T/calls'"
+check "natively, such a cargo build-sbf whose --version names no platform tools: exit 3 before the build, asking for TOOLS_VERSION" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: $LACKS, and its --version names no platform tools version to look for there; set TOOLS_VERSION to the one it uses; log ' '$T/err' && ! grep -q '^== cargo build-sbf --sbf' '$T/calls'"
+settings FAKE_SBF_HELP=old
 if [ "$ISOLATED_OK" = 1 ]; then
   OLDSBF='>> note: this cargo build-sbf has no --install-only, --skip-tools-install or --offline: in isolated mode the build runs with the real HOME and the proxy variables'
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated HTTPS_PROXY="$PROXY" -- build-sbf --run audit_1 --src .
@@ -469,6 +492,21 @@ check "anchor-build: the downloads, then anchor build --ignore-keys -p <program>
   calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --install-only|anchor build --ignore-keys -p demo -- --skip-tools-install --offline|"
 check "... and the program's .so is kept from target/deploy" sh -c "grep -q '1 .so in audit_1/exec/anchor-build-[0-9]*/: demo.so' '$T/out'"
 check "... the build in the throwaway HOME, with its keypair" in_blocks '^== anchor build' '^keypair: yes$'
+check "... and with no ~/.avm, no AVM_HOME and no .avm link" sh -c "awk '/^== anchor build/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'avm: unset' '$T/blk' && grep -qxF 'avm-link: ' '$T/blk'"
+# avm's anchor shim finds its releases through AVM_HOME, which every step gets when ~/.avm exists (the K row
+# keeps no credential from it), and avm releases before AVM_HOME through the .avm the throwaway HOME links.
+AVMHOME=$T/home-avm
+mkdir -p "$AVMHOME/.avm/bin"
+run "$TARGET" "$WT" HOME="$AVMHOME" -- anchor-test --run audit_1 --src .
+check "anchor-test with ~/.avm: anchor build and anchor test get AVM_HOME, and the throwaway HOME links .avm" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(grep -c '^== anchor ' '$T/calls')\" = 2 ] && [ \"\$(grep -cxF 'avm: $AVMHOME/.avm' '$T/calls')\" = 2 ] && [ \"\$(grep -cxF 'avm-link: $AVMHOME/.avm' '$T/calls')\" = 2 ] && grep -qxF 'home: $S/home' '$T/calls'"
+check "... and so does every other step, with nothing written in ~/.avm" \
+  sh -c "[ \"\$(awk '/^== /{n++} /^env: AVM_HOME=/{a++} END{print (n == a)}' '$T/calls')\" = 1 ] && [ -z \"\$(ls -A '$AVMHOME/.avm/bin')\" ]"
+mkdir -p "$T/avm-own"
+run "$TARGET" "$WT" HOME="$AVMHOME" AVM_HOME="$T/avm-own" -- anchor-build --run audit_1 --src .
+check "... an AVM_HOME of the caller's that exists wins" in_blocks '^== anchor build' "^avm: $T/avm-own\$"
+run "$TARGET" "$WT" AVM_HOME="$T/no-such-avm" -- anchor-build --run audit_1 --src .
+check "... and one that does not exist is not passed" in_blocks '^== anchor build' '^avm: unset$'
 run "$TARGET" "$WT" HTTPS_PROXY="$PROXY" -- anchor-test --run audit_1 --src .
 check "anchor-test: npm ci --ignore-scripts first, then the build, then anchor test against no validator and no deploy" \
   calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --install-only|npm ci --ignore-scripts --no-audit --no-fund|anchor build --ignore-keys -- --skip-tools-install --offline|anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet --provider.wallet $S/home/.config/solana/id.json|"

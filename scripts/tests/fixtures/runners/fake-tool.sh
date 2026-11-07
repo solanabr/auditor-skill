@@ -79,6 +79,10 @@ json.dump({"version": "2.1.0", "runs": [{"results": [{"ruleId": "r%d" % i} for i
     exit "${FAKE_SEMGREP_RC:-0}" ;;
   anchor)
     say "keypair: $([ -f "$HOME/.config/solana/id.json" ] && echo yes || echo no)"
+    say "avm: ${AVM_HOME:-unset}"
+    say "avm-link: $( [ -L "$HOME/.avm" ] && ls -l "$HOME/.avm" | sed 's/.* -> //')"
+    say "tools: $( [ -L "$HOME/.cache/solana" ] && ls -l "$HOME/.cache/solana" | sed 's/.* -> //')"
+    say "tool-links: $(for l in "$HOME/.cache/solana"/*; do [ -L "$l" ] && printf '%s -> %s ' "${l##*/}" "$(ls -l "$l" | sed 's/.* -> //')"; done)"
     case "$1" in
       build)
         mkdir -p target/deploy && printf '\177ELFanchor' > target/deploy/demo.so
@@ -111,10 +115,13 @@ case "$1" in
     case "$*" in
       *--help*) [ "${FAKE_SBF_HELP:-}" = old ] && { echo "--offline"; exit 0; }
                 echo "--install-only --skip-tools-install --offline"; exit 0 ;;
+      *--version*) echo "solana-cargo-build-sbf 2.1.15"
+                   [ "${FAKE_SBF_TOOLS:-}" = none ] || echo "platform-tools ${FAKE_SBF_TOOLS:-v1.43}"; exit 0 ;;
       *--install-only*) exit "${FAKE_INSTALL_RC:-0}" ;;
     esac
     say "keypair: $([ -f "$HOME/.config/solana/id.json" ] && echo yes || echo no)"
     say "tools: $( [ -L "$HOME/.cache/solana" ] && ls -l "$HOME/.cache/solana" | sed 's/.* -> //')"
+    say "tool-links: $(for l in "$HOME/.cache/solana"/*; do [ -L "$l" ] && printf '%s -> %s ' "${l##*/}" "$(ls -l "$l" | sed 's/.* -> //')"; done)"
     [ -n "${FAKE_SHOW:-}" ] && say "show: $(cat "$FAKE_SHOW" 2>/dev/null)"
     out=$(arg_after --sbf-out-dir "$@")
     if [ -n "$out" ]; then
