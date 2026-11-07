@@ -11,8 +11,10 @@
 #      tools/auditor-tools (cargo build --release --locked, into a temporary target directory) with no warning.
 #      Without cargo the suite is skipped, loudly; with REQUIRE_TOOLCHAIN=1 (CI) that is a failure.
 #   3. Every case in fixtures/audit-scan/cases.txt and fixtures/audit-mem/cases.txt, in the working directory each
-#      header describes: the exit status and the one stderr line as written, nothing on stdout, no file changed
-#      inside or outside the working directory, and no canary text printed.
+#      header describes, in strict mode (AUDITOR_STRICT=1) and then in default mode: the exit status and the one
+#      stderr line as written, nothing on stdout, no file changed inside or outside the working directory, and no
+#      canary text printed; a case that only strict mode refuses goes on in default mode, exit 0 and nothing on
+#      stderr, changing nothing.
 #   3b. scripts/rundir.sh and the binaries over the same run directories and stores: rundir.sh check and
 #      audit-scan --out, and rundir.sh store and audit-mem, accept the same ones and refuse the others in the same
 #      words, a repository holding a named pipe git would open included.
@@ -220,29 +222,40 @@ shown() {
   if [ "${#s}" -gt 200 ]; then s="${s:0:200}..."; fi
   printf '%s' "$s"
 }
-# run_cases <binary> <case file> <dir holding wt/ and outside/>: every case, from wt/, stdin from /dev/null.
+# run_cases <binary> <case file> <dir holding wt/ and outside/> <strict|default>: every case, from wt/, stdin
+# from /dev/null, in that mode (AUDITOR_STRICT=1, or unset). A status that ends in s is that refusal in strict
+# mode only: in default mode the call goes on, exit 0 with nothing on stderr; the binaries' own tests check what
+# it reports instead.
 run_cases() {
-  local bin=$1 cases=$2 h=$3 name=${1##*/} n=0 cf want_rc want_err args word why rc
-  expand "$cases" "$T/cases-$name" "$h/wt" "$h/outside"
+  local bin=$1 cases=$2 h=$3 mode=$4 name=${1##*/} n=0 cf want_rc want_err args word why rc soft
+  expand "$cases" "$T/cases-$name-$mode" "$h/wt" "$h/outside"
   snapshot "$h" > "$T/$name.before"
-  for cf in "$T/cases-$name"/*; do
-    want_rc="" want_err="" args=()
+  for cf in "$T/cases-$name-$mode"/*; do
+    want_rc="" want_err="" args=() soft=""
     while IFS= read -r -d '' word; do
       if [ -z "$want_rc" ]; then want_rc=$word
       elif [ -z "$want_err" ]; then want_err=$word
       else args+=("$word"); fi
     done < "$cf"
-    ( cd "$h/wt" && exec "$bin" ${args[@]+"${args[@]}"} ) < /dev/null > "$T/c.out" 2> "$T/c.err"
+    case $want_rc in *s) want_rc=${want_rc%s}; [ "$mode" = strict ] || soft=1 ;; esac
+    ( cd "$h/wt" && { [ "$mode" = default ] || export AUDITOR_STRICT=1; } && exec "$bin" ${args[@]+"${args[@]}"} ) \
+      < /dev/null > "$T/c.out" 2> "$T/c.err"
     rc=$?
     snapshot "$h" > "$T/$name.after"
     why=""
-    [ "$rc" = "$want_rc" ] || why="$why exit $rc, not $want_rc;"
-    [ "$(cat "$T/c.err")" = "$want_err" ] || why="$why stderr: $(shown "$(cat "$T/c.err")");"
-    [ "$(grep -c '' "$T/c.err")" = 1 ] || why="$why stderr is not one line;"
-    [ ! -s "$T/c.out" ] || why="$why printed on stdout;"
+    if [ -n "$soft" ]; then
+      [ "$rc" = 0 ] || why="$why exit $rc, not 0;"
+      [ ! -s "$T/c.err" ] || why="$why stderr: $(shown "$(cat "$T/c.err")");"
+    else
+      [ "$rc" = "$want_rc" ] || why="$why exit $rc, not $want_rc;"
+      [ "$(cat "$T/c.err")" = "$want_err" ] || why="$why stderr: $(shown "$(cat "$T/c.err")");"
+      [ "$(grep -c '' "$T/c.err")" = 1 ] || why="$why stderr is not one line;"
+      [ ! -s "$T/c.out" ] || why="$why printed on stdout;"
+    fi
     cmp -s "$T/$name.before" "$T/$name.after" || why="$why changed files;"
     if grep -q "$CANARY" "$T/c.out" "$T/c.err"; then why="$why printed the canary;"; fi
-    if [ -z "$why" ]; then ok "$name case: $(shown "${args[*]+${args[*]}}")"; else bad "$name case: $(shown "${args[*]+${args[*]}}"):$why"; fi
+    if [ -z "$why" ]; then ok "$name $mode case: $(shown "${args[*]+${args[*]}}")"
+    else bad "$name $mode case: $(shown "${args[*]+${args[*]}}"):$why"; fi
     cp "$T/$name.after" "$T/$name.before"
     n=$((n + 1))
   done
@@ -276,8 +289,10 @@ ln -s ../../outside "$W/audit_5/out"
 ln -s ../../outside/protected "$W/audit_6/prescan.json"
 ln "$H/outside/protected" "$W/audit_7/prescan.json"
 mkdir "$W/audit_8/prescan.json"
-run_cases "$SCAN" "$HERE/fixtures/audit-scan/cases.txt" "$H"
-if [ "$NCASES" -ge 80 ]; then ok "audit-scan: $NCASES cases"; else bad "audit-scan: only $NCASES cases read"; fi
+for mode in strict default; do
+  run_cases "$SCAN" "$HERE/fixtures/audit-scan/cases.txt" "$H" "$mode"
+  if [ "$NCASES" -ge 80 ]; then ok "audit-scan: $NCASES cases, $mode mode"; else bad "audit-scan: only $NCASES cases read"; fi
+done
 eq "audit-scan: the file outside with a second name in the working tree is unchanged" "$(cat "$H/outside/protected")" protected
 
 # audit-mem's working directory (fixtures/audit-mem/cases.txt).
@@ -329,8 +344,10 @@ with open(wt + "/audit_11/audit-mem.db", "w") as f:
     f.write("a findings list, not a database: " + "x" * 100 + "\n")
 open(wt + "/incident_1/audit-mem.db", "w").close()
 PY
-run_cases "$MEM" "$HERE/fixtures/audit-mem/cases.txt" "$H"
-if [ "$NCASES" -ge 120 ]; then ok "audit-mem: $NCASES cases"; else bad "audit-mem: only $NCASES cases read"; fi
+for mode in strict default; do
+  run_cases "$MEM" "$HERE/fixtures/audit-mem/cases.txt" "$H" "$mode"
+  if [ "$NCASES" -ge 120 ]; then ok "audit-mem: $NCASES cases, $mode mode"; else bad "audit-mem: only $NCASES cases read"; fi
+done
 eq "audit-mem: the file outside with a second name in the working tree is unchanged" "$(cat "$H/outside/protected")" protected
 
 # ---------------------------------------------------------------------------
@@ -530,6 +547,15 @@ eq "audit-scan: --workflows parses a workflow, exit 0, nothing on stderr" "$?:$(
 eq "audit-scan: --workflows reads the trigger, job and step facts" \
   "$(python3 -I -c 'import json,sys; w=json.load(open(sys.argv[1]))["workflows"]; print(len(w), w[0]["triggers"][0], w[0]["jobs"][0]["steps"][0]["uses"])' "$T/wf.out")" \
   "1 pull_request_target actions/checkout@v5"
+# A --workflows that names no directory skips the workflow pass in default mode, listed in skipped; strict mode
+# refuses it.
+( cd "$W" && "$SCAN" --contract=1 ./src --workflows .github/nope ) > "$T/wf.out" 2> "$T/wf.err"
+eq "audit-scan: --workflows naming no directory, default mode: exit 0, nothing on stderr, the pass listed in skipped" \
+  "$?:$(cat "$T/wf.err"):$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(len(r["workflows"]), [s["file"] + ": " + s["reason"] for s in r["skipped"] if s["reason"].startswith("--workflows")])' "$T/wf.out")" \
+  "0::0 ['.github/nope: --workflows is not an existing directory, so no workflow was read']"
+( cd "$W" && AUDITOR_STRICT=1 "$SCAN" --contract=1 ./src --workflows .github/nope ) > "$T/wf.out" 2> "$T/wf.err"
+eq "audit-scan: ... and refused in strict mode" "$?:$(cat "$T/wf.out")$(cat "$T/wf.err")" \
+  "2:audit-scan: refused: --workflows is not an existing directory: .github/nope"
 
 P=VaultProg1111
 S=unchecked_sub@vault.balance

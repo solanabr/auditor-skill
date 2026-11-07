@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use auditor_tools::confine::{json_text, Parser, PARSE_TIME};
 use auditor_tools::workflow::{parse_workflow, scan_workflows_with, PARSE_WORKFLOWS};
-use common::{refused, refused_with, run, shown, stdout, Wt};
+use common::{refused, refused_with, run, run_strict, shown, stdout, Wt};
 use serde_json::Value;
 
 const BIN: &str = env!("CARGO_BIN_EXE_audit-scan");
@@ -312,12 +312,30 @@ fn refuses_a_workflows_directory_outside_the_grammar() {
     let wt = repo_with(&[("ci.yml", &ci())]);
     wt.write("notes.txt", b"x\n");
     wt.link(&wt.outside().to_path_buf(), "linkdir");
+    // A path that names no directory is refused in strict mode; in default mode
+    // the workflow pass is skipped, in `skipped`, and the scan goes on.
     for (arg, why) in [
         ("absent", "--workflows is not an existing directory: absent"),
         (
             "notes.txt",
             "--workflows is not an existing directory: notes.txt",
         ),
+    ] {
+        let args = ["--contract=1", "./src", "--workflows", arg];
+        refused(&run_strict(BIN, &wt.dir, &args), "audit-scan", why);
+        let r = report(&wt, &args);
+        assert_eq!(r["files_scanned"], 1, "{arg}");
+        assert_eq!(r["workflows"], serde_json::json!([]), "{arg}");
+        assert_eq!(
+            r["skipped"],
+            serde_json::json!([{
+                "file": arg,
+                "reason": "--workflows is not an existing directory, so no workflow was read"
+            }]),
+            "{arg}"
+        );
+    }
+    for (arg, why) in [
         (
             "linkdir",
             "--workflows passes through a symbolic link: linkdir",
@@ -327,11 +345,9 @@ fn refuses_a_workflows_directory_outside_the_grammar() {
             "--workflows has an empty, . or .. component: ../outside",
         ),
     ] {
-        refused(
-            &run(BIN, &wt.dir, &["--contract=1", "./src", "--workflows", arg]),
-            "audit-scan",
-            why,
-        );
+        let args = ["--contract=1", "./src", "--workflows", arg];
+        refused(&run(BIN, &wt.dir, &args), "audit-scan", why);
+        refused(&run_strict(BIN, &wt.dir, &args), "audit-scan", why);
     }
     // An absolute path, and a leading dash, are refused before anything is read.
     let abs = wt.dir.as_os_str().as_bytes();

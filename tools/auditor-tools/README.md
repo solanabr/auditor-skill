@@ -193,7 +193,10 @@ directly in `<dir>` — usually `.github/workflows` — into the report's `workf
 key, each as trigger → job → step facts. `<dir>` is a confined directory like the
 one to scan (relative, inside the working directory, reached through no symbolic
 link, an existing directory), given once; it is not `.`, since GitHub reads
-workflows only from a `.github/workflows` directory. The pass does not recurse,
+workflows only from a `.github/workflows` directory. In default mode a `<dir>` that
+is not an existing directory, one missing or a file, skips the pass: `skipped` lists
+it, `--workflows is not an existing directory, so no workflow was read`, and the scan
+goes on; strict mode refuses it. The pass does not recurse,
 follows no symbolic link, and reads only regular files with one name of at most 4
 MiB, each opened from the directory's descriptor without following a link; a
 `*.y*ml` entry that is a link, a FIFO or another non-regular file, one that is

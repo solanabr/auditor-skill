@@ -6,6 +6,8 @@
 //! `.github/workflows`) into the report's `workflows` key, each as trigger → job
 //! → step facts; `<dir>` is a confined directory like the one to scan, and the
 //! files are read with the same walk (no link, a regular file of at most 4 MiB).
+//! In default mode (`confine::mode`) a `<dir>` that is not an existing directory
+//! skips that pass, listed in `skipped`; strict mode refuses it.
 //!
 //! It is built to be pre-approved as one rule on its absolute path followed by
 //! `--contract=1`, the marker of its contract, which a build made before it
@@ -232,16 +234,27 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
             dir.shown()
         )));
     }
+    // In default mode a --workflows that names no directory skips the workflow
+    // pass, in `skipped`; strict mode refuses it.
+    let mut no_workflows = None;
     let workflows = match &call.workflows {
         Some(arg) => {
             let wdir = confine::rel("--workflows", arg, false)?;
-            if confine::check(&wt, &wdir, "--workflows")? != Kind::Dir {
+            if confine::check(&wt, &wdir, "--workflows")? == Kind::Dir {
+                Some(wdir)
+            } else if confine::strict() {
                 return Err(refuse(format!(
                     "--workflows is not an existing directory: {}",
                     wdir.shown()
                 )));
+            } else {
+                no_workflows = Some(scan::Skipped {
+                    file: wdir.path().display().to_string(),
+                    reason: "--workflows is not an existing directory, so no workflow was read"
+                        .into(),
+                });
+                None
             }
-            Some(wdir)
         }
         None => None,
     };
@@ -259,6 +272,7 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
         report.workflows = parsed;
         report.skipped.extend(skipped);
     }
+    report.skipped.extend(no_workflows);
     let json = if call.pretty {
         serde_json::to_string_pretty(&report)
     } else {

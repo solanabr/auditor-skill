@@ -7,7 +7,9 @@
 #   (prescan.json a second name of a file outside), audit_8 (prescan.json a directory).
 # The directory outside holds a canary no case may print.
 # One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each case prints
-# nothing on stdout and changes nothing in the working directory or outside it. In a field:
+# nothing on stdout and changes nothing in the working directory or outside it. A status that ends in s is that
+# refusal in strict mode only (AUDITOR_STRICT=1): in default mode the call goes on, exit 0 with nothing on stderr,
+# and still changes nothing. In a field:
 #   @WT@ the working directory's absolute path   @OUT@ the directory outside it   @LONG:N@ N repetitions of "a"
 #   @NL@ a newline   @ESC@ an escape character (0x1b)   @TAB@ a tab   @EMPTY@ (a whole field) an empty argument
 #   @SHOWN(x)@ x as the binary shows a value in a message: cut after 200 bytes, then ...
@@ -94,7 +96,8 @@
 2	audit-scan: refused: the directory to scan is longer than 1024 bytes	@LONG:1025@
 2	audit-scan: refused: the directory to scan must be relative to the working directory: @SHOWN(@WT@/../outside)@	@WT@/../outside
 2	audit-scan: refused: the directory to scan passes through a symbolic link: src/linked.rs/x	src/linked.rs/x
-# --workflows: a confined directory like the one to scan, holding the workflow files; never . , given once
+# --workflows: a confined directory like the one to scan, holding the workflow files; never . , given once; in default
+# mode one that names no directory skips the workflow pass
 2	audit-scan: refused: --workflows needs a directory (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--workflows
 2	audit-scan: refused: --workflows is given more than once (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--workflows	src	--workflows=src
 2	audit-scan: refused: --workflows is empty	.	--workflows=
@@ -103,8 +106,8 @@
 2	audit-scan: refused: --workflows has an empty, . or .. component: ../outside	.	--workflows	../outside
 2	audit-scan: refused: --workflows passes through a symbolic link: linkdir	.	--workflows	linkdir
 2	audit-scan: refused: --workflows is not a regular file or a directory: fifo	.	--workflows	fifo
-2	audit-scan: refused: --workflows is not an existing directory: a.rs	.	--workflows	a.rs
-2	audit-scan: refused: --workflows is not an existing directory: nope	.	--workflows	nope
+2s	audit-scan: refused: --workflows is not an existing directory: a.rs	.	--workflows	a.rs
+2s	audit-scan: refused: --workflows is not an existing directory: nope	.	--workflows	nope
 2	audit-scan: refused: --workflows passes through a symbolic link: linkdir	.	--workflows	linkdir	--out	audit_1/prescan.json
 # --out
 2	audit-scan: refused: --out must be relative to the working directory: @SHOWN(@WT@/audit_1/prescan.json)@	src	--out	@WT@/audit_1/prescan.json
