@@ -429,7 +429,7 @@ A `.git/` directory the auditor did not create itself — a client archive, a co
 
 `"<auditor-skill root>/scripts/git-ro.sh" partial` exits 3 in a partial clone and prints the keys that mark it, and 0 in a full one. By hand, `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false config --get-regexp '^(extensions\.partialclone|remote\..*\.promisor)$'` prints something in a partial clone (current git marks one with `remote.<name>.promisor`, older git with `extensions.partialClone`): treat that checkout as incomplete history.
 
-**A session below the top level.** When Claude Code starts in a subdirectory of a repository, `git-ro.sh`, the two recipes and the threat-model collector read that repository: its history and committed files, paths above the working directory included. The paths you give them stay relative to the working directory, as plain git's do there. Preflight's note names the subdirectory and the repository (11e). An explicit `--repo <dir>` must still be the top level of a repository. In strict mode a repository is read only from its top level, and `git-ro.sh` refuses from below it: start Claude Code there.
+**A session below the top level.** When Claude Code starts in a subdirectory of a repository, `git-ro.sh`, the two recipes and the threat-model collector read that repository's history, paths above the working directory included; `git-ro.sh` and the recipes reach its committed files there too, while the collector leaves out changes outside the working directory. The paths you give them stay relative to the working directory, as plain git's do there. Preflight's note names the subdirectory and the repository (11e). An explicit `--repo <dir>` must still be the top level of a repository. In strict mode a repository is read only from its top level, and `git-ro.sh` refuses from below it: start Claude Code there.
 
 **What default mode reads that strict mode refuses.** In default mode `git-ro.sh` also reads a checkout that another user owns: git's ownership check adds nothing to the hardened call, whose pins already switch off every key known to run a program. It reads one whose hooks directory is a link, since no hook runs, and one whose git directory lies outside the working directory in a layout git makes itself: a linked worktree, a submodule, or a separate git directory that points back to it. From any other git directory outside the working directory it reads no history, and says why. It reads a checkout that borrows objects (alternates) or rewrites commit parents (grafts), with a `git-ro: note:` line that says so, and notes a git that lacks the May-2024 clone fixes. `blame` honours a `blame.ignoreRevsFile` the repository holds. In strict mode each of these is refused, as before (11f).
 
@@ -523,15 +523,16 @@ Under `claude -p` and in CI, export `AUDITOR_STRICT=1` in the job's environment 
 | `git-ro.sh blame`: a `blame.ignoreRevsFile` in the repository | honoured, from a copy of that file | refused |
 | `git-ro.sh`, `target.sh`: a git without the May-2024 clone fixes | a note; nothing is cloned under it | refused (exit 69, or a blocker) |
 | `rundir.sh new`: tracked paths under `audit_*` or `incident_*` | the next free name, and a note per path | refused |
-| `rundir.sh`, the tools that write in a run directory: a link inside it that resolves inside it; git cannot tell whether it is tracked | accepted, on its `.gitignore` of `*` | refused |
+| `rundir.sh`, the tools that write in a run directory: a link inside it that resolves inside it; git cannot tell whether it is tracked | both accepted, the second when its `.gitignore` holds `*` | refused |
 | `target.sh`, `run.sh`: no recorded mode | native | isolated |
+| `target.sh`: a `cargo build-sbf` without `--install-only`, `--skip-tools-install` and `--offline` | built in the throwaway `HOME`, offline; a note names the install command when its platform tools are missing | isolated mode: built with the real `HOME` inside the isolated runner, with a note |
 | `target.sh`: a revision with submodules | built with them empty, with a note | blocker |
 | `target.sh`: the copy's `rust-toolchain.toml` | its channel is used when rustup has it, with a note | not read |
 | `target.sh`: `.npmrc` registry lines | `https` registry lines kept, every other line dropped, with a note | every line dropped |
 | `target.sh`, `run.sh`: an `Incident*` folder that is not the auditor's own | passed over, with a note | passed over, with a note |
 | `deps.sh cargo-audit`: a lockfile that names another registry | runs with `--no-yanked`, with a note | blocker |
 | `sast.sh`: a link that resolves outside the tree; a very large tree | left out, with a note; the link check stops at 500,000 entries, with a note | refused |
-| `collect.sh`: a partial clone | read, with a note | stops (exit 3) |
+| `collect.sh`: a partial clone, or a target whose config git cannot read | read, with a note | stops (exit 3) |
 | `audit-scan`: a missing `--workflows` directory; a file with a second name | that pass is skipped; the file is scanned once, under its first name | refused; both names skipped |
 | `audit-scan`, `audit-mem`: a link inside a run directory or the store that resolves inside it; git cannot answer | accepted; a run directory whose `.gitignore` is `*` is accepted | refused |
 | `audit-mem`: `warm` and `regressions` with no store; readers of a store that lacks its `.gitignore`; the tables `ANALYZE` makes | `store: absent`; read; accepted | refused |
