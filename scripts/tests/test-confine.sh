@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-confine.sh — self-test for scripts/lib/confine.sh, the checks the bundled entry points share: the
-# working directory and installation checks of confine_init, the cleaned PATH, confined paths (the case
+# working directory and installation checks of confine_init, the cleaned PATH, the mode (AUDITOR_STRICT,
+# strict markers, the global git config of each mode), confined paths (the case
 # file fixtures/confine/paths.txt), run-directory names and .gitignore files, noclobber writes, the
 # environment and order of the hardened git call, the repository, tracked and partial-clone checks, and
 # the named pipes git would wait on. Every case runs under each bash on the machine (/bin/bash and the
@@ -17,6 +18,7 @@ trap 'chmod -R u+rwx "$T" 2>/dev/null; rm -rf "$T"' EXIT
 REAL_GIT=$(command -v git) || { echo "FAIL - git is not on PATH"; exit 1; }
 
 export HOME="$T/home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
+unset AUDITOR_STRICT
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
 mkdir -p "$HOME"
@@ -199,6 +201,160 @@ check "confine_refuse prints one line and exits 64" refused 'a reason'
 lib "$WT" 'confine_text "$(printf "a\001b\033c\177d\te")"; printf "|"; confine_text "$(printf "%0300d" 0)"'
 check "confine_text shows control characters as ? and cuts after 200 bytes" \
   out_is "a?b?c?d?e|$(printf '%0200d' 0)..."
+
+# =================================================================================================
+# The mode (Rule 11f): AUDITOR_STRICT, the strict markers of run directories, confine_strict_on, and
+# the global git config hgit gives git in each mode.
+# =================================================================================================
+SAFE="$ROOT/scripts/lib/safe-directory.gitconfig"
+MODE='printf "%s|%s|%s|%s" "$CONFINE_STRICT" "$CONFINE_MODE_WHY" "$CONFINE_MARKERS" "$CONFINE_GIT_GLOBAL"'
+mkdir -p "$T/mode/plain"
+lib "$T/mode/plain" "$MODE"
+check "with AUDITOR_STRICT unset and no marker the mode is default, with the safe-directory file as git's global config" \
+  out_is "0|||$SAFE"
+for v in '' 0 false FALSE No off OFF; do
+  AUDITOR_STRICT=$v lib "$T/mode/plain" "$MODE"
+  check "AUDITOR_STRICT='$v' leaves the mode default" out_is "0|||$SAFE"
+done
+for v in 1 true TRUE Yes on ON; do
+  AUDITOR_STRICT=$v lib "$T/mode/plain" "$MODE"
+  check "AUDITOR_STRICT=$v turns strict mode on, with no global git config" out_is "1|AUDITOR_STRICT=$v||/dev/null"
+done
+for v in maybe 2 ' 1' strict; do
+  AUDITOR_STRICT=$v lib "$T/mode/plain" "$MODE; printf \"|%s\" \"\$CONFINE_MODE_NOTE\""
+  check "AUDITOR_STRICT='$v' is read as on, with one note on stderr and no refusal" \
+    test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|1|AUDITOR_STRICT=$v||/dev/null|AUDITOR_STRICT is '$v', read as on|test: note: AUDITOR_STRICT is '$v', read as on"
+done
+AUDITOR_STRICT=$'a\001b' lib "$T/mode/plain" "$MODE"
+check "... and the note shows a control character in the value as ?" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|1|AUDITOR_STRICT=a?b||/dev/null|test: note: AUDITOR_STRICT is 'a?b', read as on"
+printf '[safe]\n\tdirectory = *\n' > "$T/safe.want"
+check "the safe-directory file holds [safe] and directory = *, and nothing else" cmp -s "$SAFE" "$T/safe.want"
+lib "$T/mode/plain" 'confine_strict_on --strict; '"$MODE"
+check "confine_strict_on turns strict mode on and names its source" out_is "1|--strict||/dev/null"
+AUDITOR_STRICT=yes lib "$T/mode/plain" 'confine_strict_on --strict; '"$MODE"
+check "... but AUDITOR_STRICT, which comes first, stays the named source" out_is "1|AUDITOR_STRICT=yes||/dev/null"
+lib "$T/mode/plain" 'printf "[%s]" "$CONFINE_PREFIX"'
+check "CONFINE_PREFIX starts empty" out_is '[]'
+CONFINE_STRICT=1 CONFINE_MODE_WHY=x CONFINE_MARKERS=audit_1/strict CONFINE_GIT_GLOBAL=/etc/passwd CONFINE_PREFIX=p/ \
+  lib "$T/mode/plain" "$MODE"'; printf "|%s" "$CONFINE_PREFIX"'
+check "... and the environment sets none of the mode's variables" out_is "0|||$SAFE|"
+lib "$T/mode/plain" 'confine_note "a b"; printf ran'
+check "confine_note prints one note line on stderr" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|ran|test: note: a b"
+lib "$T/mode/plain" 'confine_strict_refuse "the reason" "the note"; printf "went on"'
+check "confine_strict_refuse notes in default mode and goes on" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|went on|test: note: the note"
+lib "$T/mode/plain" 'confine_strict_refuse "the reason" ""; printf "went on"'
+check "... silently when the note is empty" out_is 'went on'
+AUDITOR_STRICT=1 lib "$T/mode/plain" 'confine_strict_refuse "the reason" "the note"; printf "went on"'
+check "... and refuses in strict mode" refused 'the reason'
+lib "$T/mode/plain" 'confine_strict_on --strict; confine_strict_refuse "the reason" "the note"; printf "went on"'
+check "... also once confine_strict_on has run" refused 'the reason'
+
+# Markers: an entry named strict, of any kind, in a run directory of the working directory.
+mk_mode_wt() { rm -rf "$T/mode/w" && mkdir -p "$T/mode/w"; } # a fresh working directory, $T/mode/w
+mk_mode_wt; mkdir "$T/mode/w/audit_1"; printf 'strict\n' > "$T/mode/w/audit_1/strict"
+lib "$T/mode/w" "$MODE"
+check "a strict marker in a run directory turns strict mode on and is named" out_is "1|audit_1/strict|audit_1/strict|/dev/null"
+for kind in empty dir link dangling; do
+  mk_mode_wt; mkdir "$T/mode/w/incident_2"
+  case "$kind" in
+    empty) : > "$T/mode/w/incident_2/strict" ;;
+    dir) mkdir "$T/mode/w/incident_2/strict" ;;
+    link) ln -s "$T/safe.want" "$T/mode/w/incident_2/strict" ;;
+    dangling) ln -s nowhere "$T/mode/w/incident_2/strict" ;;
+  esac
+  lib "$T/mode/w" "$MODE"
+  check "... and so does a marker that is $kind" out_is "1|incident_2/strict|incident_2/strict|/dev/null"
+done
+for d in audit_x audit_ Audit_3 AUDIT_3 audit_1234567 report_1 audit_1a; do
+  mk_mode_wt; mkdir "$T/mode/w/$d"; : > "$T/mode/w/$d/strict"
+  lib "$T/mode/w" "$MODE"
+  check "a strict entry in $d, which is no run directory name, counts for nothing" out_is "0|||$SAFE"
+done
+mk_mode_wt; mkdir "$T/mode/w/audit_1"; : > "$T/mode/w/audit_1/STRICT"; : > "$T/mode/w/audit_1/strict.txt"
+if [ -e "$T/mode/w/audit_1/strict" ]; then
+  skp "this volume ignores letter case: a STRICT entry is the strict marker here"
+else
+  lib "$T/mode/w" "$MODE"
+  check "the marker's name is lowercase strict: STRICT and strict.txt count for nothing" out_is "0|||$SAFE"
+fi
+mk_mode_wt; mkdir -p "$T/mode/w/audit_2" "$T/mode/w/incident_1" "$T/mode/w/audit_3"
+: > "$T/mode/w/audit_2/strict"; : > "$T/mode/w/incident_1/strict"
+lib "$T/mode/w" "$MODE"
+check "every marker is listed, the first named as the source" \
+  out_is "1|audit_2/strict|audit_2/strict incident_1/strict|/dev/null"
+AUDITOR_STRICT=1 lib "$T/mode/w" "$MODE"
+check "... after AUDITOR_STRICT, which comes first" out_is "1|AUDITOR_STRICT=1|audit_2/strict incident_1/strict|/dev/null"
+lib "$T/mode/w" 'confine_strict_on --strict; '"$MODE"
+check "... and after --strict, which comes before a marker" out_is "1|--strict|audit_2/strict incident_1/strict|/dev/null"
+# git: asked only when a marker exists, once for them all, with the global config of strict mode.
+mkdir -p "$T/mrec"
+cat > "$T/mrec/git" <<EOF
+#!/bin/sh
+{ printf 'ARGV'; for a in "\$@"; do printf '\037%s' "\$a"; done; printf '\n'; env | sed 's/^/ENV /'; } >> "$T/mrec.log"
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$T/mrec/git"
+: > "$T/mrec.log"
+LIB_PATH="$T/mrec:$PATH" lib "$T/mode/plain" ':'
+check "with no marker the mode costs no git call" test ! -s "$T/mrec.log"
+LIB_PATH="$T/mrec:$PATH" lib "$T/mode/w" ':'
+check "with markers outside every repository git is asked once, and answers there is none" \
+  test "$(awk -F '\037' '$1 == "ARGV" { for (i = 2; i <= NF; i++) if ($i == "rev-parse" || $i == "ls-files") print $i }' "$T/mrec.log" | tr '\n' ' ')" = 'rev-parse '
+check "... with no global git config" test "$(sed -n 's/^ENV GIT_CONFIG_GLOBAL=//p' "$T/mrec.log" | sort -u)" = /dev/null
+MR="$T/mode/r"; rm -rf "$MR"; mkrepo "$MR"
+put "$MR" audit_5/REPORT.md 'tracked'; put "$MR" audit_8/strict 'strict'; commit "$MR" -m 'tracked run directories'
+mkdir -p "$MR/audit_6"; : > "$MR/audit_5/strict"; : > "$MR/audit_6/strict"
+: > "$T/mrec.log"
+LIB_PATH="$T/mrec:$PATH" lib "$MR" "$MODE"
+check "in a repository, a marker under a run directory git tracks anything under counts for nothing; one in an untracked run directory counts" \
+  out_is "1|audit_6/strict|audit_6/strict|/dev/null"
+check "... and git was asked once (one ls-files for all three)" \
+  test "$(awk -F '\037' '$1 == "ARGV" { for (i = 2; i <= NF; i++) if ($i == "rev-parse" || $i == "ls-files") print $i }' "$T/mrec.log" | tr '\n' ' ')" = 'rev-parse ls-files '
+rm "$MR/audit_6/strict"
+lib "$MR" "$MODE"
+check "... and with the untracked one gone, the mode is default" out_is "0|||$SAFE"
+mkdir -p "$MR/AUDIT_9"
+if [ -d "$MR/audit_9" ]; then
+  rmdir "$MR/AUDIT_9"
+  skp "this volume ignores letter case: a run directory tracked in other letters is one directory here"
+else
+  put "$MR" AUDIT_9/x 'tracked'; commit "$MR" -m 'other letters'
+  mkdir -p "$MR/audit_9"; : > "$MR/audit_9/strict"
+  lib "$MR" "$MODE"
+  check "... and a marker under a run directory git tracks in other letters counts for nothing" out_is "0|||$SAFE"
+  rm -rf "$MR/audit_9"
+fi
+mkdir -p "$MR/sub/audit_1" "$MR/sub/audit_2"; put "$MR" sub/audit_1/x 'tracked'; commit "$MR" -m sub
+: > "$MR/sub/audit_1/strict"; : > "$MR/sub/audit_2/strict"
+lib "$MR/sub" "$MODE"
+check "... also when the repository lies above the working directory" out_is "1|audit_2/strict|audit_2/strict|/dev/null"
+# When git cannot tell, the marker counts: a git that fails with no answer, and a checkout another user
+# owns, which git refuses to read without the safe-directory file (git's own test knob stands for the
+# other user).
+mkdir -p "$T/mode/nogit" "$T/mode/other"
+printf '#!/bin/sh\necho "fatal: something else" >&2\nexit 1\n' > "$T/mode/nogit/git"
+printf '#!/bin/sh\nGIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec "%s" "$@"\n' "$REAL_GIT" > "$T/mode/other/git"
+chmod +x "$T/mode/nogit/git" "$T/mode/other/git"
+: > "$MR/audit_5/strict"
+LIB_PATH="$T/mode/nogit:$PATH" lib "$MR" "$MODE"
+check "a marker counts when git cannot tell whether its run directory is tracked, a committed one too" \
+  out_is "1|audit_5/strict|audit_5/strict audit_8/strict|/dev/null"
+LIB_PATH="$T/mode/other:$PATH" lib "$MR" "$MODE"
+check "... so in a checkout another user owns, markers in tracked run directories count" \
+  out_is "1|audit_5/strict|audit_5/strict audit_8/strict|/dev/null"
+rm -f "$MR/audit_5/strict"
+MO="$T/mode/o"; mkrepo "$MO"; put "$MO" f 'x'; commit "$MO" -m x
+LIB_PATH="$T/mode/other:$PATH" lib "$MO" "$MODE"'; printf "|"; hgit "$CONFINE_WT" rev-parse --is-inside-work-tree'
+check "in default mode hgit reads a checkout another user owns, through the safe-directory file" out_is "0|||$SAFE|true"
+AUDITOR_STRICT=1 LIB_PATH="$T/mode/other:$PATH" lib "$MO" 'hgit "$CONFINE_WT" rev-parse --is-inside-work-tree; printf "|%s" "$?"'
+check "... and in strict mode git refuses it, as with no global config" \
+  test "$(cat "$T/out")|$(head -n 1 "$T/err")" = "|128|fatal: detected dubious ownership in repository at '$MO'"
+LIB_PATH="$T/mode/other:$PATH" lib "$MO" 'confine_strict_on --strict; hgit "$CONFINE_WT" rev-parse --is-inside-work-tree; printf "|%s" "$?"'
+check "... and so it does once confine_strict_on has run" \
+  test "$(cat "$T/out")|$(head -n 1 "$T/err")" = "|128|fatal: detected dubious ownership in repository at '$MO'"
 
 # =================================================================================================
 # confine_path: the case file, lengths and control characters among its cases.

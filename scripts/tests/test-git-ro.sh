@@ -22,6 +22,7 @@ REAL_GIT=$(command -v git) || { echo "FAIL - git is not on PATH"; exit 1; }
 
 # Isolate the fixtures' own git calls from the caller's configuration (signing, hooks, templates).
 export HOME="$T/home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
+unset AUDITOR_STRICT
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
 export GIT_AUTHOR_DATE='2026-01-02T03:04:05Z' GIT_COMMITTER_DATE='2026-01-02T03:04:05Z'
@@ -549,9 +550,13 @@ check "... and git writes no trace" test ! -e "$T/trace.log" -a ! -e "$T/trace2.
 awk '/^ENV / { sub(/^ENV /, ""); sub(/=.*/, ""); print }' "$T/rec.log" | sort -u > "$T/env.names"
 check "git receives only the hardened environment" \
   test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_ALLOW_PROTOCOL|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
-check "... with GIT_CONFIG_GLOBAL=/dev/null and GIT_CONFIG_NOSYSTEM=1" \
-  sh -c "grep -qx 'ENV GIT_CONFIG_GLOBAL=/dev/null' '$T/rec.log' && grep -qx 'ENV GIT_CONFIG_NOSYSTEM=1' '$T/rec.log'"
+check "... with GIT_CONFIG_NOSYSTEM=1, and in default mode GIT_CONFIG_GLOBAL the installation's safe-directory file" \
+  sh -c "[ \"\$(sed -n 's/^ENV GIT_CONFIG_GLOBAL=//p' '$T/rec.log' | sort -u)\" = '$ROOT/scripts/lib/safe-directory.gitconfig' ] && grep -qx 'ENV GIT_CONFIG_NOSYSTEM=1' '$T/rec.log'"
 check "... and GIT_CEILING_DIRECTORIES at the working directory's parent" grep -qx "ENV GIT_CEILING_DIRECTORIES=$T" "$T/rec.log"
+: > "$T/rec.log"
+AUDITOR_STRICT=1 PATH="$T/rec:$PATH" run "$WT" log --format=%s -p -1 HEAD~2
+check "... and in strict mode GIT_CONFIG_GLOBAL=/dev/null" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(sed -n 's/^ENV GIT_CONFIG_GLOBAL=//p' '$T/rec.log' | sort -u)\" = /dev/null ]"
 clearmarks
 : > "$T/rec.log"
 GIT_DIR="$O/.git" GIT_CONFIG_PARAMETERS="'core.hooksPath=$T/hooks'" PATH="$T/rec:$PATH" run_once "$WT" copy . audit_1

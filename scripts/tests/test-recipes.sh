@@ -25,7 +25,7 @@ LD="$ROOT/scripts/recipes/lock-delta.sh"
 WH="$ROOT/scripts/recipes/web3js-history.sh"
 GITRO="$ROOT/scripts/git-ro.sh"
 RUNDIR="$ROOT/scripts/rundir.sh"
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_NAMESPACE CDPATH
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_NAMESPACE CDPATH AUDITOR_STRICT
 T=$(mktemp -d "${TMPDIR:-/tmp}/recipes-test.XXXXXX") || exit 1
 # A TMPDIR that ends in / (as on macOS) leaves // in $T; the checks compare physical paths.
 T=$(cd "$T" && pwd -P) || exit 1

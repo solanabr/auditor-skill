@@ -23,6 +23,9 @@
 # above it, below HOME (to / when WT is not under HOME), that holds a .git of any kind, since the tree can
 # put a .git of its own anywhere below its top. Whether a path lies inside a directory is decided by
 # identity (device and inode) along its ancestors, never by comparing spellings.
+# confine_init then reads the mode (OUTPUT-RULES.md Rule 11f; confine_mode): default, where the checks
+# that would refuse a repository for what it contains print a note and go on, or strict, which keeps
+# those refusals.
 # hgit is the hardened git call of OUTPUT-RULES.md Rule 11c. scripts/git-ro.sh's header lists what its
 # -c pins switch off and when to re-check them; keep the two in step.
 # A tool that contacts an outside service records it in <R>/disclosures.tsv (OUTPUT-RULES.md Rule 11b;
@@ -131,6 +134,8 @@ confine_init() { # confine_init <tool> <installation root, physical> [<refusal s
   CONFINE_ROOT=$root
   CONFINE_CEILING=${CONFINE_WT%/*}
   [ -n "$CONFINE_CEILING" ] || CONFINE_CEILING=/
+  CONFINE_PREFIX=''
+  confine_mode
 }
 
 confine_need() { # confine_need <program>...: refuse unless each is on the cleaned PATH
@@ -138,6 +143,92 @@ confine_need() { # confine_need <program>...: refuse unless each is on the clean
   for c in "$@"; do
     command -v "$c" >/dev/null 2>&1 || confine_refuse "$c is not on PATH"
   done
+}
+
+# ---- the mode (OUTPUT-RULES.md Rule 11f) ---------------------------------------------------------------
+# Strict mode is on when any of these says so, and nothing in a call turns it off again:
+#   - AUDITOR_STRICT: 1, true, yes or on, in any letter case, turn it on; 0, false, no, off, empty and
+#     unset leave it off; any other value turns it on, with the note "AUDITOR_STRICT is '<v>', read as on";
+#   - a --strict argument, for the tools that take one: they call confine_strict_on;
+#   - a marker: an entry named strict, of any kind, in a run directory of WT (audit_<n>/strict or
+#     incident_<n>/strict, the name as confine_rundir_name takes it and the marker lowercase), unless git
+#     tracks anything under that run directory: then it is the repository's, not the auditor's. When git
+#     cannot tell, the marker counts.
+# confine_mode sets, as confine_init's last step:
+#   CONFINE_STRICT      1 in strict mode, else 0;
+#   CONFINE_MODE_WHY    the first source found, in the order above: AUDITOR_STRICT=<v>, --strict or
+#                       <R>/strict (empty in default mode);
+#   CONFINE_MARKERS     every marker that counts, as <R>/strict, separated by spaces (run directory
+#                       names hold no blank);
+#   CONFINE_MODE_NOTE   the AUDITOR_STRICT note's text when the value was read as on with a note, else
+#                       empty (confine_mode prints the note itself, once);
+#   CONFINE_GIT_GLOBAL  the GIT_CONFIG_GLOBAL hgit gives git: /dev/null in strict mode; in default mode
+#                       scripts/lib/safe-directory.gitconfig of the installation, which trusts a
+#                       repository another user owns (git's safe.directory). hgit's -c pins switch off
+#                       every key known to name a program, so that check adds nothing to these reads.
+# The markers cost one glob of WT when there are none. When there are, git is asked once, with the git
+# environment of strict mode (GIT_CONFIG_GLOBAL /dev/null), whatever the mode: in a checkout another user
+# owns git then cannot tell, and the marker counts, as it does for the Rust tools.
+confine_mode() {
+  local v=${AUDITOR_STRICT-} d n cand="" tracked=" " listed line
+  CONFINE_STRICT=0 CONFINE_MODE_WHY='' CONFINE_MARKERS='' CONFINE_MODE_NOTE='' CONFINE_GIT_GLOBAL=/dev/null
+  case "$v" in
+    ''|0|[Ff][Aa][Ll][Ss][Ee]|[Nn][Oo]|[Oo][Ff][Ff]) ;;
+    1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn])
+      CONFINE_STRICT=1 CONFINE_MODE_WHY="AUDITOR_STRICT=$v" ;;
+    *)
+      confine_shown "$v"
+      CONFINE_STRICT=1 CONFINE_MODE_WHY="AUDITOR_STRICT=$CONFINE_SHOWN"
+      CONFINE_MODE_NOTE="AUDITOR_STRICT is '$CONFINE_SHOWN', read as on"
+      confine_note "$CONFINE_MODE_NOTE" ;;
+  esac
+  for d in "$CONFINE_WT"/audit_* "$CONFINE_WT"/incident_*; do
+    n=${d##*/}
+    confine_rundir_name "$n" || continue
+    if [ -e "$d/strict" ] || [ -L "$d/strict" ]; then cand="$cand $n"; fi
+  done
+  if [ -n "$cand" ]; then
+    # One question for them all. git prints each tracked path from WT, the run directory first, in the
+    # letter case the repository gave it (and after a quote when it quotes the path).
+    if CONFINE_CEILING='' confine_git_check "$CONFINE_WT" && listed=$(confine_tracked $cand 2>/dev/null); then
+      while IFS= read -r line; do
+        line=${line#\"}
+        line=${line%%/*}
+        case "$line" in
+          [Aa][Uu][Dd][Ii][Tt]_*) tracked="${tracked}audit_${line#*_} " ;;
+          [Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*) tracked="${tracked}incident_${line#*_} " ;;
+        esac
+      done <<EOF
+$listed
+EOF
+    fi
+    for n in $cand; do
+      case "$tracked" in *" $n "*) continue ;; esac
+      CONFINE_MARKERS=${CONFINE_MARKERS:+$CONFINE_MARKERS }$n/strict
+      CONFINE_STRICT=1
+      [ -n "$CONFINE_MODE_WHY" ] || CONFINE_MODE_WHY=$n/strict
+    done
+  fi
+  [ "$CONFINE_STRICT" = 1 ] || CONFINE_GIT_GLOBAL=$CONFINE_ROOT/scripts/lib/safe-directory.gitconfig
+}
+
+# confine_strict_on <why>: strict mode from here on, for a tool given --strict (<why> is that word). It
+# names the mode's source in place of a marker, not in place of AUDITOR_STRICT, which comes first.
+confine_strict_on() {
+  CONFINE_STRICT=1
+  CONFINE_GIT_GLOBAL=/dev/null
+  case "$CONFINE_MODE_WHY" in AUDITOR_STRICT=*) ;; *) CONFINE_MODE_WHY=$1 ;; esac
+}
+
+confine_note() { # confine_note <text>: the line "<tool>: note: <text>" on stderr
+  printf '%s: note: %s\n' "${CONFINE_TOOL:-confine}" "$1" >&2
+}
+
+# confine_strict_refuse <reason> <note>: for a check that only strict mode keeps as a refusal. In strict
+# mode, confine_refuse <reason>; in default mode, confine_note <note> (nothing when it is empty), status 0.
+confine_strict_refuse() {
+  [ "$CONFINE_STRICT" != 1 ] || confine_refuse "$1"
+  [ -z "$2" ] || confine_note "$2"
 }
 
 # ---- git (OUTPUT-RULES.md Rule 11c) --------------------------------------------------------------------
@@ -449,14 +540,15 @@ confine_exec_clean() { exec -c "$@"; }
 # unless the caller sets CONFINE_ALLOW_PROTOCOL for one call. confine_git_files runs first, so git never
 # starts on a repository that holds a file it would wait on, and git gets the time confine_git_limit
 # gives it (CONFINE_GIT_TIME sets it for one call). env itself starts with an empty environment
-# (confine_exec_clean).
+# (confine_exec_clean). The system config is never read, and the global config is CONFINE_GIT_GLOBAL
+# (confine_mode): no file in strict mode, the shipped safe-directory file in default mode.
 hgit() {
   local d=$1
   shift
   confine_git_files "$d"
   confine_git_limit "$@"
   confine_timed "$CONFINE_LIMIT" "$d" confine_exec_clean env -i ${HOME+"HOME=$HOME"} PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LC_ALL=C TZ="${TZ:-UTC}" \
-    GIT_NO_LAZY_FETCH=1 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+    GIT_NO_LAZY_FETCH=1 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="${CONFINE_GIT_GLOBAL:-/dev/null}" GIT_TERMINAL_PROMPT=0 \
     GIT_OPTIONAL_LOCKS=0 GIT_ALLOW_PROTOCOL="${CONFINE_ALLOW_PROTOCOL-}" GIT_CEILING_DIRECTORIES="$CONFINE_CEILING" GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS=true \
     git --no-pager -C "$d" \
     -c core.fsmonitor=false -c core.pager=cat -c core.hooksPath=/dev/null -c core.untrackedCache=false \
@@ -703,12 +795,15 @@ confine_no_repo() {
   return 1
 }
 
-# confine_tracked <path>: print what git tracks at <path> (relative to WT, in any letter case) and
-# return 0, or return 2 when git cannot tell. Outside every repository (confine_no_repo) nothing is
+# confine_tracked <path>...: print what git tracks at each <path> (relative to WT, in any letter case)
+# and return 0, or return 2 when git cannot tell. Outside every repository (confine_no_repo) nothing is
 # tracked. Discovery may go above WT for this one question, since a repository there decides it; only
-# paths at <path> are printed.
+# paths at a <path> are printed.
 confine_tracked() {
-  local err
+  local err p
+  local -a specs=()
+  for p in "$@"; do specs+=(":(literal,icase)$p"); done
+  [ "${#specs[@]}" -gt 0 ] || return 0
   # Checked here first, so the two calls below find it done.
   CONFINE_CEILING='' confine_git_check "$CONFINE_WT" || return 2
   if err=$(CONFINE_CEILING='' hgit "$CONFINE_WT" rev-parse --is-inside-work-tree 2>&1 >/dev/null); then
@@ -718,7 +813,7 @@ confine_tracked() {
   else
     return 2
   fi
-  CONFINE_CEILING='' hgit "$CONFINE_WT" --icase-pathspecs ls-files -- ":(literal,icase)$1" 2>/dev/null || return 2
+  CONFINE_CEILING='' hgit "$CONFINE_WT" --icase-pathspecs ls-files -- "${specs[@]}" 2>/dev/null || return 2
 }
 
 # ---- paths ---------------------------------------------------------------------------------------------

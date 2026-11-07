@@ -13,6 +13,7 @@ T=$(cd -P "$T" && pwd -P) || exit 1
 trap 'chmod -R u+rwx "$T" 2>/dev/null; rm -rf "$T"' EXIT
 
 export HOME="$T/home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
+unset AUDITOR_STRICT
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
 mkdir -p "$HOME" "$T/bin" "$T/marks" "$T/hooks"
