@@ -448,6 +448,15 @@ fn init_never_writes_through_a_link_or_over_a_file() {
         !wt.exists(".audit-memory/.gitignore"),
         "init does not adopt a directory it did not make"
     );
+    // A store an earlier init made before it wrote the .gitignore: in default mode
+    // the readers read it, git saying it is untracked; strict mode refuses them.
+    let warm = ["warm", "--program-id", P];
+    assert_eq!(ok(&mem(&wt, &warm)), EMPTY_WARM);
+    refused(
+        &common::run_strict(BIN, &wt.dir, &warm),
+        "audit-mem",
+        &format!(".audit-memory has no .gitignore holding exactly *{USE_R}"),
+    );
     wt.write(".audit-memory/.gitignore", b"*\n!audit.db\n");
     refused(
         &mem(&wt, &["init"]),
@@ -492,9 +501,15 @@ fn checks_the_in_tree_store_with_git() {
     let tracked = Wt::repo();
     tracked.write(".Audit-Memory/audit.db", b"tracked\n");
     tracked.git(&["add", "-f", ".Audit-Memory/audit.db"]);
-    for args in [vec!["warm", "--program-id", P], vec!["init"]] {
+    // The reader in strict mode: in default mode, on a volume that tells letter
+    // case apart, there is no .audit-memory to read and git is not asked.
+    for o in [
+        common::run_strict(BIN, &tracked.dir, &["warm", "--program-id", P]),
+        common::run_strict(BIN, &tracked.dir, &["init"]),
+        mem(&tracked, &["init"]),
+    ] {
         refused(
-            &mem(&tracked, &args),
+            &o,
             "audit-mem",
             &format!("the repository tracks .audit-memory (in some letter case){USE_R}"),
         );
@@ -510,16 +525,24 @@ fn checks_the_in_tree_store_with_git() {
         &format!("the repository tracks .audit-memory (in some letter case){USE_R}"),
     );
     assert!(!gone.exists(".audit-memory"));
-    // git that cannot answer is a refusal: here its index is unreadable.
+    // git that cannot answer is a refusal: here its index is unreadable. In
+    // default mode a reader with no store asks git nothing, and gives the empty
+    // answer.
     let broken = Wt::repo();
     broken.write(".git/index", b"not an index");
     for args in [vec!["warm", "--program-id", P], vec!["init"]] {
         refused(
-            &mem(&broken, &args),
+            &common::run_strict(BIN, &broken.dir, &args),
             "audit-mem",
             "git cannot tell whether .audit-memory is tracked",
         );
     }
+    refused(
+        &mem(&broken, &["init"]),
+        "audit-mem",
+        "git cannot tell whether .audit-memory is tracked",
+    );
+    assert_eq!(ok(&mem(&broken, &["warm", "--program-id", P])), EMPTY_WARM);
     assert!(!broken.exists(".audit-memory"));
     broken.run_dir("audit_1");
     refused(
@@ -617,6 +640,9 @@ fn a_git_in_the_repository_the_working_directory_lies_in_is_never_run() {
     // the repository, above it, holds a git that marks that it ran and lists a file.
     let repo = Wt::repo();
     repo.mkdir("programs/v");
+    // A store in each working directory below, so that warm asks git.
+    repo.run_dir("programs/v/.audit-memory");
+    repo.run_dir(".audit-memory");
     let marker = repo.outside().join("ran");
     repo.write(
         "node_modules/.bin/git",
@@ -696,6 +722,8 @@ fn a_git_inside_the_working_directory_spelled_in_other_letters_is_never_run() {
     if upper == wt.dir || !same(&upper, &wt.dir) {
         return; // a volume that tells letter case apart: nothing to check
     }
+    // A store, so that warm asks git.
+    wt.run_dir(".audit-memory");
     let marker = wt.outside().join("ran");
     wt.write(
         "bin/git",
@@ -742,6 +770,8 @@ fn a_nearer_git_the_tree_holds_does_not_put_the_tree_s_git_on_path() {
     ] {
         let repo = Wt::repo();
         repo.mkdir("programs/v");
+        // A store, so that warm asks git.
+        repo.run_dir("programs/v/.audit-memory");
         match case {
             "an empty .git directory" => repo.mkdir("programs/v/.git"),
             "an empty .git file" => repo.write("programs/.git", b""),
@@ -857,7 +887,13 @@ fn takes_db_only_as_one_of_two_stores() {
         for sub in [vec!["warm", "--program-id", P], vec!["init"]] {
             let mut args = sub.clone();
             args.extend(["--db", db]);
-            refused(&mem(&wt, &args), "audit-mem", &why);
+            refused(&common::run_strict(BIN, &wt.dir, &args), "audit-mem", &why);
+            // A reader takes a run directory with no .gitignore in default mode.
+            if db == "audit_2/audit-mem.db" && sub[0] == "warm" {
+                assert_eq!(ok(&mem(&wt, &args)), EMPTY_WARM);
+            } else {
+                refused(&mem(&wt, &args), "audit-mem", &why);
+            }
         }
     }
     assert!(!wt.exists(".audit-memory") && !wt.exists("audit_1/audit-mem.db"));
@@ -2666,6 +2702,18 @@ fn refuses_when_git_does_not_answer_in_time() {
         assert!(in_time(took), "{args:?}: {took:?}");
     }
     assert!(!wt.exists("audit_1/audit-mem.db"), "nothing made");
+    // In default mode a reader with no store asks git nothing, so it answers at
+    // once.
+    let start = std::time::Instant::now();
+    let o = run_env(
+        BIN,
+        &wt.dir,
+        &["warm", "--program-id", P],
+        &[("PATH", &path)],
+    );
+    let took = start.elapsed();
+    assert_eq!(ok(&o), EMPTY_WARM);
+    assert!(took < std::time::Duration::from_secs(5), "{took:?}");
     // In default mode the run directory's .gitignore of * decides once git has
     // been killed.
     let start = std::time::Instant::now();
@@ -2812,15 +2860,31 @@ fn refuses_a_named_pipe_git_would_open_before_git_starts() {
         };
         wt.run_dir(&run_dir);
         let at = |o: &Output| o.status.code();
-        for (args, want) in [
-            (vec!["init", "--db", "audit_1/audit-mem.db"], why.clone()),
+        for (args, want, strict) in [
+            (
+                vec!["init", "--db", "audit_1/audit-mem.db"],
+                why.clone(),
+                false,
+            ),
+            (
+                vec!["init", "--db", "audit_1/audit-mem.db"],
+                why.clone(),
+                true,
+            ),
             (
                 vec!["warm", "--program-id", P],
                 "git cannot tell whether .audit-memory is tracked".to_string(),
+                true,
             ),
         ] {
             let start = std::time::Instant::now();
-            let o = mem_within_from(&from, &args, std::time::Duration::from_secs(60), &pipe);
+            let o = mem_within_from(
+                &from,
+                &args,
+                strict,
+                std::time::Duration::from_secs(60),
+                &pipe,
+            );
             let took = start.elapsed();
             assert_eq!(at(&o), Some(2), "{case} {args:?}: {}", stderr(&o));
             refused(&o, "audit-mem", &want);
@@ -2829,6 +2893,15 @@ fn refuses_a_named_pipe_git_would_open_before_git_starts() {
                 "{case} {args:?}: {took:?}, so git started"
             );
         }
+        // In default mode a reader with no store asks git nothing.
+        let o = mem_within_from(
+            &from,
+            &["warm", "--program-id", P],
+            false,
+            std::time::Duration::from_secs(60),
+            &pipe,
+        );
+        assert_eq!(ok(&o), EMPTY_WARM, "{case}");
         assert!(
             !wt.exists(&format!("{run_dir}/audit-mem.db")),
             "{case}: nothing made"
@@ -2836,11 +2909,23 @@ fn refuses_a_named_pipe_git_would_open_before_git_starts() {
     }
 }
 
-/// audit-mem run from `dir` with `args`, waited for at most `limit`. Past it the
-/// test fails: first `pipe` is opened for writing, so that a git blocked opening
-/// it goes on, and the call is killed.
-fn mem_within_from(dir: &Path, args: &[&str], limit: std::time::Duration, pipe: &Path) -> Output {
-    let mut child = Command::new(BIN)
+/// audit-mem run from `dir` with `args`, in strict mode or default mode, waited
+/// for at most `limit`. Past it the test fails: first `pipe` is opened for
+/// writing, so that a git blocked opening it goes on, and the call is killed.
+fn mem_within_from(
+    dir: &Path,
+    args: &[&str],
+    strict: bool,
+    limit: std::time::Duration,
+    pipe: &Path,
+) -> Output {
+    let mut cmd = Command::new(BIN);
+    if strict {
+        cmd.env("AUDITOR_STRICT", "1");
+    } else {
+        cmd.env_remove("AUDITOR_STRICT");
+    }
+    let mut child = cmd
         .args(args)
         .current_dir(dir)
         .stdin(Stdio::null())
@@ -3115,4 +3200,64 @@ fn takes_a_store_holding_a_link_inside_it_in_default_mode_only() {
         refused(&common::run_strict(BIN, &wt.dir, &warm), "audit-mem", &why);
         fs::remove_file(wt.path(&format!(".audit-memory/{name}"))).expect("rm");
     }
+}
+
+#[test]
+fn readers_take_a_run_directory_with_no_gitignore_in_default_mode_only() {
+    // A run directory with no .gitignore, which git says is untracked: warm, check
+    // and regressions read it in default mode; strict mode refuses them, and both
+    // modes refuse the writers. With git unable to tell, the readers are refused
+    // too.
+    let wt = Wt::repo();
+    wt.mkdir("audit_2");
+    let why = "--db has no .gitignore holding exactly *: audit_2";
+    let db = ["--db", "audit_2/audit-mem.db", "--program-id", P];
+    let warm = [&["warm"][..], &db].concat();
+    let regressions = [&["regressions"][..], &db].concat();
+    let check = [&["check"][..], &db, &["--signature", SIG]].concat();
+    assert_eq!(ok(&mem(&wt, &warm)), EMPTY_WARM);
+    assert_eq!(
+        ok(&mem(&wt, &regressions)),
+        "{\"regressions\":[],\"truncated\":0}\n"
+    );
+    let o = mem(&wt, &check);
+    assert_eq!(
+        (o.status.code(), stdout(&o), stderr(&o)),
+        (
+            Some(1),
+            "{\"suppressed\":false,\"store\":\"absent\"}\n".to_string(),
+            String::new()
+        )
+    );
+    for args in [&warm, &regressions, &check] {
+        refused(&common::run_strict(BIN, &wt.dir, args), "audit-mem", why);
+    }
+    for args in [
+        vec!["init", "--db", "audit_2/audit-mem.db"],
+        vec![
+            "put-finding",
+            "--db",
+            "audit_2/audit-mem.db",
+            "--program-id",
+            P,
+            "--signature",
+            SIG,
+            "--root-cause",
+            "r",
+            "--title",
+            "t",
+            "--severity",
+            "3",
+        ],
+    ] {
+        refused(&mem(&wt, &args), "audit-mem", why);
+        refused(&common::run_strict(BIN, &wt.dir, &args), "audit-mem", why);
+    }
+    assert!(!wt.exists("audit_2/audit-mem.db") && !wt.exists("audit_2/.gitignore"));
+    // A .gitignore that is there but not exactly * is refused to readers too.
+    wt.write("audit_2/.gitignore", b"*.db\n");
+    refused(&mem(&wt, &warm), "audit-mem", why);
+    fs::remove_file(wt.path("audit_2/.gitignore")).expect("rm");
+    wt.write(".git/index", b"not an index");
+    refused(&mem(&wt, &warm), "audit-mem", why);
 }

@@ -354,11 +354,34 @@ eq "audit-mem: the file outside with a second name in the working tree is unchan
 # 3b. Run directories and stores as scripts/rundir.sh sees them: rundir.sh
 #     check <R> and audit-scan --out <R>/prescan.json accept the same run
 #     directories and refuse the others for the same reason, in the same words;
-#     so do rundir.sh store and audit-mem warm, for the in-tree store. Each in
-#     strict mode, then in default mode.
+#     so do rundir.sh store and audit-mem, for the in-tree store. Each in strict
+#     mode, then in default mode, where audit-mem's readers ask git nothing with no
+#     store and read one with no .gitignore that git says is untracked, so
+#     rundir.sh store, which checks the store for writers too, is compared with
+#     audit-mem init there.
 # ---------------------------------------------------------------------------
 # in_mode <strict|default> <command>...: the command, with AUDITOR_STRICT=1 in strict mode.
 in_mode() { if [ "$1" = strict ]; then shift; AUDITOR_STRICT=1 "$@"; else shift; "$@"; fi; }
+# store_agree <wt> <label> [<warm in default mode>]: rundir.sh store and audit-mem warm give the same answer in
+# strict mode; in default mode rundir.sh store and audit-mem init do, and warm gives rundir.sh store's, or the
+# one named. init runs last, since it makes the store.
+store_agree() {
+  local mode
+  for mode in strict default; do
+    ( cd "$1" && in_mode "$mode" "$RUNDIR" store ) > /dev/null 2> "$T/a.err" < /dev/null
+    ( cd "$1" && in_mode "$mode" "$MEM" warm --contract=1 --program-id VaultProg1111 ) > /dev/null 2> "$T/b.err" < /dev/null
+    if [ "$mode" = strict ]; then
+      eq "rundir.sh store and audit-mem warm agree on $2, strict mode" \
+        "$(said "$T/b.err" 'audit-mem: refused: ')" "$(said "$T/a.err" 'rundir: refused: ')"
+    else
+      eq "audit-mem warm on $2, default mode" "$(said "$T/b.err" 'audit-mem: refused: ')" \
+        "${3:-$(said "$T/a.err" 'rundir: refused: ')}"
+      ( cd "$1" && "$MEM" init --contract=1 ) > /dev/null 2> "$T/b.err" < /dev/null
+      eq "rundir.sh store and audit-mem init agree on $2, default mode" \
+        "$(said "$T/b.err" 'audit-mem: refused: ')" "$(said "$T/a.err" 'rundir: refused: ')"
+    fi
+  done
+}
 RUNDIR="$ROOT/scripts/rundir.sh"
 H="$T/rundirs"
 mkdir -p "$H/wt" "$H/outside"
@@ -435,12 +458,7 @@ for c in absent ok no-gitignore nul-gitignore link holds-link holds-inside-link 
     tracked) fgit -C "$S/wt" add -f .audit-memory/.gitignore ;;
     database-a-directory) mkdir "$S/wt/.audit-memory/audit.db" ;;
   esac
-  for mode in strict default; do
-    ( cd "$S/wt" && in_mode "$mode" "$RUNDIR" store ) > /dev/null 2> "$T/a.err" < /dev/null
-    ( cd "$S/wt" && in_mode "$mode" "$MEM" warm --contract=1 --program-id VaultProg1111 ) > /dev/null 2> "$T/b.err" < /dev/null
-    eq "rundir.sh store and audit-mem agree on an in-tree store: $c, $mode mode" \
-      "$(said "$T/b.err" 'audit-mem: refused: ')" "$(said "$T/a.err" 'rundir: refused: ')"
-  done
+  store_agree "$S/wt" "an in-tree store: $c" "$([ "$c" = no-gitignore ] && printf ok)"
 done
 
 # A repository git cannot answer for (its index unreadable): strict mode refuses the run directory on each side;
@@ -478,11 +496,10 @@ for c in head include; do
     ( cd "$S/wt" && in_mode "$mode" "$SCAN" --contract=1 . --out audit_1/prescan.json ) > /dev/null 2> "$T/b.err" < /dev/null
     eq "rundir.sh check and audit-scan --out refuse a named pipe git would open in the same words: $c, $mode mode" \
       "$(sed -e 's/^audit-scan: refused: //' "$T/b.err")" "$(sed -e 's/^rundir: refused: //' "$T/a.err")"
-    ( cd "$S/wt" && in_mode "$mode" "$RUNDIR" store ) > /dev/null 2> "$T/a.err" < /dev/null
-    ( cd "$S/wt" && in_mode "$mode" "$MEM" warm --contract=1 --program-id VaultProg1111 ) > /dev/null 2> "$T/b.err" < /dev/null
-    eq "rundir.sh store and audit-mem agree on a named pipe git would open: $c, $mode mode" \
-      "$(said "$T/b.err" 'audit-mem: refused: ')" "$(said "$T/a.err" 'rundir: refused: ')"
   done
+  store_agree "$S/wt" "a named pipe git would open, with no store: $c" ok
+  mkdir "$S/wt/.audit-memory" && printf '*\n' > "$S/wt/.audit-memory/.gitignore"
+  store_agree "$S/wt" "a named pipe git would open, with a store: $c"
 done
 
 # ---------------------------------------------------------------------------

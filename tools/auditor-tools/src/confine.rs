@@ -460,6 +460,11 @@ pub fn is_run_dir_name(part: &[u8]) -> bool {
     }
 }
 
+/// Whether nothing is at `path`: lstat finds no entry there.
+pub fn absent(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_err_and(|e| e.kind() == io::ErrorKind::NotFound)
+}
+
 /// A regular file, not a link, holding exactly `*`, one newline allowed after it
 /// (`confine_ignore_all`).
 pub fn ignores_all(path: &Path) -> bool {
@@ -503,9 +508,16 @@ pub fn holds_link(dir: &Path) -> io::Result<bool> {
 /// repository holding no file git would wait on (`Git::files`), tracked by no
 /// repository in any letter case, with a `.gitignore` of exactly `*`. In default
 /// mode, when git cannot tell whether it is tracked, or is not on PATH, the
-/// `.gitignore` alone decides, as `confine_rundir` takes it there. Returns its
-/// lstat.
-pub fn run_dir(wt: &Path, git: &mut Git, name: &[u8], what: &str) -> Result<Metadata, Stop> {
+/// `.gitignore` alone decides, as `confine_rundir` takes it there; and for a call
+/// that only reads (`reading`), a run directory with no `.gitignore` is taken
+/// when git says it is untracked. Returns its lstat.
+pub fn run_dir(
+    wt: &Path,
+    git: &mut Git,
+    name: &[u8],
+    what: &str,
+    reading: bool,
+) -> Result<Metadata, Stop> {
     let strict = strict();
     let found = if strict {
         git.need().map(|()| true)?
@@ -531,10 +543,11 @@ pub fn run_dir(wt: &Path, git: &mut Git, name: &[u8], what: &str) -> Result<Meta
         Ok(true) => return Err(refuse(format!("{what} holds a symbolic link: {s}"))),
         Err(_) => return Err(refuse(format!("{what} cannot be fully read: {s}"))),
     }
+    let mut untracked = false;
     if found {
         git.files()?;
         match git.tracked(&[name]) {
-            Some(listed) if listed.is_empty() => {}
+            Some(listed) if listed.is_empty() => untracked = true,
             Some(_) => return Err(refuse(format!("{what} is tracked by git: {s}"))),
             None if strict => {
                 return Err(refuse(format!(
@@ -544,7 +557,8 @@ pub fn run_dir(wt: &Path, git: &mut Git, name: &[u8], what: &str) -> Result<Meta
             None => {}
         }
     }
-    if !ignores_all(&dir.join(".gitignore")) {
+    let ignore = dir.join(".gitignore");
+    if !ignores_all(&ignore) && !(reading && !strict && untracked && absent(&ignore)) {
         return Err(refuse(format!(
             "{what} has no .gitignore holding exactly *: {s}"
         )));

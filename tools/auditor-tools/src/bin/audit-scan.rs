@@ -172,7 +172,7 @@ fn check_out(wt: &Path, arg: &OsStr) -> Result<Out, Stop> {
         return Err(shape());
     }
     let mut git = Git::new(wt);
-    let dir_md = confine::run_dir(wt, &mut git, dir, "--out")?;
+    let dir_md = confine::run_dir(wt, &mut git, dir, "--out", false)?;
     let s = rel.shown();
     match std::fs::symlink_metadata(rel.full(wt)) {
         Ok(md) if md.file_type().is_symlink() => {

@@ -622,9 +622,13 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   none of them may be a link.
   Whether you made the store yourself stays your judgement (OUTPUT-RULES.md
   Rule 11d). A store an earlier `init` made, before it wrote the `.gitignore`, has
-  none and is refused: if the store is yours, write `.audit-memory/.gitignore`
-  holding `*` (`printf '*\n' > .audit-memory/.gitignore`), and audit-mem uses it
-  again.
+  none: the writers refuse it in both modes, and so does strict mode for every
+  subcommand; if the store is yours, write `.audit-memory/.gitignore` holding `*`
+  (`printf '*\n' > .audit-memory/.gitignore`), and audit-mem uses it again. In
+  default mode `warm`, `check` and `regressions` read a store directory with no
+  `.gitignore`, `.audit-memory/` or a run directory, when git says it is untracked
+  (one whose `.gitignore` is there but not exactly `*` stays refused), and with no
+  `.audit-memory/` at all they ask git nothing and give the empty answer below.
 - It asks git what is tracked as confine.sh's `hgit` asks it: git from a `PATH` with
   every entry inside the working directory, or inside the tree it lies in (the
   outermost of it and the directories above it, below `HOME`, or up to `/` when it

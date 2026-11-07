@@ -20,8 +20,10 @@
 //!   it as `scripts/rundir.sh store` does: untracked in any letter case (asked of
 //!   git as confine.sh's `hgit` asks it), a real directory holding no symbolic
 //!   link (in default mode, `confine::mode`, none that leads out of it), with a
-//!   `.gitignore` of exactly `*`; git that cannot answer is a refusal. The
-//!   database is a regular file with one name.
+//!   `.gitignore` of exactly `*`; git that cannot answer is a refusal. In default
+//!   mode `warm`, `check` and `regressions` ask git nothing when there is no
+//!   in-tree store, and take a store directory with no `.gitignore` that git says
+//!   is untracked. The database is a regular file with one name.
 //! - `warm`, `check` and `regressions` open the store read-only and never make
 //!   it; with no store they print an empty answer, and beside a write to it that
 //!   did not finish they read nothing (`init` rolls that write back). `init` makes
@@ -366,13 +368,17 @@ impl Store {
 
 /// Checks `--db` and its store before anything is opened: the path's shape, then
 /// the run directory as `rundir.sh check` checks it, or the in-tree store as
-/// `rundir.sh store` checks it, in their words, then the database file.
-fn check_store(wt: &Path, arg: &OsStr) -> Result<Store, Stop> {
+/// `rundir.sh store` checks it, in their words, then the database file. In
+/// default mode a call that only reads (`reading`) takes a store directory with
+/// no `.gitignore` when git says it is untracked, and asks git nothing when
+/// there is no in-tree store: what it would read is not there.
+fn check_store(wt: &Path, arg: &OsStr, reading: bool) -> Result<Store, Stop> {
     let raw = arg.as_bytes();
     let path = raw.strip_prefix(b"./").unwrap_or(raw);
     let mut git = Git::new(wt);
+    let reading = reading && !confine::strict();
     let mut store = if path == IN_TREE {
-        in_tree_store(wt, &mut git)?
+        in_tree_store(wt, &mut git, reading)?
     } else {
         let run = path
             .strip_suffix(b"/audit-mem.db")
@@ -384,7 +390,7 @@ fn check_store(wt: &Path, arg: &OsStr) -> Result<Store, Stop> {
                     shown(raw)
                 ))
             })?;
-        let md = confine::run_dir(wt, &mut git, run, "--db")?;
+        let md = confine::run_dir(wt, &mut git, run, "--db", reading)?;
         Store {
             path: path.to_vec(),
             dir: run.to_vec(),
@@ -401,9 +407,22 @@ fn check_store(wt: &Path, arg: &OsStr) -> Result<Store, Stop> {
     Ok(store)
 }
 
-/// The in-tree store, checked as `rundir.sh store` checks it, in its words.
-fn in_tree_store(wt: &Path, git: &mut Git) -> Result<Store, Stop> {
+/// The in-tree store, checked as `rundir.sh store` checks it, in its words, but
+/// for a call that only reads in default mode (`reading`; `check_store`).
+fn in_tree_store(wt: &Path, git: &mut Git, reading: bool) -> Result<Store, Stop> {
     let d = ".audit-memory";
+    let dir = wt.join(d);
+    let mut store = Store {
+        path: IN_TREE.to_vec(),
+        dir: STORE_DIR.to_vec(),
+        dir_md: None,
+        name: b"audit.db",
+        db: Db::Absent,
+        in_tree: true,
+    };
+    if reading && confine::absent(&dir) {
+        return Ok(store);
+    }
     git.need()?;
     match git.tracked(&[STORE_DIR]) {
         Some(listed) if listed.is_empty() => {}
@@ -414,15 +433,6 @@ fn in_tree_store(wt: &Path, git: &mut Git) -> Result<Store, Stop> {
         }
         None => return Err(refuse(format!("git cannot tell whether {d} is tracked"))),
     }
-    let mut store = Store {
-        path: IN_TREE.to_vec(),
-        dir: STORE_DIR.to_vec(),
-        dir_md: None,
-        name: b"audit.db",
-        db: Db::Absent,
-        in_tree: true,
-    };
-    let dir = wt.join(d);
     let md = match fs::symlink_metadata(&dir) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(store),
         Err(e) => {
@@ -456,7 +466,8 @@ fn in_tree_store(wt: &Path, git: &mut Git) -> Result<Store, Stop> {
             )))
         }
     }
-    if !confine::ignores_all(&dir.join(".gitignore")) {
+    let ignore = dir.join(".gitignore");
+    if !confine::ignores_all(&ignore) && !(reading && confine::absent(&ignore)) {
         return Err(refuse(format!(
             "{d} has no .gitignore holding exactly *; use <R>/audit-mem.db"
         )));
@@ -1180,7 +1191,7 @@ fn run(args: &[OsString]) -> Result<ExitCode, Stop> {
         _ => call.need("program-id")?,
     };
     let action = action(&wt, &call)?;
-    let store = check_store(&wt, &call.db)?;
+    let store = check_store(&wt, &call.db, call.sub.reads_only())?;
     if call.sub.reads_only() {
         return read(&wt, &store, &pid, &action);
     }
