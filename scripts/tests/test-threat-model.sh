@@ -1468,6 +1468,8 @@ rm -rf "$FW"
 # The case file: hostile argument vectors, each refused with one stderr line, nothing on stdout, and
 # nothing changed in the working directory. It runs in $CW, which holds the repository tgt, the run
 # directory audit_1 (made by rundir.sh), and the links tgt-link (to tgt) and audit_2 (to audit_1).
+# Every case is refused in both modes, so the file runs in default mode and again with AUDITOR_STRICT=1,
+# and must print the same.
 # =================================================================================================
 SHELLS=("$BASH")
 if [ -x /bin/bash ] && [ "$(/bin/bash -c 'printf %s "$BASH_VERSION"')" != "$BASH_VERSION" ]; then
@@ -1480,27 +1482,29 @@ newrun "$CW" >/dev/null
 ln -s tgt "$CW/tgt-link"; ln -s audit_1 "$CW/audit_2"
 ctree() { (cd "$CW" && find . -path ./tgt/.git -prune -o -print | LC_ALL=C sort); }
 ctree > "$T/ctree.before"
-ncase=0
-while IFS= read -r line; do
-  case "$line" in ''|'#'*) continue ;; esac
-  want_rc=${line%%$'\t'*}
-  rest=${line#*$'\t'}
-  want_err=${rest%%$'\t'*}
-  rest=${rest#*$'\t'}
-  IFS=$'\t' read -r -a args <<< "$rest"
-  ncase=$((ncase + 1))
-  i=0
-  for sh in "${SHELLS[@]}"; do
-    (cd "$CW" && "$sh" "$COLLECT" "${args[@]}") >"$T/case.out" 2>"$T/case.err" </dev/null
-    got=$?
-    if [ "$got" = "$want_rc" ] && [ "$(cat "$T/case.err")" = "$want_err" ] && [ ! -s "$T/case.out" ]; then
-      [ "$i" -gt 0 ] || ok "case: collect.sh ${args[*]}"
-    else
-      ko "case ($sh): collect.sh ${args[*]} -> status $got, stderr: $(cat "$T/case.err")"
-    fi
-    i=$((i + 1))
-  done
-done < "$CASES"
+for mode in default strict; do
+  ncase=0
+  while IFS= read -r line; do
+    case "$line" in ''|'#'*) continue ;; esac
+    want_rc=${line%%$'\t'*}
+    rest=${line#*$'\t'}
+    want_err=${rest%%$'\t'*}
+    rest=${rest#*$'\t'}
+    IFS=$'\t' read -r -a args <<< "$rest"
+    ncase=$((ncase + 1))
+    i=0
+    for sh in "${SHELLS[@]}"; do
+      (cd "$CW" && { [ "$mode" = default ] || export AUDITOR_STRICT=1; } && "$sh" "$COLLECT" "${args[@]}") >"$T/case.out" 2>"$T/case.err" </dev/null
+      got=$?
+      if [ "$got" = "$want_rc" ] && [ "$(cat "$T/case.err")" = "$want_err" ] && [ ! -s "$T/case.out" ]; then
+        [ "$i" -gt 0 ] || ok "case ($mode): collect.sh ${args[*]}"
+      else
+        ko "case ($mode, $sh): collect.sh ${args[*]} -> status $got, stderr: $(cat "$T/case.err")"
+      fi
+      i=$((i + 1))
+    done
+  done < "$CASES"
+done
 check "the case file has cases ($ncase)" test "$ncase" -gt 40
 ctree > "$T/ctree.after"
 check "no case changed anything in the working directory" cmp -s "$T/ctree.before" "$T/ctree.after"
