@@ -514,30 +514,34 @@ impl Scan<'_> {
     /// directory's name, or `.audit-memory`), is an audit's own output: it holds
     /// the mark `rundir.sh new` and `audit-mem init` write first, a `.gitignore` of
     /// exactly `*`, and no repository tracks it in any letter case, as
-    /// confine.sh's `confine_tracked` asks. git is asked only about a directory
-    /// with the mark, and only while the scan has time; one git does not answer
-    /// for is not taken for an audit's output, and once git has not answered, it
-    /// is asked no more, so each such directory after it is scanned too.
-    fn own_output(&mut self, name: &[u8]) -> bool {
+    /// confine.sh's `confine_tracked` asks (`Some(true)`); or it holds the mark and
+    /// git cannot answer for it (`Some(false)`). git is asked only about a
+    /// directory with the mark, and only while the scan has time (`None` once it
+    /// is spent); once git has not answered, it is asked no more, so each such
+    /// directory after it is `Some(false)` too.
+    fn own_output(&mut self, name: &[u8]) -> Option<bool> {
         if !confine::ignores_all(&Path::new(OsStr::from_bytes(name)).join(".gitignore"))
             || self.spent()
         {
-            return false;
+            return None;
         }
         let found = self
             .git
             .get_or_insert_with(|| confine::working_tree().ok().map(|wt| Git::new(&wt)));
         let Some(git) = found.as_mut() else {
-            return false;
+            return Some(false);
         };
         let listed = match git.need() {
             Ok(()) => git.tracked(&[name]),
             Err(_) => None,
         };
-        if listed.is_none() {
-            self.git = Some(None);
+        match listed {
+            Some(listed) => listed.is_empty().then_some(true),
+            None => {
+                self.git = Some(None);
+                Some(false)
+            }
         }
-        listed.is_some_and(|listed| listed.is_empty())
     }
 
     /// Whether the scan has run for its time.
@@ -675,17 +679,27 @@ impl Scan<'_> {
     /// names, are not entered, nor is cargo's build output, a `target` directory
     /// cargo has built in (`cargo_built`); nor, when the root is the working
     /// directory, are the run directories and the store an audit made in it
-    /// (`own_output`). Each is in `skipped`, with why.
+    /// (`own_output`), a run directory git cannot answer for among them, so that
+    /// the PoC code in one is not reported as the target's. Each is in `skipped`,
+    /// with why.
     fn subdir(&mut self, dir: &OwnedFd, name: &[u8], path: &Path, depth: usize) {
         let pruned = match name {
             b".git" => Some("a .git/ directory (git's own), not scanned"),
             b"node_modules" => Some("a node_modules/ directory (installed packages), not scanned"),
-            b".audit-memory" if self.top && depth == 1 && self.own_output(name) => {
-                Some("the audit-mem store (a .gitignore of * and nothing tracked), not scanned")
-            }
-            _ if self.top && depth == 1 && is_run_dir_name(name) && self.own_output(name) => {
-                Some("a run directory (a .gitignore of * and nothing tracked), not scanned")
-            }
+            b".audit-memory" if self.top && depth == 1 => (self.own_output(name) == Some(true))
+                .then_some(
+                    "the audit-mem store (a .gitignore of * and nothing tracked), not scanned",
+                ),
+            _ if self.top && depth == 1 && is_run_dir_name(name) => match self.own_output(name) {
+                Some(true) => {
+                    Some("a run directory (a .gitignore of * and nothing tracked), not scanned")
+                }
+                Some(false) => Some(
+                    "a run directory (a .gitignore of *, and git cannot tell whether it is \
+                     tracked), not scanned",
+                ),
+                None => None,
+            },
             _ => None,
         };
         if let Some(why) = pruned {

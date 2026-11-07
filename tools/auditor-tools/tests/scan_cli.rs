@@ -543,6 +543,8 @@ fn skips_large_irregular_and_unparsable_files() {
 }
 
 const RUN_DIR: &str = "a run directory (a .gitignore of * and nothing tracked), not scanned";
+const RUN_DIR_UNTOLD: &str =
+    "a run directory (a .gitignore of *, and git cannot tell whether it is tracked), not scanned";
 const STORE: &str = "the audit-mem store (a .gitignore of * and nothing tracked), not scanned";
 const BUILD: &str =
     "a target/ directory cargo built in (it holds CACHEDIR.TAG or .rustc_info.json), not scanned";
@@ -1003,14 +1005,29 @@ fn refuses_an_out_when_git_cannot_answer_in_strict_mode_only() {
         "audit-scan",
         "--out has no .gitignore holding exactly *: audit_2",
     );
-    // Printing to stdout needs no answer from git: a run directory git cannot
-    // answer for is scanned.
+    // Printing to stdout needs no answer from git: in a scan of . a run
+    // directory git cannot answer for is passed over by its .gitignore of *, so
+    // its PoC code is not reported as the target's, in both modes; one without
+    // the mark is scanned.
     wt.write("audit_1/poc/F-1/src/lib.rs", b"fn poc() {}\n");
-    let report = json(&run(BIN, &wt.dir, &["."]));
-    assert_eq!(
-        files(&report, "functions"),
-        vec!["./audit_1/poc/F-1/src/lib.rs"]
-    );
+    wt.write("audit_2/src/lib.rs", b"fn delivered() {}\n");
+    for o in [
+        run(BIN, &wt.dir, &["."]),
+        common::run_strict(BIN, &wt.dir, &["."]),
+    ] {
+        let report = json(&o);
+        assert_eq!(files(&report, "functions"), vec!["./audit_2/src/lib.rs"]);
+        assert_eq!(
+            skipped(&report),
+            [
+                (
+                    "./.git".into(),
+                    "a .git/ directory (git's own), not scanned".into()
+                ),
+                ("./audit_1".into(), RUN_DIR_UNTOLD.into()),
+            ]
+        );
+    }
 }
 
 #[test]
@@ -1031,15 +1048,14 @@ fn asks_git_no_more_once_it_has_not_answered() {
     );
     let path = format!("{}:/usr/bin:/bin", bin.display());
     let report = json(&common::run_env(BIN, &wt.dir, &["."], &[("PATH", &path)]));
+    // Each is passed over by its .gitignore of *, so its PoC code is not
+    // reported as the target's.
+    assert_eq!(files(&report, "functions"), Vec::<String>::new());
     assert_eq!(
-        files(&report, "functions"),
-        vec![
-            "./audit_1/poc/lib.rs",
-            "./audit_2/poc/lib.rs",
-            "./audit_3/poc/lib.rs",
-        ]
+        skipped(&report),
+        ["./audit_1", "./audit_2", "./audit_3"]
+            .map(|d| (d.to_string(), RUN_DIR_UNTOLD.to_string()))
     );
-    assert_eq!(skipped(&report), []);
     let asked = fs::read_to_string(&calls).expect("git was asked");
     assert_eq!(asked.lines().count(), 1, "{asked}");
 }
@@ -1148,19 +1164,24 @@ fn waits_once_for_a_git_that_does_not_answer() {
     let started = std::time::Instant::now();
     let report = json(&common::run_env(BIN, &wt.dir, &["."], &[("PATH", &path)]));
     let took = started.elapsed();
+    assert_eq!(files(&report, "functions"), Vec::<String>::new());
     assert_eq!(
-        files(&report, "functions"),
-        vec![
-            "./audit_1/poc/lib.rs",
-            "./audit_2/poc/lib.rs",
-            "./audit_3/poc/lib.rs",
+        skipped(&report),
+        [
+            (
+                "./.git".to_string(),
+                "a .git/ directory (git's own), not scanned".to_string()
+            ),
+            ("./audit_1".into(), RUN_DIR_UNTOLD.into()),
+            ("./audit_2".into(), RUN_DIR_UNTOLD.into()),
+            ("./audit_3".into(), RUN_DIR_UNTOLD.into()),
         ]
     );
     assert!(took >= GIT_TIME && took < GIT_TIME * 2, "took {took:?}");
 }
 
 #[test]
-fn scans_the_run_directories_at_once_when_head_is_a_named_pipe() {
+fn passes_over_the_run_directories_at_once_when_head_is_a_named_pipe() {
     use auditor_tools::confine::GIT_TIME;
     let wt = Wt::repo();
     for name in ["audit_1", "audit_2", "audit_3"] {
@@ -1168,7 +1189,8 @@ fn scans_the_run_directories_at_once_when_head_is_a_named_pipe() {
         wt.write(&format!("{name}/poc/lib.rs"), b"fn poc() {}\n");
     }
     // A named pipe as HEAD, which git would wait on for good when it opens it:
-    // no git is started, so nothing waits, and each run directory is scanned.
+    // no git is started, so nothing waits, and each run directory is passed over
+    // by its .gitignore of *.
     fs::remove_file(wt.path(".git/HEAD")).expect("remove HEAD");
     let status = Command::new("mkfifo")
         .arg(wt.path(".git/HEAD"))
@@ -1178,13 +1200,13 @@ fn scans_the_run_directories_at_once_when_head_is_a_named_pipe() {
     let started = std::time::Instant::now();
     let report = json(&run(BIN, &wt.dir, &["."]));
     let took = started.elapsed();
+    assert_eq!(files(&report, "functions"), Vec::<String>::new());
     assert_eq!(
-        files(&report, "functions"),
-        vec![
-            "./audit_1/poc/lib.rs",
-            "./audit_2/poc/lib.rs",
-            "./audit_3/poc/lib.rs",
-        ]
+        skipped(&report)
+            .into_iter()
+            .filter(|(_, why)| why == RUN_DIR_UNTOLD)
+            .count(),
+        3
     );
     assert!(took < GIT_TIME / 2, "took {took:?}");
 }

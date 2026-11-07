@@ -111,9 +111,11 @@ builds in, one made before cargo's first build too (as `anchor` can make
 when `<dir>` is `.`, does it enter a run directory or `.audit-memory/` that holds
 an audit's own output: one that holds the
 `.gitignore` of exactly `*` that `rundir.sh new` and `audit-mem init` write first,
-and that no repository tracks in any letter case. A directory with such a name
-that is not one, such as one the target's repository tracks, is scanned like any
-other. The walk follows no symbolic link, goes no deeper than 128 directories below
+and that no repository tracks in any letter case. A run directory with that
+`.gitignore` that git cannot answer for, or with no git on `PATH`, is not entered
+either, in both modes, so the PoC code in it is not reported as the target's. A
+directory with such a name that is not one, such as one the target's repository
+tracks, is scanned like any other. The walk follows no symbolic link, goes no deeper than 128 directories below
 `<dir>`, and parses only regular files with one name, of at most 4 MiB, in byte
 order of their names; every directory it does not enter, those above and those
 nested too deeply, every link it meets, and every `*.rs` file it does not parse
@@ -299,10 +301,13 @@ so it must be safe whatever arguments follow. Its rules are those of
   `.audit-memory/` that holds a `.gitignore` of exactly `*`. When git cannot
   answer, or has not answered within 10 s (it is then killed), strict mode refuses
   `--out`, and default mode takes it on its run directory's `.gitignore` of `*`, as
-  `confine_rundir` does there; with no git on `PATH` the same holds. Such a
-  directory in a scan of `.` is scanned, as is each one after it in that scan, for
-  which git is not asked again; once the scan's time is spent, such a directory is
-  scanned without asking. With neither, git is not run.
+  `confine_rundir` does there; with no git on `PATH` the same holds. In a scan of
+  `.` such a run directory is not entered, and listed in `skipped` as `a run
+  directory (a .gitignore of *, and git cannot tell whether it is tracked), not
+  scanned`, in both modes; so is each one after it in that scan, for which git is not
+  asked again, while `.audit-memory/` is scanned then. Once the scan's time is
+  spent, such a directory is scanned without asking. With neither, git is not
+  run.
 - It refuses to run from an installation inside the working directory, or from a
   path, as it was invoked or with its links resolved, holding a quote, `$`, a
   backtick, a backslash or a control character, and in a working directory whose
