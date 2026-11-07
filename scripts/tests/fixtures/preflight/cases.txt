@@ -7,6 +7,8 @@
 #   - none: the same in both modes;
 #   - s: in default mode the case passes, with nothing on stderr, a note naming the path the refusal names, and a
 #     default-mode ok line last;
+#   - g: a guard case (preflight.sh's GUARD): as s, with a note naming this plugin's names or the env it sets, when
+#     GUARD is note; refused, with the guard's own line, when GUARD is refuse;
 #   - u: a .claude/settings.local.json that is the user's own in default mode, outside a repository: the case passes,
 #     with nothing on stderr and the ok line last (and a note when the file sets hooks or env).
 # A status-64 case prints nothing on stdout; a status-0 case prints nothing on stderr and ends with the ok line. No
@@ -114,3 +116,29 @@
 0		l:loop=.	l:a/up=..
 0		d:src/lib	l:docs/src=../src	l:here=.	l:dev=/dev/null	l:gone=/nonexistent/preflight	l:ring=ring2	l:ring2=ring
 0		l:.git=..	d:sub	l:sub/.git=../..
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/commands), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/commands/auditor
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/commands), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:.claude/commands/auditor:audit.md
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/skills/auditor-skill
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/skills/Auditor-Skill-Resume
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/skills/AUDITOR
+64g	preflight: refused: the working tree ships Claude Code project config (pkg/auditor/.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:pkg/auditor/.claude/skills/audit-cycle-resume
+64g	preflight: refused: the working tree ships Claude Code project config (pkg/Auditor/.claude/commands), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:pkg/Auditor/.claude/commands/poc.md
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":{"AUDITOR_STRICT":"0"}}
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":{"AUDITOR_STRICT":0}}
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":{"AUDITOR_STRICT":"OFF"}}
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":{"AUDITOR_STRICT":false}}
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":{"AUDITOR_STRICT":[1]}}
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":{"AUDITOR_EXEC_MODE":"native"}}
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":{"AUDITOR_PREFLIGHT_ALLOW":"/"}}
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":{"PATH":"/opt/solana/bin:/usr/bin"}}
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":{"CLAUDE_PLUGIN_ROOT":"/x"}}
+64g	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"model":"x","env":{"RPC_URL":"x","AUDITOR_RUN_TIMEOUT":"3600"}}
+64s	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":{"AUDITOR_STRICT":"1","AUDITOR_EXEC_MODE":"isolated"}}
+64s	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":{"AUDITOR_STRICT":true,"AUDITOR_EXEC_MODE":"none"}}
+64s	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":{"AUDITOR_STRICT":"Yes","auditor_strict":"0","PATHS":"x"}}
+64s	preflight: refused: the working tree ships Claude Code project config (.claude/agents), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/agents/auditor.md=x
+64s	preflight: refused: the working tree ships Claude Code project config (.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/skills/auditing	d:.claude/skills/my-auditor
+64s	preflight: refused: the working tree ships Claude Code project config (node_modules/x/.claude/commands), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:node_modules/x/.claude/commands/auditor
+64s	preflight: refused: the working tree ships Claude Code project config (pkg/auditor/.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:pkg/auditor/.claude/skills/deploy
+64s	preflight: refused: the working tree ships Claude Code project config (pkg/.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:pkg/.claude/settings.json={"env":{"AUDITOR_STRICT":"0"}}
+64s	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":"AUDITOR_STRICT=0"}
