@@ -187,19 +187,24 @@
 #                                python3 starts from /, as for the self-check.
 #   iso_incident_runs <working directory>
 #                                reads in turn, as iso_incident_class does with no id, the INCIDENTS.json of
-#                                each directory at the top of <working directory> (an absolute path) named
-#                                incident_* in any letter case, since a volume that ignores case finds
-#                                incident_1 under the name INCIDENT_1: sets ISO_CLASS to supply_chain_or_ci at
-#                                the first that records such an incident, and to "other" when none does, and
+#                                each run directory of the auditor's at the top of <working directory> (an
+#                                absolute path): a directory named incident_<n>, as confine_rundir_name
+#                                takes it, whose .gitignore holds exactly * (the one scripts/rundir.sh new
+#                                writes), or cannot be read. It sets ISO_CLASS to supply_chain_or_ci at the
+#                                first that records such an incident, and to "other" when none does, and
 #                                ISO_INCIDENTS to that file, relative to <working directory> and cut as
-#                                confine_shown cuts. A directory whose INCIDENTS.json is missing, or whose file
-#                                records no incident (a hunt that ruled everything out), counts for nothing.
-#                                Status 3, with ISO_CLASS the reason, at the first file that cannot be read:
-#                                only python3 tells that a file is missing, so a stat that fails for another
-#                                reason (a directory that cannot be searched, a path past PATH_MAX) gives it,
-#                                and so does a working directory that cannot be listed (ISO_INCIDENTS is then
-#                                "the working directory"). Status 2 when such a directory is there and python3
-#                                is not on PATH. The list does not depend on the caller's set -f.
+#                                confine_shown cuts. A run directory whose INCIDENTS.json is missing, or whose
+#                                file records no incident (a hunt that ruled everything out), counts for
+#                                nothing. Every other directory named incident_* in any letter case (a
+#                                client's Incident_Response/, a run moved aside as incident_1.old, a link) is
+#                                passed over; ISO_PASSED names the INCIDENTS.json of the first five that hold
+#                                one, then how many more, for the caller's note. Status 3, with ISO_CLASS the
+#                                reason, at the first file of a run directory that cannot be read: only
+#                                python3 tells that a file is missing, so a stat that fails for another reason
+#                                (a directory that cannot be searched, a path past PATH_MAX) gives it, and so
+#                                does a working directory that cannot be listed (ISO_INCIDENTS is then "the
+#                                working directory"). Status 2 when an incident_<n> directory is there and
+#                                python3 is not on PATH. The list does not depend on the caller's set -f.
 # Needs bash >= 3.2, python3 (the self-check, the keypair and the watchdog), env, mkdir, mktemp and cat.
 
 # What iso_credentials, iso_cred_names, iso_homes and iso_env run, with python3 -I so that no module comes
@@ -1322,7 +1327,8 @@ iso_copy_new() { # iso_copy_new <file> <path>
 
 # What iso_incident_class runs, with python3 -I: "<INCIDENTS.json> [<INC-n.k>]" prints that incident's
 # root_cause_class, or with no id supply_chain_or_ci when any incident has it and "other" otherwise; exit 3
-# with the reason when the file, an incident or a class cannot be read.
+# with the reason when the file, an incident or a class cannot be read. iso_incident_runs adds a third
+# word, own, for the check of the file's directory below.
 ISO_INCIDENT_PY='import json, os, stat, sys
 
 CLASSES = ("code_flaw", "key_compromise", "oracle_or_dependency", "economic_design", "off_chain",
@@ -1336,6 +1342,30 @@ def say(text, status):
 
 
 path, wanted = sys.argv[1], sys.argv[2]
+if sys.argv[3:] == ["own"]:
+    # Whether the directory holding the file is a run directory the auditor made: scripts/rundir.sh new writes
+    # its .gitignore, exactly "*". One that plainly is not exits 4, or 5 when it holds no INCIDENTS.json
+    # either; a .gitignore that cannot be read, or a directory that cannot be searched, counts as one.
+    folder = os.path.dirname(path)
+    mine = True
+    try:
+        if stat.S_ISLNK(os.lstat(folder).st_mode):
+            mine = False
+        else:
+            g = os.lstat(os.path.join(folder, ".gitignore"))
+            if not stat.S_ISREG(g.st_mode) or g.st_size > 2:
+                mine = False
+            else:
+                fd = os.open(os.path.join(folder, ".gitignore"),
+                             os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NOCTTY", 0))
+                with os.fdopen(fd, "rb") as f:
+                    mine = f.read(3) in (b"*", b"*\n")
+    except FileNotFoundError:
+        mine = False
+    except OSError:
+        pass
+    if not mine:
+        say("is not in a run directory the auditor made", 4 if os.path.lexists(path) else 5)
 try:
     st = os.lstat(path)
 except FileNotFoundError:
@@ -1378,10 +1408,11 @@ iso_incident_class() { # iso_incident_class <INCIDENTS.json> [<INC-n.k>]
 }
 
 iso_incident_runs() { # iso_incident_runs <working directory>
-  local d rc
+  local d rc n=0
   local -a dirs
   ISO_CLASS=other
   ISO_INCIDENTS=""
+  ISO_PASSED=""
   # A directory that cannot be listed globs to nothing, so that is told first, whatever the glob options.
   if [ ! -r "$1" ]; then
     ISO_INCIDENTS="the working directory"
@@ -1400,16 +1431,26 @@ iso_incident_runs() { # iso_incident_runs <working directory>
     if [ ! -d "$d" ] && [ -e "$d" ]; then continue; fi
     confine_shown "${d##*/}"
     ISO_INCIDENTS=$CONFINE_SHOWN/INCIDENTS.json
-    command -v python3 >/dev/null 2>&1 || { ISO_CLASS=""; return 2; }
-    rc=0
-    iso_incident_class "$d/INCIDENTS.json" || rc=$?
+    # Only a run directory of the auditor's counts: the name scripts/rundir.sh gives (incident_<n>) here, and
+    # its .gitignore, which python3 reads.
+    if ! confine_rundir_name "${d##*/}"; then
+      if [ -e "$d/INCIDENTS.json" ] || [ -L "$d/INCIDENTS.json" ]; then rc=4; else rc=5; fi
+    else
+      command -v python3 >/dev/null 2>&1 || { ISO_CLASS=""; return 2; }
+      rc=0
+      ISO_CLASS=$(cd / && exec python3 -I -c "$ISO_INCIDENT_PY" "$d/INCIDENTS.json" "" own) || rc=$?
+    fi
     case "$rc:$ISO_CLASS" in
       0:supply_chain_or_ci) return 0 ;;
-      0:*|'3:is missing'|'3:records no incident') ;;
+      0:*|'3:is missing'|'3:records no incident'|5:*) ;;
+      4:*)
+        n=$((n + 1))
+        if [ "$n" -le 5 ]; then ISO_PASSED=${ISO_PASSED:+$ISO_PASSED, }$ISO_INCIDENTS; fi ;;
       3:?*) return 3 ;;
       *) ISO_CLASS="cannot be read"; return 3 ;;
     esac
   done
+  [ "$n" -le 5 ] || ISO_PASSED="$ISO_PASSED and $((n - 5)) more"
   ISO_CLASS=other
   ISO_INCIDENTS=""
 }

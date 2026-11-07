@@ -856,10 +856,12 @@ if [ "$ISOLATED_OK" = 1 ]; then
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
   check "... and a patch of another incident of that run" test "$RC" = 0
 fi
-# Natively an incident recorded anywhere in the working directory counts, whatever --run names: every --src is
-# the working tree or a copy of it. audit_1 (exec-mode native) builds while incident_1 records the incidents;
-# incident_2, made beside it, holds an INCIDENTS.json of each kind below, or none; incident_1.old is a run moved
-# aside under another name, and incident_notes.md a file.
+# Natively an incident recorded in any run directory the auditor made in the working directory counts, whatever
+# --run names: every --src is the working tree or a copy of it. audit_1 (exec-mode native) builds while
+# incident_1 records the incidents; incident_2, made beside it, holds an INCIDENTS.json of each kind below, or
+# none. Only such a run directory counts (incident_<n>, with the .gitignore of exactly * rundir.sh writes):
+# incident_1.old (a run moved aside), a client's Incident_Response/, incident_4/ without that .gitignore and
+# incident_3, a link, are passed over, with a note, and incident_notes.md is a file.
 XRUN='so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built.'
 XREAD='nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built.'
 XLIST='the working directory cannot be listed, so target.sh cannot tell whether an incident_* directory in it records a supply_chain_or_ci incident, and nothing from it is built natively until it can be listed (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.'
@@ -918,15 +920,29 @@ if [ "$(id -u)" != 0 ]; then
   check "natively, an incident_2 that cannot be searched stops audit_1's build: exit 3" \
     sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_2/INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ]"
 fi
-mkdir "$WT/incident_1.old"
-printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$WT/incident_1.old/INCIDENTS.json"
+SCJ='{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}]}'
+PASSED='>> note: the incident rule counts only the run directories the auditor made (incident_<n>, with a .gitignore of exactly *), so it passed over'
+mkdir -p "$WT/incident_1.old" "$WT/Incident_Response" "$WT/incident_4" "$T/elsewhere-run"
+printf '%s\n' "$SCJ" > "$WT/incident_1.old/INCIDENTS.json"
+printf '{"cases": [{"ticket": "IR-7"}]}\n' > "$WT/Incident_Response/INCIDENTS.json"
+printf '%s\n' "$SCJ" > "$WT/incident_4/INCIDENTS.json"
+printf '%s\n' "$SCJ" > "$T/elsewhere-run/INCIDENTS.json" && printf '*\n' > "$T/elsewhere-run/.gitignore"
+ln -s "$T/elsewhere-run" "$WT/incident_3"
 printf 'notes\n' > "$WT/incident_notes.md"
 run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
-check "natively, a run moved aside as incident_1.old still counts: exit 3" \
-  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_1.old/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, $XRUN' '$T/err'"
-rm -rf "$WT/incident_1.old"
+check "natively, a run moved aside, a client's Incident_Response/, an incident_4/ rundir.sh did not make and a link count for nothing: exit 0, and a note names them" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '$PASSED Incident_Response/INCIDENTS.json, incident_1.old/INCIDENTS.json, incident_3/INCIDENTS.json, incident_4/INCIDENTS.json (Rule 11a)' '$T/out' && grep -q '^== cargo test' '$T/calls'"
+rm -rf "$WT/incident_1.old" "$WT/Incident_Response" "$WT/incident_4" "$WT/incident_3"
 run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
-check "... while a file named incident_notes.md, and incident_2 without INCIDENTS.json, count for nothing" test "$RC" = 0
+check "... while a file named incident_notes.md, and incident_2 without INCIDENTS.json, count for nothing, and get no note" \
+  sh -c "[ '$RC' = 0 ] && ! grep -q 'incident rule' '$T/out'"
+# An archive, which no repository tracks: a client's Incident_Response/ in another schema is passed over there too.
+mkdir -p "$P/Incident_Response"
+printf '{"cases": []}\n' > "$P/Incident_Response/INCIDENTS.json"
+run "$TARGET" "$P" -- cargo-test --run audit_1 --src .
+check "natively, in a tree that is not a repository, a client's Incident_Response/INCIDENTS.json in another schema: exit 0, with the note" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '$PASSED Incident_Response/INCIDENTS.json (Rule 11a)' '$T/out'"
+rm -rf "$P/Incident_Response" "$T/elsewhere-run"
 run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
 check "natively without python3, an INCIDENTS.json in the working directory: exit 3 before anything is copied" \
   sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so target.sh cannot tell whether incident_1 holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
@@ -935,13 +951,14 @@ if [ "$ISOLATED_OK" = 1 ]; then
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
   check "isolated mode builds audit_1 while incident_2 records a supply_chain_or_ci incident" test "$RC" = 0
 fi
-# Only python3 tells that an INCIDENTS.json is missing, so a stat that fails for another reason stops the build:
-# a path past PATH_MAX (1024 bytes on macOS, 4096 on Linux) hides no run. In a working directory PATH_MAX-22 bytes
-# long incident_1/INCIDENTS.json lies past it; in one PATH_MAX-200 bytes long, a run moved aside under a long
-# name, whose INCIDENTS.json (a name of 190 bytes) or which itself (230) lies past it. Each file is written
-# through a relative path and records a supply_chain_or_ci incident. The incident_* directories are read in any
-# letter case, since a volume that ignores case finds incident_2 under INCIDENT_2, and a working directory that
-# cannot be listed stops the build too.
+# Only python3 tells that an INCIDENTS.json is missing, so in a run directory the auditor made a stat that fails
+# for another reason stops the build: a path past PATH_MAX (1024 bytes on macOS, 4096 on Linux) hides no run. In
+# a working directory PATH_MAX-22 bytes long incident_1/INCIDENTS.json lies past it, and so does the .gitignore
+# that says whose the directory is, which then counts as the auditor's. In one PATH_MAX-200 bytes long, a run
+# moved aside under a long name, whose INCIDENTS.json (a name of 190 bytes) or which itself (230) lies past it,
+# is passed over, since no run directory has such a name, and so are directories spelled INCIDENT_2 and
+# Incident_2, which rundir.sh never makes. Each file is written through a relative path and records a
+# supply_chain_or_ci incident. A working directory that cannot be listed stops the build too.
 PM=$(getconf PATH_MAX / 2>/dev/null)
 case "$PM" in ''|*[!0-9]*) PM=1024 ;; esac
 long() { printf '%*s' "$1" '' | tr ' ' "$2"; }
@@ -969,7 +986,6 @@ while [ "$dlen" -lt $(( ${#T} + 422 )) ]; do
 done
 if [ -z "$dbad" ]; then ok "deep_wt makes a working directory of each of 202 lengths in a row"
 else ko "deep_wt makes a working directory of each of 202 lengths in a row: $dbad below $T"; fi
-SCJ='{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}]}'
 if DW=$(deep_wt $((PM - 22))) && [ "${#DW}" = $((PM - 22)) ]; then
   ( cd "$DW" && mkdir incident_1 && printf '*\n' > incident_1/.gitignore && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
   run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
@@ -983,12 +999,11 @@ if DW=$(deep_wt $((PM - 200))) && [ "${#DW}" = $((PM - 200)) ]; then
   n3=incident_1.$(long 219 y)
   ( cd "$DW" && mkdir "$n2" && printf '%s\n' "$SCJ" > "$n2/INCIDENTS.json" )
   run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
-  check "natively, a run moved aside under a name of 190 bytes, its INCIDENTS.json past PATH_MAX, stops audit_1's build: exit 3, nothing copied" \
-    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: $n2/INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+  check "natively, a run moved aside under a name of 190 bytes, its INCIDENTS.json past PATH_MAX, is passed over: exit 0" \
+    sh -c "[ '$RC' = 0 ] && grep -q '^== cargo test' '$T/calls'"
   ( cd "$DW" && mv "$n2" "$n3" )
   run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
-  check "... and under a name of 230 bytes, the run itself past PATH_MAX: exit 3, the name cut after 200 bytes" \
-    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: ${n3:0:200}.../INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ]"
+  check "... and under a name of 230 bytes, the run itself past PATH_MAX: exit 0" sh -c "[ '$RC' = 0 ] && grep -q '^== cargo test' '$T/calls'"
   ( cd "$DW" && rm -rf "$n3" )
   run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
   check "... and with that run gone the same build runs: exit 0" test "$RC" = 0
@@ -999,8 +1014,8 @@ if DW=$(deep_wt $((PM - 200))) && [ "${#DW}" = $((PM - 200)) ]; then
     ( cd "$DW" && mkdir "$spelled" && printf '%s\n' "$SCJ" > "$spelled/INCIDENTS.json" )
     run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
     ( cd "$DW" && rm -rf "$spelled" )
-    check "natively, a run spelled $spelled whose INCIDENTS.json records a supply_chain_or_ci incident stops audit_1's build: exit 3, nothing copied" \
-      sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: $spelled/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, $XRUN' '$T/err' && [ ! -s '$T/calls' ]"
+    check "natively, a directory spelled $spelled whose INCIDENTS.json records a supply_chain_or_ci incident is passed over: exit 0, with the note" \
+      sh -c "[ '$RC' = 0 ] && grep -qxF '$PASSED $spelled/INCIDENTS.json (Rule 11a)' '$T/out'"
   done
   if [ "$(id -u)" != 0 ]; then
     ( cd "$DW" && cp Cargo.toml src/ && mkdir incident_1 && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
