@@ -133,10 +133,11 @@ already captured.
   refusal ([Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode)). The
   commands need no repository, so an incident workspace of their own is the
   cleanest place to run them. For a repository you do not trust, start Claude
-  Code with the strict launch line, which keeps the repository's own config
-  out of the session; strict mode's preflight still refuses a tree that ships
-  it, so to run strict mode there, clone it to a new directory, delete every
-  `.claude/` and `.mcp.json` in the copy, and start there. `CLAUDE.md` and
+  Code with the strict launch line, under which the repository's own config
+  does not load. Strict mode still refuses a tree that ships it, because
+  preflight cannot see how Claude Code was started: for such a repository,
+  clone it to a new directory, delete every `.claude/` and `.mcp.json` in the
+  copy, and start there. `CLAUDE.md` and
   `AGENTS.md` files are listed, not refused; their text is the repository's,
   never instructions.
 - **What runs without asking.** The commands pre-approve reading, `Task`, edits
