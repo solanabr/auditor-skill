@@ -516,9 +516,9 @@ Under `claude -p` and in CI, export `AUDITOR_STRICT=1` in the job's environment 
 | `preflight.sh`: no `jq` to read a settings file; a directory `find` cannot read | a note | refused |
 | `preflight.sh`: a large tree | the walk stops at 500,000 entries, or at `AUDITOR_PREFLIGHT_MAX_ENTRIES`, with a note | refused past 200,000 entries, or past the variable |
 | `git-ro.sh`, the recipes, `collect.sh --repo .`: a session below the top level | the enclosing repository is read | refused |
-| `git-ro.sh`: a checkout another user owns; a hooks link; a worktree, submodule or separate git directory that points back | read | refused |
-| `git-ro.sh`: borrowed objects (alternates), grafts | read, with a note | refused |
-| `git-ro.sh`: the work-tree scan for named pipes and devices where git reads its own files | skipped, since its reads open no work-tree file | runs |
+| `git-ro.sh`, the recipes, the collector: a checkout another user owns; a hooks link; a worktree, submodule or separate git directory that points back | read | refused |
+| `git-ro.sh`, the recipes, the collector: borrowed objects (alternates), grafts | read, with a note | refused |
+| `git-ro.sh`, the recipes, the collector: the work-tree scan for named pipes and devices where git reads its own files | skipped, since their reads open no work-tree file | runs |
 | `git-ro.sh blame`: a `blame.ignoreRevsFile` in the repository | honoured, from a copy of that file | refused |
 | `git-ro.sh`, `target.sh`: a git without the May-2024 clone fixes | a note; nothing is cloned under it | refused (exit 69, or a blocker) |
 | `rundir.sh new`: tracked paths under `audit_*` or `incident_*` | the next free name, and a note per path | refused |
