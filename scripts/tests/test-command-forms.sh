@@ -73,7 +73,10 @@
 #       arrives in; wording that asked Q46 again, called isolated recommended, copied an earlier run's mode
 #       forward, wrote only native, or passed the file's mode as run.sh --mode, stays gone (the GONE list); and
 #       no body names the environment form of a PoC run (VULNERABLE_SO and the rest), which run.sh --crate does
-#       not read.
+#       not read. diff-audit and quick-scan keep their --ci and --fail-on, the findings file that starts as a
+#       failing record, the Rule 5b statuses that count, a reply without finding text, and the closing line;
+#       each of the three Quick commands names the report it writes from templates/pr-report.md; diff-audit's
+#       PR-number form and quick-scan's "fail the job" without a private channel stay gone (docs/ci.md).
 #   G   The lines agents/poc-engineer.md gives a runner it writes, run as the first lines of such a runner in a
 #       crate, from the working directory and from the crate, find <R> from the runner's path and take the
 #       stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT, or a strict entry in their
@@ -1233,6 +1236,20 @@ commands/intake.md	only into `grep`, `head`, `tail` or `wc`
 commands/patch.md	only into `grep`, `head`, `tail` or `wc`
 commands/poc.md	only into `grep`, `head`, `tail` or `wc`
 commands/quick-scan.md	only into `grep`, `head`, `tail` or `wc`
+commands/diff-audit.md	argument-hint: "[base..head] [--ci] [--fail-on <N>] [--strict]"
+commands/quick-scan.md	argument-hint: "[--ci] [--fail-on <N>] [--strict]"
+commands/diff-audit.md	`auditor: verdict: <pass|fail> (threshold <N>, analyzers run: <names, or none>[; not run: <names>][; stopped: <step>])`
+commands/quick-scan.md	`auditor: verdict: <pass|fail> (threshold <N>, analyzers run: <names, or none>[; not run: <names>][; stopped: <step>])`
+commands/diff-audit.md	with `"final": false` and `"verdict": "fail"`, so a run that ends early leaves a failing record
+commands/quick-scan.md	with `"final": false` and `"verdict": "fail"`, so a run that ends early leaves a failing record
+commands/diff-audit.md	(its Rule 5b status is `passed`, `undetermined` or `not-required`; an `[UNCONFIRMED]` or `[PARTIAL]` one does not)
+commands/quick-scan.md	(its Rule 5b status is `passed`, `undetermined` or `not-required`; an `[UNCONFIRMED]` or `[PARTIAL]` one does not)
+commands/diff-audit.md	Keep finding text, counts and paths out of the reply (Rule 11d)
+commands/quick-scan.md	Keep finding text, counts and paths out of the reply (Rule 11d)
+commands/diff-audit.md	Write `audit_<n>/PR-REPORT.md` from `${CLAUDE_PLUGIN_ROOT}/templates/pr-report.md`
+commands/quick-scan.md	Write `audit_<n>/QUICK-SCAN.md` from `${CLAUDE_PLUGIN_ROOT}/templates/pr-report.md`
+commands/deep-review.md	`audit_<n>/DEEP-REVIEW-<unit>.md`, from `${CLAUDE_PLUGIN_ROOT}/templates/pr-report.md`
+commands/quick-scan.md	but the job never fails only because none exists, and never falls back to printing findings in the log
 commands/re-audit.md	only into `grep`, `head`, `tail` or `wc`
 commands/respond.md	only into `grep`, `head`, `tail` or `wc`
 commands/spec-audit.md	only into `grep`, `head`, `tail` or `wc`
@@ -1283,6 +1300,9 @@ commands/audit-assist.md	ask once at Checkpoint 1
 SKILL.md	isolated recommended
 QUESTIONS.md	and again before a later session uses a run directory an earlier one made
 QUESTIONS.md	**Isolated** (recommended)
+commands/diff-audit.md	PR number
+commands/quick-scan.md	If that channel is unavailable, fail the job
+commands/quick-scan.md	As a CI gate, a refusal fails the job
 GONE
 
 # respond's step 5 and hunt's step 6 settle the mode as poc's step 5 does, each step read as one line so wording
