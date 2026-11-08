@@ -117,8 +117,11 @@ Like a real firm, the **client-facing report issues no "safe to deploy" guarante
 
 | Output | File |
 |--------|------|
-| Full audit report | `audit_<n>/REPORT.md` |
+| Audit report (Standard: internal; Full: client) | `audit_<n>/REPORT.md` |
 | PR / diff report | `audit_<n>/PR-REPORT.md` |
+| Quick scan report | `audit_<n>/QUICK-SCAN.md` |
+| Deep review report | `audit_<n>/DEEP-REVIEW-<unit>.md` (the function or instruction name, else the file's name; `-2`, `-3` when taken) |
+| CI findings (`--ci`) | `audit_<n>/findings.json` (`templates/ci/findings.schema.json`) |
 | Re-audit finding-diff | `audit_<n+1>/RE-AUDIT.md` |
 | Intake / threat model | `audit_<n>/intake.md` · `audit_<n>/threat-model.md` |
 | Threat-model bootstrap evidence | `audit_<n>/bootstrap/` (`history.md` · `inputs.tsv` · `inputs/` · `diffs/`) |
