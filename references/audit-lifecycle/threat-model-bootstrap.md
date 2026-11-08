@@ -31,8 +31,10 @@
   It never checks out, builds, runs, fetches into or modifies the target, and runs every git call hardened per
   `OUTPUT-RULES.md` Rule 11c (no pager, fsmonitor, signature helpers, textconv or external diff; lazy fetching
   (`GIT_NO_LAZY_FETCH=1`) and every transport protocol off; grep, colour, big-file, hunk, context and root-commit settings
-  pinned; diffs and searches forced to text). A partial clone is refused (exit 3), because reading its missing
-  objects would fetch from its promisor remote: make a full copy you control first. The target's `.git/config` and
+  pinned; diffs and searches forced to text). A partial clone is read for what it holds, since nothing it lacks
+  can be fetched: a `collect.sh: note:` line and a "Partial clone" line in `history.md` say so. Strict mode refuses
+  it (exit 3), and a target whose config git cannot read, which could hide one (`OUTPUT-RULES.md` Rule 11f): make a
+  full copy you control first. The target's `.git/config` and
   attributes are untrusted; `history.md` states which attributes can still shape R4's function names. It works from
   a temp directory, never from the target, and its python3 helper runs isolated (`-I`), so no module or config file
   shipped in the target is loaded.
@@ -118,8 +120,8 @@ path relative to the working directory: the audited repo may ship a same-named f
 take, an `--import` that is not a commit, a run directory that fails the checks above or that git or find cannot
 check, a `TMPDIR` inside the working directory, a disclosure that cannot be recorded, or an output that cannot be
 written. 3: `--repo` is not the top level of a git repository git can read (or a bare repository), the pin does not
-resolve, the target is a partial clone (reading it could fetch from its promisor remote), or git cannot read its
-config.
+resolve, or, in strict mode, the target is a partial clone or git cannot read its config (default mode notes either
+and goes on).
 
 - **Scope.** Pass the in-scope program dirs as `--paths`, and the parent's as `--parent-paths` when the fork renamed
   them. `--cap`, `--small` and `--fix-ceiling` tune volume.
