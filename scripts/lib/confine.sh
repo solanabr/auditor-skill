@@ -936,10 +936,10 @@ confine_repo() {
 
 # confine_repo_above: for confine_repo ., the repository WT lies in below its top level. git, asked with no
 # ceiling, must put WT inside a work tree whose top level lies above WT, with WT's path in it as the
-# prefix, and must track a path under WT, so a repository at home that tracks nothing here is never taken
-# for the target. In strict mode such a repository is refused by name; in default mode it is taken: this
-# sets confine_repo's info (as its first call prints it), abs and base (the top level), ran (where git
-# answered) and prefix. Status 1 when there is none.
+# prefix. When that repository tracks nothing under WT, as a repository at home over an unpacked archive,
+# it is refused, in both modes, with that reason: it is not the target. Otherwise strict mode refuses it by
+# name, and default mode takes it: this sets confine_repo's info (as its first call prints it), abs and
+# base (the top level), ran (where git answered) and prefix. Status 1 when there is no such repository.
 confine_repo_above() {
   local v inside b g c t p up=..
   CONFINE_CEILING='' confine_git_files "$CONFINE_WT"
@@ -958,14 +958,14 @@ confine_repo_above() {
   confine_phys "$t" && [ ! "$CONFINE_PHYS" -ef "$CONFINE_WT" ] && confine_inside "$CONFINE_WT" "$CONFINE_PHYS" &&
     [ "$CONFINE_PHYS/${p%/}" -ef "$CONFINE_WT" ] || return 1
   t=$CONFINE_PHYS
+  v=${p%/}
+  while :; do case "$v" in */*) v=${v#*/}; up=$up/.. ;; *) break ;; esac; done
   # One tracked path is enough: the reader stops after the first line, and git with it.
   v=$(CONFINE_CEILING='' hgit "$CONFINE_WT" ls-files -- . 2>/dev/null </dev/null | { IFS= read -r v && printf x; })
-  [ "$v" = x ] || return 1
-  if [ "$CONFINE_STRICT" = 1 ]; then
-    v=${p%/}
-    while :; do case "$v" in */*) v=${v#*/}; up=$up/.. ;; *) break ;; esac; done
+  [ "$v" = x ] ||
+    confine_refuse "the working directory lies below the top level of its repository ($up), which tracks nothing under it, so it is not taken for the tree under audit: start Claude Code at that top level, or in a folder the repository tracks (Rule 11c)"
+  [ "$CONFINE_STRICT" != 1 ] ||
     confine_refuse "the working directory lies below the top level of its repository ($up); strict mode reads a repository only from its top level: start Claude Code there (Rule 11f)"
-  fi
   info=false$'\n'$g$'\n'$c$'\n'$t$'\n'x
   ran=$CONFINE_WT
   abs=$t

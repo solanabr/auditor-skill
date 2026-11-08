@@ -651,11 +651,14 @@ check "in strict mode a repository that rewrites commit parents with info/grafts
 lib "$RW" 'confine_repo grafted R; printf "%s" "$CONFINE_BARE"'
 check "... and in default mode read, with one note (CONF-09)" \
   test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|false|test: note: R rewrites commit parents (info/grafts), so git shows the history that file sets; strict mode refuses this (Rule 11f)"
+NOTHING="the working directory lies below the top level of its repository (..), which tracks nothing under it, so it is not taken for the tree under audit: start Claude Code at that top level, or in a folder the repository tracks (Rule 11c)"
 lib "$RW/plain" 'confine_repo . R'
-check "a working directory under which its repository tracks nothing is refused (discovery stops at WT's parent)" \
-  refused 'R is not a git repository that git can read (none there, or another user owns it: audit a copy): .'
+check "a working directory under which its repository tracks nothing is refused, saying so" refused "$NOTHING"
 AUDITOR_STRICT=1 lib "$RW/plain" 'confine_repo . R'
-check "... in strict mode too" \
+check "... in strict mode too" refused "$NOTHING"
+mkdir -p "$T/norepo/e"
+lib "$T/norepo/e" 'confine_repo . R'
+check "... while one with no repository above it gets the reason it has today" \
   refused 'R is not a git repository that git can read (none there, or another user owns it: audit a copy): .'
 lib "$RW" 'confine_repo_top "$CONFINE_WT" && printf top; confine_repo_top "$CONFINE_WT/programs" || printf " not-top"; confine_repo_top "$CONFINE_WT/copy.git" && printf " bare-top"'
 check "confine_repo_top: a top level, a subdirectory, a bare repository" out_is 'top not-top bare-top'

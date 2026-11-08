@@ -805,12 +805,11 @@ check "... and in strict mode git-ro never reads that repository's history, sayi
 run "$TRK/inner" log --format=%s -1
 check "... while in default mode it reads it from its top level (a session in a subdirectory)" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|nested|"
 mkdir -p "$TRK/untracked/deep"
+NOTHING='git-ro: refused: the working directory lies below the top level of its repository (../..), which tracks nothing under it, so it is not taken for the tree under audit: start Claude Code at that top level, or in a folder the repository tracks (Rule 11c)'
 run "$TRK/untracked/deep" log -1
-check "... but not from a directory under which it tracks nothing, in either mode" \
-  err_is 'git-ro: refused: the working directory is not a git repository that git can read (none there, or another user owns it: audit a copy): .'
+check "... but not from a directory under which it tracks nothing, in either mode, which it says" err_is "$NOTHING"
 AUDITOR_STRICT=1 run "$TRK/untracked/deep" log -1
-check "... (strict mode)" \
-  err_is 'git-ro: refused: the working directory is not a git repository that git can read (none there, or another user owns it: audit a copy): .'
+check "... (strict mode)" err_is "$NOTHING"
 
 # =================================================================================================
 # grep never reads the work tree: a tracked directory replaced by a link to files outside stays unread.
