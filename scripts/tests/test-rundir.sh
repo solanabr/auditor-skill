@@ -116,16 +116,48 @@ ln -s audit_7 "$P/audit_50"
 printf 'x\n' > "$P/audit_60"
 run_once "$P" new audit
 check "new takes the highest number over real run directories (audit_009 counts as 9; a link, a file and other names do not count)" out_is audit_10
+# The next name held by a file, a link, or a folder spelled in other letters: strict mode refuses; default
+# mode passes over it, as over a tracked name, and names it as the disk spells it.
 printf 'x\n' > "$P/audit_11"
-run_once "$P" new audit
-check "new refuses when the next name is taken" refused 'audit_11 already exists and is not a run directory'
-check "... and creates nothing" test ! -d "$P/audit_11"
+AUDITOR_STRICT=1 run_once "$P" new audit
+check "in strict mode new refuses when the next name is taken" refused 'audit_11 already exists and is not a run directory'
+check "... and creates nothing" test ! -d "$P/audit_11" -a ! -e "$P/audit_12"
 rm "$P/audit_11"
 ln -s "$T/elsewhere" "$P/audit_11"
+AUDITOR_STRICT=1 run_once "$P" new audit
+check "in strict mode new refuses when the next name is a symbolic link" refused 'audit_11 already exists and is not a run directory'
+check "... and nothing is made through it" test ! -e "$T/elsewhere"
 run_once "$P" new audit
-check "new refuses when the next name is a symbolic link" refused 'audit_11 already exists and is not a run directory'
+check "in default mode new passes over that link, with a note" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|audit_12|rundir: note: audit_11 already exists and is not a run directory; this run writes only in audit_12 (Rule 11d)"
 check "... and nothing is made through it" test ! -e "$T/elsewhere"
 rm "$P/audit_11"
+printf 'x\n' > "$P/audit_13"
+run_once "$P" new audit
+check "... and so it does over a file" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|audit_14|rundir: note: audit_13 already exists and is not a run directory; this run writes only in audit_14 (Rule 11d)"
+rm "$P/audit_13"
+P2="$T/plain-taken"; mkdir -p "$P2"
+for i in 1 2 3 4 5 6 7; do printf 'x\n' > "$P2/audit_$i"; done
+run_once "$P2" new audit
+check "... five taken names named, then a count" \
+  test "$RC|$(cat "$T/out")|$(sed -n '$=' "$T/err")|$(sed -n '$p' "$T/err")" = "0|audit_8|6|rundir: note: 2 more such names are taken; this run writes only in audit_8 (Rule 11d)"
+P3="$T/plain-cap"; mkdir -p "$P3/Audit_1"
+if [ -d "$P3/audit_1" ]; then
+  AUDITOR_STRICT=1 run_once "$P3" new audit
+  check "in strict mode new refuses a name a folder spelled in other letters holds" refused 'audit_1 already exists and is not a run directory'
+  run_once "$P3" new audit
+  check "... which default mode passes over, naming the folder as the disk spells it" \
+    test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|audit_2|rundir: note: Audit_1 already exists and is not a run directory; this run writes only in audit_2 (Rule 11d)"
+  printf '*\n' > "$P3/Audit_1/.gitignore"
+  run "$P3" check audit_1
+  check "check refuses a run directory whose name the disk spells in other letters, in either mode" \
+    refused "the run directory is spelled Audit_1 on disk, and a run directory's name is lowercase: audit_1"
+  AUDITOR_STRICT=1 run "$P3" check audit_1
+  check "... (strict mode)" refused "the run directory is spelled Audit_1 on disk, and a run directory's name is lowercase: audit_1"
+else
+  skp "this volume tells letter case apart: a folder Audit_1 does not hold audit_1"
+fi
 # Each shell makes a run directory of its own; the output must match but for the number.
 i=0
 for sh in "${SHELLS[@]}"; do

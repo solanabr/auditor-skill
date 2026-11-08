@@ -10,9 +10,9 @@
 #     does not start with "-" or "~", has no empty, "." or ".." component once one leading "./" is
 #     dropped, passes through no symbolic link and resolves inside WT. An existing final object is a
 #     regular file or a directory.
-#   - A run directory is audit_<n> or incident_<n> (n of 1 to 6 digits): a real directory directly in
-#     WT, holding no symbolic link (in default mode, none that resolves outside it), tracked by no
-#     repository in any letter case, whose .gitignore holds exactly "*".
+#   - A run directory is audit_<n> or incident_<n> (n of 1 to 6 digits), as the disk spells it: a real
+#     directory directly in WT, holding no symbolic link (in default mode, none that resolves outside it),
+#     tracked by no repository in any letter case, whose .gitignore holds exactly "*".
 #   - A new file is created with noclobber and written through the descriptor opened at creation; a
 #     new directory is created with plain mkdir, never -p.
 # confine_init also sets LC_ALL=C and umask 077 and unsets CDPATH, BASH_ENV and ENV, and the variables a
@@ -1142,6 +1142,26 @@ confine_rundir_name() { # confine_rundir_name <name>: status 0 for audit_<n> or 
   [ "${#n}" -le 6 ]
 }
 
+# confine_spelled <run directory name>: sets CONFINE_SPELLED to the name as the listing of WT spells the
+# entry that holds it, or to the name itself when the listing has none: on a volume that ignores letter
+# case, audit_1 also opens a folder AUDIT_1. Status 0 when the listing spells it as given.
+confine_spelled() {
+  local e pat first=""
+  case "$1" in
+    audit_*) pat=[Aa][Uu][Dd][Ii][Tt]_${1#audit_} ;;
+    *) pat=[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_${1#incident_} ;;
+  esac
+  CONFINE_SPELLED=$1
+  for e in "$CONFINE_WT"/$pat; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    [ "${e##*/}" != "$1" ] || return 0
+    [ -n "$first" ] || first=${e##*/}
+  done
+  [ -n "$first" ] || return 0
+  CONFINE_SPELLED=$first
+  return 1
+}
+
 confine_ignore_all() { # confine_ignore_all <file>: status 0 when <file> is a regular file holding exactly "*" (one newline may follow)
   local size hex
   [ -f "$1" ] && [ ! -L "$1" ] || return 1
@@ -1164,6 +1184,9 @@ confine_rundir() {
     confine_refuse "$what must be a run directory named audit_<n> or incident_<n> in the working directory: $shown"
   [ ! -L "$CONFINE_WT/$r" ] || confine_refuse "$what is a symbolic link: $shown"
   [ -d "$CONFINE_WT/$r" ] || confine_refuse "$what is not an existing directory: $shown"
+  # Named as the disk spells it, as new makes it and as the strict markers are read.
+  confine_spelled "$r" ||
+    confine_refuse "$what is spelled $(confine_text "$CONFINE_SPELLED") on disk, and a run directory's name is lowercase: $shown"
   links=$(find "$CONFINE_WT/$r" -type l -print 2>/dev/null) || confine_refuse "$what cannot be fully read: $shown"
   if [ -n "$links" ]; then
     [ "$CONFINE_STRICT" != 1 ] && confine_links_inside "$CONFINE_WT/$r" || confine_refuse "$what holds a symbolic link: $shown"

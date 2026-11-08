@@ -11,7 +11,7 @@
 #
 # A run directory <R> is audit_<n> or incident_<n> (n of 1 to 6 digits), directly in the working
 # directory: a real directory, holding no symbolic link, tracked by no repository in any letter case,
-# whose .gitignore holds exactly "*". check verifies exactly that (scripts/lib/confine.sh confine_rundir:
+# whose .gitignore holds exactly "*", named as the disk spells it. check verifies exactly that (scripts/lib/confine.sh confine_rundir:
 # in default mode a link that resolves inside it passes, and so does one git cannot tell about); reuse a
 # directory only after the human confirms which one.
 #
@@ -20,8 +20,9 @@
 # audit_* or incident_* (or a submodule of that name) gets a note on stderr, since the commands'
 # Edit(audit_*/**) and Edit(incident_*/**) rules also cover it; so does a repository git cannot tell about
 # (Rule 11d). In strict mode (OUTPUT-RULES.md Rule 11f; --strict turns it on) both are refused, as writes
-# into run directories could then reach tracked files. new refuses when the next name is taken by a file
-# or a link, and when no number is left. It creates the directory with plain mkdir, writes .gitignore
+# into run directories could then reach tracked files. A next name that a file, a link or a folder spelled
+# in other letters holds is passed over too, with a note naming it as the disk spells it; strict mode
+# refuses it. new refuses when no number is left. It creates the directory with plain mkdir, writes .gitignore
 # first, with noclobber, then, in strict mode, the marker strict (holding "strict"), which keeps every
 # later run in this working directory strict until it is deleted, then the standard subdirectories:
 #   audit: worksheets/context, poc, patches, exec, deps, sast;
@@ -68,8 +69,8 @@ tracked_run_dirs() {
 }
 
 cmd_new() { # cmd_new audit|incident [--strict]
-  local kind listed line path top max=0 d n name doubt=0 taken=" " noted="/" nnoted=0
-  local -a notes=()
+  local kind listed line path top max=0 d n name doubt=0 taken=" " noted="/" nnoted=0 held nheld=0
+  local -a notes=() helds=()
   [ $# -ge 1 ] || refuse "new takes audit or incident, then --strict or nothing"
   kind=$1
   shift
@@ -117,12 +118,23 @@ cmd_new() { # cmd_new audit|incident [--strict]
     [ "$n" -le "$max" ] || max=$n
   done
   n=$((max + 1))
+  # A name the repository tracks is passed over; so, in default mode, is one a file, a link or a folder
+  # spelled in other letters holds (strict mode refuses it), named as the disk spells it.
   while :; do
     [ "$n" -le 999999 ] || refuse "no ${kind}_<n> name is left"
     name=${kind}_$n
-    case "$taken" in *" $name "*) n=$((n + 1)) ;; *) break ;; esac
+    case "$taken" in *" $name "*) n=$((n + 1)); continue ;; esac
+    if [ -e "$WT/$name" ] || [ -L "$WT/$name" ]; then
+      [ "$CONFINE_STRICT" != 1 ] || refuse "$name already exists and is not a run directory"
+      confine_spelled "$name"
+      held=$CONFINE_SPELLED
+      nheld=$((nheld + 1))
+      [ "$nheld" -gt 5 ] || helds+=("$(confine_text "$held")")
+      n=$((n + 1))
+      continue
+    fi
+    break
   done
-  if [ -e "$WT/$name" ] || [ -L "$WT/$name" ]; then refuse "$name already exists and is not a run directory"; fi
   confine_mkdir "$WT/$name" || refuse "cannot create $name"
   confine_new_file "$WT/$name/.gitignore" '*'$'\n' || refuse "cannot write $name/.gitignore"
   if [ "$CONFINE_STRICT" = 1 ]; then
@@ -142,6 +154,11 @@ cmd_new() { # cmd_new audit|incident [--strict]
   done
   [ "$nnoted" -le 5 ] ||
     confine_note "the repository tracks paths under $((nnoted - 5)) more such names; this run writes only in $name (Rule 11d)"
+  for path in ${helds[@]+"${helds[@]}"}; do
+    confine_note "$path already exists and is not a run directory; this run writes only in $name (Rule 11d)"
+  done
+  [ "$nheld" -le 5 ] ||
+    confine_note "$((nheld - 5)) more such names are taken; this run writes only in $name (Rule 11d)"
   [ "$doubt" -eq 0 ] ||
     confine_note "git cannot tell whether the repository tracks a run directory; $name is new, and its .gitignore of * keeps git off it (Rule 11d)"
 }
