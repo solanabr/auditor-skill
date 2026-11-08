@@ -51,12 +51,14 @@ No run reached its cap: $3 for diff-audit, $5 for quick-scan, $25 for Standard a
 
 ## What a run reads
 
-| Corpus | Size, at about 4 characters a token | Who reads it |
+| Corpus | Size, at about 4 characters a token | What the measured runs read |
 |---|---|---|
-| `SKILL.md`, `OUTPUT-RULES.md`, `FULL-AUDIT.md` | ~33K tokens | every depth, once per session and once per agent |
-| Checklists (20 files, 1,465 items) | ~74K tokens | Standard and Full, the in-scope ones only. For a Rust program, Standard took 604 items (checklists 01–07 and 16) and Full took 531 (01–07). |
-| Known vectors (141 procedures) | ~125K tokens | Quick: the CRITICAL and HIGH ones for the detected domains. Standard: 57 to 59 of the 140 for a Rust program. Full swept all 140. |
-| `references/` | ~160K tokens | when a marker in the code calls for a file |
+| `SKILL.md`, `OUTPUT-RULES.md`, `FULL-AUDIT.md` | ~33K tokens | **Standard and Full:** `OUTPUT-RULES.md` 6 to 9 times a run, once for each agent and once for the session. **Quick:** none of them. |
+| Checklists (20 files, 1,465 items) | ~74K tokens | **Standard and Full:** the in-scope ones only. For a Rust program, Standard took 604 items (checklists 01–07 and 16) and Full took 531 (01–07). **Quick:** none. |
+| Known vectors (141 procedures) | ~125K tokens | **Standard:** 57 to 59 of the 140 for a Rust program. **Full:** all 140. Both judged them mostly from `known-vectors/INDEX.md`, and no run read more than two vector files in full. **Quick:** no session opened the folder, though quick-scan asks for the CRITICAL and HIGH vectors. |
+| `references/` | ~160K tokens | **Standard and Full:** 2 to 10 files a run, when a marker in the code calls for one. |
+
+So the Quick figures are for sessions that judged from the command's text and the code alone. A Quick run that reads its vectors will cost more.
 
 ## How the runs were set up
 
