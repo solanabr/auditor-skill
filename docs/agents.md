@@ -4,7 +4,7 @@ The 9 subagents in `agents/`, their model tiers, when they fire, and how they ch
 
 auditor-skill audits with a small team of subagents (spawned via the `Task` tool) plus, when present, the vendored Trail of Bits execution tooling. Orchestration overview: [`AGENTS.md`](../AGENTS.md).
 
-The agents' tool calls follow the session's mode, default or strict, since every bundled tool reads it for itself ([Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode)). An agent that lists a tool's outcomes copies each `<tool>: note:` line into Coverage & Limitations as it stands. An agent started directly, with no command, has had no preflight run: its report says "working tree not checked by preflight".
+The agents' tool calls follow the session's mode, default or strict, since every bundled tool reads it for itself ([Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode)). An agent that lists a tool's outcomes copies each distinct `<tool>: note:` line into Coverage & Limitations once, as it stands. An agent started directly, with no command, has had no preflight run: its report says "working tree not checked by preflight".
 
 ## Roster
 
