@@ -69,14 +69,16 @@
 # channel. The downloads come first, and none of them runs code from the copy: cargo fetch, started outside
 # the copy so that the copy's .cargo/config is not read either; cargo build-sbf --install-only, with the real
 # HOME, where the platform tools live; and npm ci --ignore-scripts, with npm's user and global config files
-# empty, its cache and logs in the scratch directory and its git the one on PATH, and no .npmrc of the target:
-# npm takes a project's settings from the package root it finds from --dir up and expands ${VAR} in them from
-# its environment, so target.sh removes each .npmrc from the top of the copy down to --dir first, and says
-# which; and a module NODE_OPTIONS preloads lets npm start no program but git and node, since npm 10 runs the
-# prepare script of a git or directory dependency despite --ignore-scripts (so npm ci stops at such a
-# dependency, and a note says so), and ends at once the npm install npm runs in a git dependency's checkout,
-# which would read that checkout's .npmrc (with scripts ignored it has nothing to prepare, and a git
-# dependency's bundleDependencies stay out).
+# empty, its cache and logs in the scratch directory and its git the one on PATH, and no setting from a .npmrc
+# of the target but its registries: npm takes a project's settings from the package root it finds from --dir
+# up and expands ${VAR} in them from its environment, so target.sh removes each .npmrc from the top of the copy
+# down to --dir first, and says which, except that outside strict mode it keeps the registry= and
+# @<scope>:registry= lines whose value is an https URL with no space or $ in it, and says which; and a
+# module NODE_OPTIONS preloads lets npm start no program but git and node, since npm 10 runs the prepare
+# script of a git or directory dependency despite --ignore-scripts (so npm ci stops at such a dependency, and
+# a note says so), and ends at once the npm install npm runs in a git dependency's checkout, which would read
+# that checkout's .npmrc (with scripts ignored it has nothing to prepare, and a git dependency's
+# bundleDependencies stay out).
 # A Corepack npm shim takes no npm release from the copy's packageManager field. Only these get the proxy
 # variables.
 # Every build and test after them runs offline (CARGO_NET_OFFLINE=true), without the proxy variables, in
@@ -936,16 +938,48 @@ rust_toolchain() {
   done
 }
 [ "$CONFINE_STRICT" = 1 ] || [ -z "$TC_DEFAULT" ] || rust_toolchain
+# What no_npmrc runs with python3 -I, from /, outside strict mode: "<.npmrc>" rewrites a regular file of at
+# most 1 MiB to hold only its registry= and @<scope>:registry= lines whose value is an https URL with no
+# space, control character or $ (npm expands ${VAR} from its environment), as key=value, and prints them,
+# each cut after 200 characters, joined with ", "; exit 1, the file as it was, when no line is kept.
+NPMRC_PY='import os, re, stat, sys
+
+LINE = re.compile(r"\s*(registry|@[A-Za-z0-9._~-]+:registry)\s*=\s*(https://[^\s$\x00-\x1f\x7f]+)\s*")
+path = sys.argv[1]
+try:
+    st = os.lstat(path)
+    if not stat.S_ISREG(st.st_mode) or st.st_size > 1048576:
+        sys.exit(1)
+    with open(path, "rb") as f:
+        lines = f.read().decode("utf-8").splitlines()
+except (OSError, UnicodeDecodeError):
+    sys.exit(1)
+kept = ["%s=%s" % m.groups() for m in map(LINE.fullmatch, lines) if m]
+if not kept:
+    sys.exit(1)
+os.unlink(path)
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+with os.fdopen(fd, "w") as f:
+    f.write("\n".join(kept) + "\n")
+print(", ".join(k[:200] for k in kept))
+'
 # no_npmrc: npm takes a project's settings from the .npmrc of the package root it finds from its working
 # directory up (a workspace's root above it among them), and expands ${VAR} in them from its environment, the
-# proxy variables included. Before npm ci, every .npmrc from the top of the copy down to AD goes, of any kind.
+# proxy variables included. Before npm ci, every .npmrc from the top of the copy down to AD goes, of any kind,
+# but outside strict mode the plain https registry lines of each stay (NPMRC_PY), and a note names them.
 no_npmrc() {
-  local d=$S/src rel="" rest=$DIR_ARG gone=""
+  local d=$S/src rel="" rest=$DIR_ARG gone="" kept
   while :; do
     if [ -e "$d/.npmrc" ] || [ -L "$d/.npmrc" ]; then
-      rm -rf -- "$d/.npmrc" 2>&9
-      { [ ! -e "$d/.npmrc" ] && [ ! -L "$d/.npmrc" ]; } || finish 3 "cannot remove ${rel}.npmrc from the copy before npm ci"
-      gone=${gone:+$gone, }${rel}.npmrc
+      kept=""
+      [ "$CONFINE_STRICT" = 1 ] || kept=$( (cd / && exec python3 -I -c "$NPMRC_PY" "$d/.npmrc") 2>/dev/null) || kept=""
+      if [ -n "$kept" ]; then
+        note "npm ci takes only the https registry lines of ${rel}.npmrc from the code under audit: target.sh kept $kept, and removed every other line"
+      else
+        rm -rf -- "$d/.npmrc" 2>&9
+        { [ ! -e "$d/.npmrc" ] && [ ! -L "$d/.npmrc" ]; } || finish 3 "cannot remove ${rel}.npmrc from the copy before npm ci"
+        gone=${gone:+$gone, }${rel}.npmrc
+      fi
     fi
     [ -n "$rest" ] || break
     d=$d/${rest%%/*}

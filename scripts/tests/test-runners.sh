@@ -659,6 +659,25 @@ check "npm-ci --dir app, a workspace of the top: npm ci runs in app and finds no
 run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" HTTPS_PROXY="$PROXY" -- anchor-test --run audit_1 --src .
 check "anchor-test's npm ci finds no .npmrc of the copy either" \
   sh -c "[ '$RC' = 0 ] && grep -q '^== npm ci ' '$T/calls' && ! grep -q '^npmrc: [^n]' '$T/calls' && grep -qxF '$NOTE .npmrc' '$T/out'"
+# Outside strict mode the registry= and @<scope>:registry= lines of a .npmrc whose value is an https URL with no
+# space and no $ stay for npm ci, with a note; every other line goes (the token's, one naming ${HOME}, a plain
+# http one), and so does a .npmrc with no such line. $T/npmkeep is not a repository: its top and app/ each hold
+# a package.json, a lock and a .npmrc.
+NK=$T/npmkeep
+mkdir -p "$NK/app"
+for d in "$NK" "$NK/app"; do printf '{\n  "name": "nk",\n  "version": "1.0.0"\n}\n' > "$d/package.json"; cp "$WT/package-lock.json" "$d/"; done
+printf 'registry = https://registry.example.com/npm/\n@acme:registry=https://npm.acme.dev/\n//registry.example.com/:_authToken=canary-npmrc-token\nalways-auth=true\n@x:registry=https://x.invalid/${HOME}/\nregistry=http://plain.invalid/\n' > "$NK/.npmrc"
+printf 'fund=false\n' > "$NK/app/.npmrc"
+( cd "$NK" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$NK/audit_1/exec-mode"
+run "$TARGET" "$NK" PATH="$T/npmfake:$FPATH" -- npm-ci --run audit_1 --src . --dir app
+check "npm-ci where .npmrc names https registries: npm ci finds only those lines, as key=value, and app/.npmrc is gone" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF 'npmrc: .npmrc: registry=https://registry.example.com/npm/|@acme:registry=https://npm.acme.dev/|' '$T/calls' && [ \"\$(grep -c '^npmrc: ' '$T/calls')\" = 1 ] && ! grep -q 'canary-npmrc-token' '$T/calls'"
+check "... a note names the lines kept, and today's note the .npmrc removed" \
+  sh -c "grep -qxF '>> note: npm ci takes only the https registry lines of .npmrc from the code under audit: target.sh kept registry=https://registry.example.com/npm/, @acme:registry=https://npm.acme.dev/, and removed every other line' '$T/out' && grep -qxF '$NOTE app/.npmrc' '$T/out'"
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$NK" PATH="$T/npmfake:$FPATH" AUDITOR_STRICT=1 -- npm-ci --run audit_1 --src . --dir app
+  check "... strict mode keeps none of them" sh -c "[ '$RC' = 0 ] && grep -qxF 'npmrc: none' '$T/calls' && grep -qxF '$NOTE .npmrc, app/.npmrc' '$T/out'"
+fi
 mkdir -p "$T/tmp-q\"uote"
 run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" TMPDIR="$T/tmp-q\"uote" -- npm-ci --run audit_1 --src .
 check "a scratch directory whose path holds a double quote, which NODE_OPTIONS cannot quote: exit 3, npm does not run" \
