@@ -67,7 +67,8 @@
 #       used as it stands since the runners take the stricter of it, AUDITOR_EXEC_MODE and strict mode, while
 #       Q47 and the scope confirmations are still asked again for a reused one; that a mode only an older run
 #       directory's intake.md §8 or ledger header records is written to the exec-mode file the runners read (in
-#       respond's and hunt's wrapped steps too, each read as one line); and how the resume prompt is answered.
+#       respond's and hunt's wrapped steps too, each read as one line); how the resume prompt is answered, and
+#       that a resumed invocation keeps the user's --strict.
 #       Every command that starts agents keeps them in the foreground and resumes in the turn an agent's result
 #       arrives in; wording that asked Q46 again, called isolated recommended, copied an earlier run's mode
 #       forward, wrote only native, or passed the file's mode as run.sh --mode, stays gone (the GONE list); and
@@ -1324,6 +1325,11 @@ for f in commands/*.md SKILL.md; do
   for gone in 'tell the human to answer "Yes", not "don'"'"'t ask again"' 'a file step 0 refuses, from that resumed invocation on'; do
     if grep -qiF -- "$gone" "$f"; then bad "P $f says: $gone"; else ok "gone from $f: $gone"; fi
   done
+  # A resumed invocation keeps the user's --strict, so its step 0 and its rundir.sh new stay strict (Rule 11f).
+  keep='and `--strict` when the user'"'"'s arguments held it'
+  [ "$f" = SKILL.md ] && keep='and `--strict` when the user'"'"'s request held it or asked for strict mode'
+  if grep -qF -- "$keep" "$f"; then ok "$f: the resumed invocation keeps --strict"
+  else bad "P $f: the resume text does not carry --strict: $keep"; fi
 done
 # Each command that starts agents (Task in its allowed-tools), and the root SKILL.md, keeps them in the foreground,
 # and resumes in the turn that brings an agent's result when Claude Code ran it in the background anyway (it cannot

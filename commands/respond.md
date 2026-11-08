@@ -93,7 +93,8 @@ Claude Code cannot wait and runs the agent in the background. When the workup
 goes on after the human replies (a yes to a collection, the reuse of a run
 directory), or an agent's result arrives in a later turn, first
 invoke this command again through the Skill tool
-as `auditor:respond --resume <step> incident_<n>` followed by the lead and the
+as `auditor:respond --resume <step> incident_<n>` followed by the lead
+(and `--strict` when the user's arguments held it) and the
 answers, `<step>` being the step you go on with (`1` once the human names the run
 directory to reuse, `3` after a yes to a collection, the step after the agent's for
 its result), and do that step's work in the same turn. A
