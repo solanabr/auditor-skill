@@ -126,9 +126,12 @@ already captured.
   beyond `$schema`, `model`, `cleanupPeriodDays` and `includeCoAuthoredBy`, or a
   `.mcp.json`, and for a linked git worktree, whose main checkout's
   `.claude/settings.local.json` Claude Code loads too, and that checkout's
-  project skills when the worktree has none. Claude Code loads that config
-  beside the plugin's, so a repository's own skill or agent could take the place
-  of one of ours, or its config could carry hooks and MCP servers. In default
+  project skills when the worktree has none. Claude Code loads the config in
+  the working directory and its parents beside the plugin's, and a
+  `.claude/skills` below it, in a folder git does not ignore, once the session
+  reads a file there, so a
+  repository's own skill or agent could take the place of one of ours, or its
+  config could carry hooks and MCP servers. In default
   mode each one is a note, which the report lists; in strict mode it is a
   refusal ([Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode)). The
   commands need no repository, so an incident workspace of their own is the
