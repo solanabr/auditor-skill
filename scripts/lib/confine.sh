@@ -892,7 +892,8 @@ confine_repo() {
   CONFINE_COMMON_DIR=$common
   CONFINE_BARE=$bare
   CONFINE_PREFIX=$prefix
-  CONFINE_TREES=${CONFINE_TREES-}$abs$'\t'$bare$'\t'$gitdir$'\t'$prefix$'\n'
+  # First, so its prefix wins over an entry confine_repo_top or confine_tree_add made for the same directory.
+  CONFINE_TREES=$abs$'\t'$bare$'\t'$gitdir$'\t'$prefix$'\n'${CONFINE_TREES-}
 }
 
 # confine_repo_above: for confine_repo ., the repository WT lies in below its top level. git, asked with no

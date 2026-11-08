@@ -674,6 +674,8 @@ TMPDIR="$T/tmps" lib "$RW/programs" 'confine_repo . R && hgit_tree "$CONFINE_REP
   hgit_tree "$CONFINE_REPO" ls-tree --name-only HEAD && hgit_text_tree "$CONFINE_REPO" rev-parse --show-prefix'
 check "... where hgit_tree and hgit_text_tree read from the subdirectory, as git does there" out_is "$(printf 'x\nx.rs\nprograms/')"
 check "... and leave nothing under TMPDIR" test -z "$(ls -A "$T/tmps")"
+TMPDIR="$T/tmps" lib "$RW/programs" 'confine_repo_top "$CONFINE_WT/.." && confine_repo . R && hgit_tree "$CONFINE_REPO" ls-tree --name-only HEAD'
+check "... also when confine_repo_top took that top level first" out_is x.rs
 # A symbolic link in a hooks directory (CONF-07): git opens no hook with core.hooksPath pinned to
 # /dev/null, so default mode accepts it; any other link stays refused (above), since git reads through it.
 mkrepo "$RW/hooklink"; put "$RW/hooklink" f x; commit "$RW/hooklink" -m x
