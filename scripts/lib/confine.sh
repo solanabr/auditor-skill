@@ -191,16 +191,20 @@ confine_mode() {
     # One question for them all. git prints each tracked path from WT, the run directory first, in the
     # letter case the repository gave it (and after a quote when it quotes the path).
     if CONFINE_CEILING='' confine_git_check "$CONFINE_WT" && listed=$(confine_tracked $cand 2>/dev/null); then
-      while IFS= read -r line; do
+      # Split on line ends, not read from a here-document: bash 3.2 writes one to a file, in the working
+      # directory when it finds no TMPDIR it can write to.
+      IFS=$'\n'
+      set -f
+      for line in $listed; do
         line=${line#\"}
         line=${line%%/*}
         case "$line" in
           [Aa][Uu][Dd][Ii][Tt]_*) tracked="${tracked}audit_${line#*_} " ;;
           [Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*) tracked="${tracked}incident_${line#*_} " ;;
         esac
-      done <<EOF
-$listed
-EOF
+      done
+      set +f
+      IFS=$' \t\n'
     fi
     for n in $cand; do
       case "$tracked" in *" $n "*) continue ;; esac
