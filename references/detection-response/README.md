@@ -93,7 +93,7 @@ not the thing standing between the treasury and the exit.
    `"<auditor-skill root>/scripts/git-ro.sh" --git-dir incident_<n>/src.git show <rev>:<path>`.
    `<repo>` is a path inside the working directory (`.` in the checkout). git-ro.sh
    fetches nothing: `copy` refuses a partial clone (exit 3) in strict mode, or
-   in default mode when an object of `HEAD` is missing, and
+   in default mode when it lacks files of `HEAD`, and
    `"<auditor-skill root>/scripts/git-ro.sh" --repo <repo> show <rev>:<path>` then
    reads the repository itself, where a missing object fails. A `--repo` outside the
    working directory is copied with

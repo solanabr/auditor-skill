@@ -127,7 +127,7 @@ strict mode, from `AUDITOR_STRICT` or a `{R}/strict` file, makes native count as
 `run.sh`: Rule 11f), `probe.sh --only isolation` finds none of the credentials it checks readable, the vendored skill and `uv` are
 there, and `git-ro.sh copy` takes the checkout. In strict mode that copy refuses a partial clone, a git without the
 May-2024 clone fixes, borrowed objects (alternates) and any link in the git directory. Default mode copies the
-first three with a note, and a link in the hooks directory; it stops at a partial clone that lacks an object of
+first three with a note, and a link in the hooks directory; it stops at a partial clone that lacks files of
 `HEAD`, and at any other link (`OUTPUT-RULES.md` Rule 11c). When a block stops on an error instead, record "not run:
 <its first error line>". Each block asks for approval: it is shell code, and it runs the Trail of Bits
 runner, which no bundled tool wraps.
