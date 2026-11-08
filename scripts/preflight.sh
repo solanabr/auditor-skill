@@ -16,7 +16,7 @@
 #   - Default mode refuses none of them. Each is a "preflight: note:" line, and the run goes on. Only the guard refuses
 #     there, and only when GUARD below is refuse.
 # stdout's first line names the mode and lists each strict marker. The notes follow, and the last line is
-# "preflight: ok: ...": in default mode, it says what strict mode would refuse when a note named any of it.
+# "preflight: ok: ...": in default mode, it says what strict mode would read or refuse when a note named any of it.
 #
 # Claude Code loads project config from the directory it starts in, from directories below it, and from each parent up to
 # the repository root. Config a repository ships can put a skill or agent of its own in place of one of this plugin's,
@@ -994,7 +994,7 @@ if [ "$STRICT" = 0 ] && [ "$n" -gt 0 ]; then
   [ "$n" = 1 ] && w=path || w=paths
   lines+=("preflight: ok: default mode; $n Claude Code project config $w noted above, which strict mode refuses (Rule 11f)")
 elif [ "$STRICT" = 0 ] && { [ "$STRICTN" -gt 0 ] || [ "${#LNK[@]}" -gt 0 ]; }; then
-  lines+=("preflight: ok: default mode; the notes above name what strict mode refuses (Rule 11f)")
+  lines+=("preflight: ok: default mode; the notes above name what strict mode reads or refuses (Rule 11f)")
 else
   lines+=("preflight: ok: no Claude Code project config in the working tree or its parents up to the repository root")
 fi

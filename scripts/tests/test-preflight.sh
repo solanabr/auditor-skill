@@ -110,7 +110,7 @@ n_nojq() { printf 'preflight: note: jq is not on PATH, so %s was not read: what 
 n_loc() { printf 'preflight: note: %s sets hooks or env, which Claude Code applies to this session; git does not track it, so preflight takes it for your own settings (Rule 11f)' "$1"; }
 n_loc0() { printf "preflight: note: %s sets hooks or env, which Claude Code applies to this session; it lies in no git repository, so preflight takes it for your own settings, and strict mode for the repository's (Rule 11f)" "$1"; }
 ok_n() { if [ "$1" = 1 ]; then printf 'preflight: ok: default mode; 1 Claude Code project config path noted above, which strict mode refuses (Rule 11f)'; else printf 'preflight: ok: default mode; %s Claude Code project config paths noted above, which strict mode refuses (Rule 11f)' "$1"; fi; }
-OK_O='preflight: ok: default mode; the notes above name what strict mode refuses (Rule 11f)'
+OK_O='preflight: ok: default mode; the notes above name what strict mode reads or refuses (Rule 11f)'
 WTREE='the working directory is in a linked worktree, and Claude Code also loads the project config of its main checkout; run from a clone or a workspace of its own (Rule 11e)'
 shown() { local s=$1; [ "${#s}" -le 200 ] || s="${s:0:200}..."; printf '%s' "$s"; }   # as confine_shown cuts a value
 tree() { (cd "$1" && find . -ls | LC_ALL=C sort); }
