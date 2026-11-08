@@ -137,7 +137,7 @@ Record the concrete calibration rule applied, not just the answer.
 | **TVL / funds at risk**   | {$0 / <$10K / $10K-100K / $100K-1M / $1M-10M / >$10M} (Q10) |
 | **Upgradeable**           | {single wallet / multisig / DAO / immutable / N/A} (Q11) |
 | **Top concerns (ranked)** | {1. … / 2. … / 3. …} (Q40)                 |
-| **Audit depth**           | {quick / standard / deep / maximum} (Q41)  |
+| **Audit depth**           | {quick / standard / full} (Q41)            |
 
 **Calibration rules applied**
 
@@ -147,7 +147,7 @@ Record the concrete calibration rule applied, not just the answer.
 - {Q8 = mainnet-live → +1 severity on all fund-related findings.}
 - {Q10 > $1M → critical findings double-weighted in risk score.}
 - {Q11 = single wallet → upgrade authority auto-flagged Severity 8+.}
-- {Q41 = quick → grep + known-vectors only, semantic analysis skipped (state as coverage limit).}
+- {Q41 = quick → no checklist walk: SAST, advisories and a high-severity pass only (state as coverage limit).}
 
 ---
 
