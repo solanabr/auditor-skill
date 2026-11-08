@@ -250,6 +250,16 @@ if client "$CA" && git -c init.defaultBranch=main init -q "$OTHER" \
   notrun "isolated, strict mode, a checkout that borrows objects" isolated "" "$OKLINE" "$T/root" "git-ro.sh copy refused the checkout" "" "$CA" \
     "git-ro: refused: copy's repository borrows objects from another repository (objects/info/alternates); audit a full copy: ."
   STRICT_ENV=
+  # default mode copies such a checkout, with a note, and the recipe goes on (CONF-08, Rule 11c)
+  if [ "$copy_ok" = 1 ]; then
+    rm -f "$T/uv.log"; : > "$T/clone.log"
+    printf 'a signer check the withdraw path skips\n' > "$CA/audit_1/patches/F-1.summary"
+    block 1 isolated "$T/root" x "$T/a.sh" && run_block "$T/a.sh" "$T/tmp" "" "$OKLINE" "" "$CA"
+    if [ "$code" = 0 ] && grep -q '^git-ro: note: .*objects/info/alternates' "$T/out" \
+       && grep -q '^post-patch validation: plan at ' "$T/out"; then
+      ok "isolated, default mode, a checkout that borrows objects: git-ro.sh copy notes it, and the recipe goes on"
+    else bad "isolated, default mode, a checkout that borrows objects: exit $code; $(cat "$T/out")"; fi
+  fi
 else bad "cannot make the checkout with alternates"; fi
 
 # ---- isolated: the clone of git-ro.sh's copy is the only repository the runner touches ---------------------------
