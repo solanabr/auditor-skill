@@ -31,8 +31,8 @@
 #       counts. A settings.local.json is the user's own, and is not read, when git does not track it under the name the
 #       walk found, it is no link and lies under no link or nested repository on the way up to the top level, and a
 #       repository holds the working directory (outside one, it is the user's own in default mode only). Claude Code
-#       writes that file itself, for "Yes, and don't ask again" and for /sandbox. In default mode such a file that sets
-#       hooks or env gets a note;
+#       writes that file itself, for "Yes, and don't ask again" and for /sandbox. Such a file that sets hooks or env
+#       gets a note, in both modes;
 #     - a .mcp.json, of any type;
 #   - in each parent of the working directory up to the repository root, the same entries in that parent's own .claude
 #     and .mcp.json. The root is the highest of these that holds the working directory: the top level of the git
@@ -289,15 +289,14 @@ own() {
 }
 
 # settings <shown> <absolute path>: a .claude/settings.json or settings.local.json the scan found. It passes when it holds
-# only the keys on SETTINGS_KEYS, and a settings.local.json that is the user's own is not checked (default mode notes one
-# that sets hooks or env). Without jq a regular file cannot be read: refused in strict mode, noted in default mode.
+# only the keys on SETTINGS_KEYS, and a settings.local.json that is the user's own is not checked (a note names one that
+# sets hooks or env, in both modes). Without jq a regular file cannot be read: refused in strict mode, noted in default mode.
 settings() {
   local shown=$1 p=$2 bound=$gtop rel=$1 ask=$WT
   case "${p##*/}" in
     [sS][eE][tT][tT][iI][nN][gG][sS].[lL][oO][cC][aA][lL].[jJ][sS][oO][nN])
       if [ "$CTX" = m ]; then bound=$main ask=$main rel=${shown#"$main"/}; fi
       if [ "$CTX" != l ] && own "$p" "$bound" "$ask" "$rel"; then
-        [ "$STRICT" = 0 ] || return 0
         command -v jq >/dev/null 2>&1 || return 0
         settings_read "$p"
         [ "$SR_HE" = 0 ] || { confine_shown "$shown"; LOC+=("$CONFINE_SHOWN"$'\t'"${gtop:+repo}"); }

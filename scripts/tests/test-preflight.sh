@@ -783,12 +783,15 @@ SL=$(newdir)
 build "$SL" f:src.rs d:inc j:.claude/settings.local.json="$LOCAL"
 git init -q "$SL" && gitc -C "$SL" add src.rs && gitc -C "$SL" commit -q -m x
 run "$SL" AUDITOR_STRICT=1
-check "strict: an untracked settings.local.json with permissions and hooks passes, unread" just_ok
+check "strict: an untracked settings.local.json with permissions and hooks passes, unread but for the note that it sets hooks" \
+  body_is "$(n_loc .claude/settings.local.json)
+$OK_LINE"
 run "$SL"
 check "default: ... and is noted, since it sets hooks" body_is "$(n_loc .claude/settings.local.json)
 $OK_LINE"
 run "$SL/inc" AUDITOR_STRICT=1
-check "strict: ... and so as a parent's" just_ok
+check "strict: ... and so as a parent's" body_is "$(n_loc ../.claude/settings.local.json)
+$OK_LINE"
 printf '{"permissions":{"allow":["Bash(npm test)"]}}' > "$SL/.claude/settings.local.json"
 run "$SL"
 check "default: one with only permissions passes with no note" just_ok
@@ -824,7 +827,8 @@ chmod +x "$T/nolsfiles/git"
 printf '%s' "$LOCAL" > "$SL/.claude/settings.local.json"
 gitc -C "$SL" rm -q --cached .claude/settings.local.json && gitc -C "$SL" commit -q -m untrack
 run "$SL" AUDITOR_STRICT=1
-check "strict: untracked again, it passes" just_ok
+check "strict: untracked again, it passes, with the note" body_is "$(n_loc .claude/settings.local.json)
+$OK_LINE"
 run "$SL" AUDITOR_STRICT=1 "PATH=$T/nolsfiles:$PATH"
 check "strict: ... but where git cannot tell, it is the repository's" ships .claude/settings.local.json
 
@@ -1020,7 +1024,9 @@ if [ "$FOLDS" = yes ]; then
   build "$FT" f:src.rs "j:.claude/${LS}ettings.local.json=$LOCAL"
   git init -q "$FT" && gitc -C "$FT" add src.rs && gitc -C "$FT" commit -q -m x
   run "$FT" AUDITOR_STRICT=1
-  check "strict: an untracked settings.local.json in a spelling that folds is the user's own" just_ok
+  check "strict: an untracked settings.local.json in a spelling that folds is the user's own, noted for its hooks" \
+    body_is "$(n_loc ".claude/${LS}ettings.local.json")
+$OK_LINE"
   gitc -C "$FT" add -f ".claude/${LS}ettings.local.json" && gitc -C "$FT" commit -q -m local
   both "... and a tracked one is the repository's, asked about by the walk's spelling" "$FT" \
     ships ".claude/${LS}ettings.local.json" "$(n_ships ".claude/${LS}ettings.local.json")"
