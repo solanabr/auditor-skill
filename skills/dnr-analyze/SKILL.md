@@ -122,8 +122,8 @@ Your last message is the report the command receives. Give, in this order:
    `collection_gaps`;
 4. any collection you propose: exact addresses, window and caps;
 5. every call that was denied or could not run, with the gap it leaves;
-6. every note a bundled tool printed (a `<tool>: note:` line, or a runner's `>> note:`
-   line), as it stands, which the report carries (Rule 11f).
+6. each distinct note a bundled tool printed (a `<tool>: note:` line, or a runner's
+   `>> note:` line), once, as it stands, which the report carries (Rule 11f).
 
 Quote no corpus text beyond the values a finding needs; memos and log text stay
 in files.

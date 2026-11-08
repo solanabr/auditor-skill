@@ -123,12 +123,12 @@ Code asks about a shell read outside the working directory.
    Its first line names the mode, default or strict (Rule 11f): pass it to the agent
    for the ledger and the report. In default mode it refuses only what could hang
    or confuse its own checks (a named pipe or device in a `.git`, a `.git` file over
-   16 KiB, a line end in a name there, a git config with more than 64 includes, and
-   the few others Rule 11e lists), a bad argument, a bad value of one of its own
+   16 KiB, a line end in a name there, a git config with more than 64 includes;
+   Rule 11e lists them all), a bad argument, a bad value of one of its own
    variables, and a run from a folder that contains the installation.
    What strict mode would refuse besides (project config, config under this
    plugin's names, a link out of the tree, a linked worktree) is a
-   `preflight: note:` line. Pass each note to the agent as it stands,
+   `preflight: note:` line. Pass each distinct note to the agent once, as it stands,
    for the report, and go on; when one names project config, tell the user once that
    Claude Code loaded it with this session, unless the session was started with the
    strict launch line, and that strict mode is for a repository they do not trust:
