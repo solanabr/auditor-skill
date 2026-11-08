@@ -3008,7 +3008,7 @@ for i in 1 2 3 4 5 6 7; do mkdir "$WT/incident_old$i" && cp "$T/elsewhere-run/IN
 code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
 rm -rf "$WT"/incident_old?
 [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && [ "$(grep -cF "${NOTE_PASSED}" "$T/out")" = 1 ] \
-  && grep -F "${NOTE_PASSED}" "$T/out" | grep -q 'INCIDENTS.json and 2 more (Rule 11a)$' \
+  && [ "$(grep -F "${NOTE_PASSED}" "$T/out" | grep -c 'INCIDENTS.json and 2 more (Rule 11a)$')" = 1 ] \
   && ok "seven folders the auditor did not make -> one note: the first five, then 2 more" || { bad "seven passed-over folders: exit $code"; cat "$T/out" >&2; }
 if [ "$ISOLATED_OK" = 1 ]; then
   printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$IJ2"
