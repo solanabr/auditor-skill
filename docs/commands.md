@@ -102,7 +102,7 @@ Drafts and verifies a fix: `patch-engineer` writes a **minimal idiomatic** unifi
 ### `/auditor:audit-report`
 **Arg:** `[audit-dir] [--strict]`
 Aggregates the session's checkpoints and findings into the final report: de-dup + classify by severity, assemble from `templates/report-template.md` (executive summary with safe-to-deploy verdict, Scope Coverage table, per-checklist verdicts, findings, Phase 4.5 maturity scorecard, remediation roadmap CRITICAL→INFO).
-**When:** you ran the walk in pieces and need the report assembled. **Emits:** `audit_<n>/REPORT.md`; flags any in-scope item lacking a verdict as `[INCOMPLETE — in-scope item without verdict]`. It assembles the report in your session, with no agent and no code re-analysis: its `allowed-tools` has no `Task`.
+**When:** you ran the walk in pieces and need the report assembled. **Emits:** `audit_<n>/REPORT.md`; flags any in-scope item lacking a verdict as `[INCOMPLETE — in-scope item without verdict]`. It assembles the report in your session: its steps spawn no agent and re-analyze no code.
 
 ---
 
