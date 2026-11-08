@@ -125,8 +125,9 @@
 #
 # copy runs `clone --no-local --bare --no-recurse-submodules --template=` of <dir> into <R>/src.git
 # (src-2.git, src-3.git, ... once that exists) under the same hardened call, with protocol.file.allow
-# for that clone and no global config (the clone's upload-pack runs in <dir> without hgit's -c pins, so
-# git's ownership check stays on), from a scratch directory outside the working directory. It refuses a
+# for that clone and no global config, from a scratch directory outside the working directory: a copy
+# never runs the repository's configured code, and the clone's upload-pack runs in <dir> without hgit's
+# -c pins, so git's ownership check must stay on. It refuses a
 # partial clone (exit 3). A git without the May-2024 clone fixes, CVE-2024-32004 and CVE-2024-32465
 # (accepted are 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, 2.46 and later in each line),
 # is refused in strict mode (exit 69). In default mode such a git, or a <dir> another user owns, gets the
@@ -338,9 +339,11 @@ run_copy() { # run_copy <dir> <R>
     printf 'git-ro: refused: copy needs git with the May-2024 clone fixes: 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, or 2.46 or later\n' >&2
     exit 69
   fi
-  # The clone's upload-pack runs in the source with none of hgit's -c pins (git's local transport clears
-  # GIT_CONFIG_PARAMETERS for it), so it keeps git's own ownership check: no global config. In default mode
-  # a git without the clone fixes, or a source another user owns, gets the copy through plumbing instead.
+  # A copy never runs the source repository's configured code, in either mode (K). The clone's upload-pack
+  # runs in the source with none of hgit's -c pins (git's local transport clears GIT_CONFIG_PARAMETERS for
+  # it), so the clone keeps git's own ownership check: no global config. In default mode a git without the
+  # clone fixes, or a source another user owns, gets the copy through plumbing instead, which runs no
+  # upload-pack.
   if [ "$CONFINE_STRICT" != 1 ] && { [ "$fixed" -eq 0 ] || [ ! -O "$src" ] || [ ! -O "$CONFINE_GIT_DIR" ] || [ ! -O "$CONFINE_COMMON_DIR" ]; }; then
     how=plumbing
   fi

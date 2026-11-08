@@ -619,6 +619,10 @@ confine_tree() { # confine_tree <hgit|hgit_text> <dir> <git arguments>: hgit_tre
   # subshell, and, when a signal ends only the caller (a timeout's alarm), once git is done. After a
   # Ctrl-C it removes the directory and then ends by SIGINT itself, so the caller stops as it would have.
   # A refusal in there (a question's time limit) ends that subshell alone, and its status is returned.
+  # Below the top level, the repository's diff.relative would hide every change outside the prefix, and its
+  # grep.fullName would change the paths grep prints; at the top level neither does anything. A caller's
+  # own --relative still applies.
+  [ -z "$CONFINE_TREE_PREFIX" ] || set -- -c diff.relative=false -c grep.fullName=false "$@"
   ( trap 'confine_tree_clean "$e"' EXIT
     trap 'confine_tree_clean "$e"; trap - INT; exec /bin/sh -c "kill -INT \$\$"' INT
     confine_tree_fill "$e"
@@ -797,7 +801,9 @@ confine_partial_clone() {
 #     top level (confine_git_dir_ours). One it does not tie back is refused, or, given <status>, gets a
 #     note and ends the tool with <status>, with nothing read;
 #   - a symbolic link in a hooks directory is accepted, since git opens no hook there with core.hooksPath
-#     pinned to /dev/null; any other link is refused, as git would read through it;
+#     pinned to /dev/null. Any other link stays refused in both modes (K): git reads through it, so a
+#     .git/config linked to a credentials file would print its keys through git-ro.sh config --list, and
+#     a link to a directory would hide a named pipe there from these checks;
 #   - alternates get a note once each object directory they name passes the checks a git directory gets
 #     (confine_alternates_ok), and grafts get a note;
 #   - the work tree is not searched: hgit_tree's reads open no file of it, and its questions have a time

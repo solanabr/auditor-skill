@@ -1081,6 +1081,22 @@ rev-parse	--show-prefix
 rev-parse	--show-toplevel
 EOF
 check "the subdirectory reads ran ($nsub)" test "$nsub" -ge 20
+# The repository's diff.relative and grep.fullName would hide the changes outside the subdirectory and
+# change the paths grep prints; git-ro pins both off there, and plain git given the same pins agrees.
+git -C "$SUB" config diff.relative true; git -C "$SUB" config grep.fullName true
+for a in 'diff --stat HEAD~1 HEAD' 'log -p -1' 'show HEAD' 'grep -n -e let HEAD'; do
+  # shellcheck disable=SC2086
+  TMPDIR="$T/subtmp" run "$SUB/programs/foo" $a
+  # shellcheck disable=SC2086
+  (cd "$SUB/programs/foo" && git -c diff.relative=false -c grep.fullName=false $a) > "$T/plain.out" 2>&1
+  check "from programs/foo, git-ro.sh $a reads past the repository's diff.relative and grep.fullName" \
+    sh -c "[ '$RC' = 0 ] && cmp -s '$T/out' '$T/plain.out' && [ -z \"\$(ls -A '$T/subtmp')\" ]"
+done
+run "$SUB/programs/foo" diff --stat HEAD~1 HEAD
+check "... so the diff still shows the lockfile at the top level" grep -q 'Cargo.lock' "$T/out"
+run "$SUB/programs/foo" diff --relative --stat HEAD~1 HEAD
+check "... while the caller's own --relative still applies" sh -c "[ '$RC' = 0 ] && ! grep -q 'Cargo.lock' '$T/out'"
+git -C "$SUB" config --unset diff.relative; git -C "$SUB" config --unset grep.fullName
 mkdir -p "$SUB/programs/foo/src/deep"; put "$SUB" programs/foo/src/deep/d.rs 'fn d() {}'; commit "$SUB" -m deep
 AUDITOR_STRICT=1 run "$SUB/programs/foo/src/deep" log -1
 check "strict mode names the top level two levels up" \
