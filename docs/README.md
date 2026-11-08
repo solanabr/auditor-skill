@@ -8,18 +8,30 @@ A folder of markdown checklists, slash commands, and subagents — plus three sm
 
 Commands are namespaced `auditor`, so you invoke them as `/auditor:audit`, `/auditor:audit-cycle`, etc.
 
+## Pick a depth
+
+| Depth | When | Run | Reads | Writes | Cost |
+|-------|------|-----|-------|--------|------|
+| **Quick** | a branch or pull request, a first look at a repository, one function | `/auditor:diff-audit` · `/auditor:quick-scan` (whole repository) · `/auditor:deep-review <file> <fn>` | the changed code + one hop of callers and callees · SAST, advisories and the CRITICAL/HIGH vectors · one function | `PR-REPORT.md` · `QUICK-SCAN.md` · `DEEP-REVIEW-<unit>.md` | $ |
+| **Standard** | one module or program before it merges | `/auditor:audit <path> --scope …` | every in-scope item for that path | `REPORT.md`, internal: a risk score and a deploy verdict | $$ |
+| **Full** | a release, or a report for someone outside the team | `/auditor:audit-cycle` (unattended) · `/auditor:audit-assist` (you steer) · `/auditor:re-audit` after fixes | everything in scope, a threat model, peer review (re-audit: the fix delta) | `REPORT.md`, client style: no deploy guarantee (audit-cycle adds a PDF, and PoCs with `--with-poc`) · `RE-AUDIT.md`, with an updated deploy verdict | $$$$ |
+| **[CI](ci.md)** | every pull request | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | as Quick | `findings.json` and SARIF on the runner, one pass/fail line in the log | $ (the tools job uses no model) |
+
+Costs are relative marks; [COSTS.md](../COSTS.md) has the numbers. Outside the depths: `poc`, `patch`, `economic-sim` and `triage` work on one finding; `intake` and `threat-model` are Full's building blocks; `audit-report` assembles the internal report from a walk run in pieces; `spec-audit` checks code against a spec; `hunt` and `respond` are for after an incident. More on each depth: [audit-flows.md](audit-flows.md).
+
 ## I want to… → use this
 
 | Goal | Use | Guide |
 |------|-----|-------|
-| One-shot full audit of a repo | `/auditor:audit [path] [--scope ...]` | [commands.md](commands.md#auditoraudit) |
-| Fast CI gate / first look (no full walk) | `/auditor:quick-scan` | [commands.md](commands.md#auditorquick-scan) |
-| Audit only a PR / commit range | `/auditor:diff-audit [base..head]` | [commands.md](commands.md#auditordiff-audit) |
-| Deep-dive one instruction / function | `/auditor:deep-review <file> [fn]` | [commands.md](commands.md#auditordeep-review) |
+| Quick: what a branch or PR changes (its commits) | `/auditor:diff-audit [base..head]` | [commands.md](commands.md#auditordiff-audit) |
+| Quick: a first look at a whole repo (no checklist walk) | `/auditor:quick-scan` | [commands.md](commands.md#auditorquick-scan) |
+| Quick: one instruction / function, deeply | `/auditor:deep-review <file> [fn]` | [commands.md](commands.md#auditordeep-review) |
+| Standard: every in-scope item of a module, program or repo | `/auditor:audit [path] [--scope ...]` | [commands.md](commands.md#auditoraudit) |
+| Full: unattended engagement → client report | `/auditor:audit-cycle` | [audit-flows.md](audit-flows.md#flow-a--auditoraudit-cycle-automated) |
+| Full: you steer at checkpoints | `/auditor:audit-assist` | [audit-flows.md](audit-flows.md#flow-b--auditoraudit-assist-interactive) |
+| Full: review a fix round against a prior report | `/auditor:re-audit [prior] [base..head]` | [commands.md](commands.md#auditorre-audit) |
+| CI: Quick on every pull request | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | [ci.md](ci.md) |
 | Code-vs-spec conformance | `/auditor:spec-audit <spec> [path]` | [commands.md](commands.md#auditorspec-audit) |
-| Full automated engagement → client report | `/auditor:audit-cycle` | [audit-flows.md](audit-flows.md#flow-a--auditoraudit-cycle-automated) |
-| Human-in-the-loop engagement | `/auditor:audit-assist` | [audit-flows.md](audit-flows.md#flow-b--auditoraudit-assist-interactive) |
-| Review a fix round against a prior report | `/auditor:re-audit [prior] [base..head]` | [commands.md](commands.md#auditorre-audit) |
 | Set up scope + trust model before a Full run | `/auditor:intake` | [commands.md](commands.md#auditorintake) |
 | Enumerate assets / actors / trust boundaries | `/auditor:threat-model` | [commands.md](commands.md#auditorthreat-model) |
 | Threat-model a fork or inherited codebase from its history | `/auditor:threat-model --bootstrap` | [commands.md](commands.md#auditorthreat-model) |
@@ -34,12 +46,13 @@ Commands are namespaced `auditor`, so you invoke them as `/auditor:audit`, `/aud
 | Remember findings across audits | build `audit-mem` | [power-tools.md](power-tools.md#audit-mem) |
 | Run with fewer prompts, in strict mode for code you don't trust, isolated, or in `claude -p` | the user-settings rules, `templates/strict-settings.json`, `AUDITOR_STRICT`, `AUDITOR_EXEC_MODE` | [permissions-and-isolation.md](permissions-and-isolation.md) |
 
-As a CI gate, `/auditor:quick-scan` runs non-interactively, so the run must be able to run its analyzers: a gate whose analyzers did not run fails.
+In CI, `--ci` on `/auditor:diff-audit` and `/auditor:quick-scan` asks nothing, writes `audit_<n>/findings.json` and ends with one verdict line. An analyzer that did not run fails the verdict, as does a counted finding at or above `--fail-on` (7 when not given). On a public repository the job publishes pass/fail only ([ci.md](ci.md)).
 
 ## Guides
 
 - **[getting-started.md](getting-started.md)** — install, submodule, build the Rust tools, run your first audit, the adaptation note.
-- **[audit-flows.md](audit-flows.md)** — the full lifecycle; when to use one-shot vs automated vs interactive vs fix-review; the cheap lanes.
+- **[audit-flows.md](audit-flows.md)** — the three depths and CI, and the pipeline each one follows: Quick, Standard, the Full lifecycle and the fix review.
+- **[ci.md](ci.md)** — Quick on every pull request: the workflow template, its two jobs, `--ci` and `--fail-on`, what the verdict means, and how to read the details of a public repository's run.
 - **[commands.md](commands.md)** — reference entry for each of the 17 commands, grouped by phase.
 - **[agents.md](agents.md)** — the 9-agent roster: role, model tier, when each fires, how they chain.
 - **[power-tools.md](power-tools.md)** — `audit-scan`, `audit-mem`, Trail of Bits plugins, Surfpool sim, the PoC/patch stack, the bundled scripts and their flags.

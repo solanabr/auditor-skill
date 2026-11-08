@@ -2,7 +2,7 @@
 
 All 17 commands, grouped by phase. Namespace is `auditor` → invoke as `/auditor:<name>`. Back to the [docs index](README.md).
 
-Each entry lists the argument hint from the command's own frontmatter, when to reach for it, and what it emits. For how they compose into a full engagement, see [audit-flows.md](audit-flows.md).
+Each entry lists the argument hint from the command's own frontmatter, when to reach for it, and what it emits. Which command runs at which depth (Quick, Standard, Full, CI): [Pick a depth](audit-flows.md#pick-a-depth). For how they compose into a full engagement, see [audit-flows.md](audit-flows.md).
 
 Each command starts with `preflight.sh`, which in default mode notes what strict mode would refuse and in strict mode refuses it (`--strict` in a command's arguments turns strict mode on; [OUTPUT-RULES.md Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode)). Each pre-approves, in its `allowed-tools`, the bundled steps it runs: run directories, read-only git, the Rust tools, the runners and the collectors, each checking its own arguments. Everything else asks, and a non-interactive run denies it and records the step as not run. A command that goes on after your reply invokes itself again through the Skill tool (`--resume`), which Manual mode asks about unless your user settings allow it. What runs without asking, and why that is safe: [permissions-and-isolation.md](permissions-and-isolation.md).
 
@@ -37,8 +37,8 @@ No verdicts, no severities — target enumeration only. `--auto` drives the `thr
 
 ### `/auditor:audit`
 **Arg:** `[path] [--scope full|program|backend|frontend] [--strict]`
-Full scope-gated audit end-to-end in one session: reads `OUTPUT-RULES.md`, follows `FULL-AUDIT.md` with scope-gated loading, spawns `context-builder` → `vuln-hunter` → `economic-analyst` → `audit-reporter`. Every in-scope item + phase-triggered vector gets `[PASS]`/`[FAIL-N]`/`[PARTIAL]`/`[N/A]`; N≥6 findings pass Rule 5b or downgrade.
-**When:** whole-repo audit where you handle triage yourself. **Emits:** `audit_<n>/REPORT.md` (internal template, numeric risk score) with executive summary, Scope Coverage table, findings, Phase 4.5 maturity scorecard, remediation roadmap.
+The Standard depth: a scope-gated, item-by-item audit end-to-end in one session. Reads `OUTPUT-RULES.md`, follows `FULL-AUDIT.md` with scope-gated loading, spawns `context-builder` → `vuln-hunter` → `economic-analyst` → `audit-reporter`. Every in-scope item + phase-triggered vector gets `[PASS]`/`[FAIL-N]`/`[PARTIAL]`/`[N/A]`; N≥6 findings pass Rule 5b or downgrade.
+**When:** a module, a program or the whole repository, every in-scope item checked once, where you handle triage yourself. **Emits:** `audit_<n>/REPORT.md` (internal template, numeric risk score) with executive summary, Scope Coverage table, findings, Phase 4.5 maturity scorecard, remediation roadmap.
 Runs SAST with `sast.sh` (semgrep) and the ToB tooling if present, else the grep scanners (noting the gap).
 
 ### `/auditor:quick-scan`

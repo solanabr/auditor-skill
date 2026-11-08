@@ -79,15 +79,17 @@ Everything else — checklists, known vectors, output rules — is portable as-i
 
 ## 5. Run your first audit
 
-**Quickest look** (triage, no full item walk — good for a CI gate):
+Start with the cheapest depth that answers your question ([Pick a depth](audit-flows.md#pick-a-depth)).
+
+**Quick** — the commits on your branch, against the tip of `main`. Commit first, and rebase on `main`, so that changes it gained since you branched stay out of the review:
 
 ```
-/auditor:quick-scan
+/auditor:diff-audit
 ```
 
-As a CI gate it runs non-interactively, so the run must be able to run its analyzers: a gate whose analyzers did not run fails. A non-interactive run denies every call that would ask ([section 6](#6-prompts-and-isolation)).
+For a first look at a whole repository, with no checklist walk, run `/auditor:quick-scan`.
 
-**Full one-shot audit** of a program:
+**Standard** — one program, every in-scope item:
 
 ```
 /auditor:audit ./programs/my-program --scope program
@@ -99,13 +101,15 @@ or in plain language for an agent that reads the skill directly:
 Audit the Solana program in programs/my-program/ using the auditor-skill with PROGRAM scope
 ```
 
-**Full engagement → client report** (automated end-to-end):
+**Full** — the engagement, ending in a client report (automated end-to-end):
 
 ```
 /auditor:audit-cycle --scope full
 ```
 
-The report lands at `audit_<n>/REPORT.md`, in a run directory that `rundir.sh new audit` makes: `<n>` is the next number whose name the repository tracks nothing under, and the directory is created with `mkdir` (not `-p`), stopping if it already exists. An existing `audit_<n>/` is reused only when git does not track it and it holds no symbolic link that leads out of it (in strict mode, none at all), after you confirm which one; nothing is written into a tracked run directory ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). Review [COSTS.md](../COSTS.md) first — a full Opus run on a large repo can burn real credits.
+The report lands at `audit_<n>/REPORT.md`, in a run directory that `rundir.sh new audit` makes: `<n>` is the next number whose name the repository tracks nothing under, and the directory is created with `mkdir` (not `-p`), stopping if it already exists. An existing `audit_<n>/` is reused only when git does not track it and it holds no symbolic link that leads out of it (in strict mode, none at all), after you confirm which one; nothing is written into a tracked run directory ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). Review [COSTS.md](../COSTS.md) first — a Full run on a large repo can burn real credits.
+
+**CI** — to run Quick on every pull request, copy `templates/ci/auditor-pr.yml` into `.github/workflows/` and follow [ci.md](ci.md). A CI run asks nothing and denies every call that would ask ([section 6](#6-prompts-and-isolation)); an analyzer that did not run fails its verdict.
 
 ## 6. Prompts and isolation
 
@@ -125,7 +129,8 @@ Scope is enforced by *scope-gated loading*: out-of-scope checklists are never re
 
 ## Next
 
-- Understand the flows: [audit-flows.md](audit-flows.md)
+- The depths and their flows: [audit-flows.md](audit-flows.md)
+- Quick on every pull request: [ci.md](ci.md)
 - Command reference: [commands.md](commands.md)
 - What the report guarantees: [output-and-rigor.md](output-and-rigor.md)
 - Prompts, isolation and `claude -p`: [permissions-and-isolation.md](permissions-and-isolation.md)

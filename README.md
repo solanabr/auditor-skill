@@ -4,16 +4,30 @@
 
 # auditor-skill — Open-Source AI Security Audit Skill
 
-> Production-grade security audit for any codebase, powered by AI agents.
-> 20 checklists · 1,465 verification items · 141 known attack vectors · executable PoCs + fix patches
-> A full audit-firm lifecycle (automated + interactive) · Benchmarked against CertiK, SOC 2, OWASP Top 10:2025
-> Verify COSTS.md as a referecence - Running this audit can burn a lot of credits.
+auditor-skill is a Claude Code plugin that security-reviews Solana programs and the code around them. Pick a depth:
+
+- **Quick** on a branch or pull request: `/auditor:diff-audit`.
+- **Standard** on one module before it merges: `/auditor:audit programs/<name> --scope program`.
+- **Full** before a release, with a client-style report: `/auditor:audit-cycle`.
+
+CI runs Quick on every pull request ([docs/ci.md](docs/ci.md)). Quick, Standard and Full need nothing beyond installing the plugin; intake is part of Full only.
+
+| Depth | When | Run | Reads | Writes | Cost |
+|-------|------|-----|-------|--------|------|
+| **Quick** | a branch or pull request, a first look at a repository, one function | `/auditor:diff-audit` · `/auditor:quick-scan` (whole repository) · `/auditor:deep-review <file> <fn>` | the changed code + one hop of callers and callees · SAST, advisories and the CRITICAL/HIGH vectors · one function | `PR-REPORT.md` · `QUICK-SCAN.md` · `DEEP-REVIEW-<unit>.md` | $ |
+| **Standard** | one module or program before it merges | `/auditor:audit <path> --scope …` | every in-scope item for that path | `REPORT.md`, internal: a risk score and a deploy verdict | $$ |
+| **Full** | a release, or a report for someone outside the team | `/auditor:audit-cycle` (unattended) · `/auditor:audit-assist` (you steer) · `/auditor:re-audit` after fixes | everything in scope, a threat model, peer review (re-audit: the fix delta) | `REPORT.md`, client style: no deploy guarantee (audit-cycle adds a PDF, and PoCs with `--with-poc`) · `RE-AUDIT.md`, with an updated deploy verdict | $$$$ |
+| **[CI](docs/ci.md)** | every pull request | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | as Quick | `findings.json` and SARIF on the runner, one pass/fail line in the log | $ (the tools job uses no model) |
+
+Costs are relative marks; [COSTS.md](COSTS.md) has the numbers. Outside the depths: `poc`, `patch`, `economic-sim` and `triage` work on one finding; `intake` and `threat-model` are Full's building blocks; `audit-report` assembles the internal report from a walk run in pieces; `spec-audit` checks code against a spec; `hunt` and `respond` are for [after an incident](#after-an-incident).
+
+**What's inside:** 20 checklists · 1,465 verification items · 141 known attack vectors · executable PoCs + fix patches.
 
 ---
 
 ## What Is This?
 
-auditor-skill is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,465 items across 20 security domains, tests against 141 real-world attack vectors, and produces a structured report with severity scores.
+It is also a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,465 items across 20 security domains, tests against 141 real-world attack vectors, and produces a structured report with severity scores.
 
 **It is not a SaaS product.** It's a folder of markdown files you install for your AI agent — outside any repository you audit — or send to an LLM API.
 
@@ -39,7 +53,8 @@ What each release added: [What's new](#whats-new).
 | Guide | What's inside |
 |-------|---------------|
 | [docs/getting-started.md](docs/getting-started.md) | Install, submodule init, build the Rust tools, run your first audit |
-| [docs/audit-flows.md](docs/audit-flows.md) | The lifecycle and when to use each flow (`/audit`, `/audit-cycle`, `/audit-assist`, `/re-audit`) |
+| [docs/audit-flows.md](docs/audit-flows.md) | The three depths and CI, and the pipeline each one follows (`/diff-audit`, `/audit`, `/audit-cycle`, `/audit-assist`, `/re-audit`) |
+| [docs/ci.md](docs/ci.md) | Quick on every pull request: the workflow template, its two jobs, `--ci` and `--fail-on`, what the verdict means, and how to read the details of a public repository's run |
 | [docs/commands.md](docs/commands.md) | Reference for all 17 commands |
 | [docs/agents.md](docs/agents.md) | The 9-agent roster and how they chain |
 | [docs/power-tools.md](docs/power-tools.md) | `audit-scan`, `audit-mem`, Trail of Bits, Surfpool, PoC/patch harnesses, the bundled scripts and their flags |
@@ -186,7 +201,7 @@ auditor-skill/
 ├── SKILL.md                 ← Orchestrator — the AI agent reads this first
 ├── OUTPUT-RULES.md          ← Mandatory output format, severity scale
 ├── FULL-AUDIT.md            ← Step-by-step execution plan for complete audits
-├── QUESTIONS.md             ← Pre-audit questionnaire (fill before running)
+├── QUESTIONS.md             ← Pre-audit questionnaire (intake asks it in a Full run)
 ├── COSTS.md                 ← Estimated costs by model and repo size
 ├── CONTRIBUTING.md          ← Branch / PR flow, corpus-count rules, no AI-attribution policy
 ├── SECURITY.md              ← Private vulnerability reporting for the skill and its tooling
@@ -282,7 +297,7 @@ auditor-skill/
 
 ## Audit Flows
 
-Beyond one-shot `/audit`, two flows run a full audit-company lifecycle end-to-end:
+The Full depth is two flows that run a whole audit-firm engagement end to end, and a fix review after it:
 
 - **`/auditor:audit-cycle`** — a **fully automated** audit-agent team (scope → context reconstruction → tool-assisted pass → parallel manual review with leaf-level false-positive gating → independent peer reconciliation → synthesis) that produces a professional client report at `audit_<n>/REPORT.md`. Optional PDF (needs [pandoc](https://pandoc.org/)):
   ```bash
@@ -311,7 +326,7 @@ Neither command signs, sends, pauses or freezes anything. If funds may be moving
 
 ## Output Format
 
-The audit produces a structured markdown report with:
+`/auditor:audit` (Standard) writes the internal report below. `/auditor:audit-cycle` and `/auditor:audit-assist` (Full) write the client report instead, which follows firm convention and gives no deploy guarantee ([Audit Flows](#audit-flows)). The internal report is a structured markdown file with:
 
 1. **Executive Summary** — risk score (1-10), deploy/no-deploy verdict, severity distribution
 2. **Instruction Matrix** — every smart contract instruction mapped
