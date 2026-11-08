@@ -331,22 +331,48 @@ See [OUTPUT-RULES.md](OUTPUT-RULES.md) for the complete specification.
 
 ## How to Invoke
 
-### VS Code / GitHub Copilot
+### Claude Code with the plugin
+
+Each depth is a command. Run it from the repository you audit:
+
+```
+/auditor:diff-audit                                  # Quick: what your branch adds on top of main
+/auditor:diff-audit v1.2.0..HEAD                     # Quick: another committed range
+/auditor:quick-scan                                  # Quick: a first look at a whole repository
+/auditor:deep-review programs/vault/src/instructions/withdraw.rs withdraw   # Quick: one function
+/auditor:audit programs/vault --scope program        # Standard: one program, every in-scope item
+/auditor:audit-cycle --scope full                    # Full: unattended, ends in a client report
+/auditor:audit-assist --scope full                   # Full: pauses for your calls at checkpoints
+/auditor:re-audit audit_1/REPORT.md main..HEAD       # Full: after the fixes
+```
+
+`diff-audit` reviews commits, so commit your work first. Every command and its arguments: [docs/commands.md](docs/commands.md).
+
+### Other agents
+
+An agent without the plugin's commands reads the skill and follows it. Ask in plain words.
+
+#### VS Code / GitHub Copilot
 ```
 @workspace Audit the entire repository using the auditor-skill
 ```
 
-### Cursor / Windsurf
+#### Cursor / Windsurf
 ```
 Read ~/.claude/skills/auditor-skill/SKILL.md then audit this repository following that installation's FULL-AUDIT.md execution plan
 ```
 
-### Claude Code (CLI)
+For a first pass on a branch instead:
+```
+Read ~/.claude/skills/auditor-skill/SKILL.md then review what this branch changes against main, as its differential mode describes
+```
+
+#### Claude Code, in plain words
 ```
 Read the auditor-skill files in ~/.claude/skills/auditor-skill/ and perform a full security audit of this repository
 ```
 
-### API (programmatic)
+#### API (programmatic)
 ```python
 # Send SKILL.md + OUTPUT-RULES.md + FULL-AUDIT.md as system prompt
 # Send target files as user messages (chunked)
