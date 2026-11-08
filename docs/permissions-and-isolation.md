@@ -161,7 +161,7 @@ A Bash call runs in the foreground until its timeout: two minutes unless Claude 
 
 ## Strict mode and isolated runs
 
-Strict mode keeps a repository you do not trust from steering the session, and isolated mode keeps the project's code from reading anything of yours: no keys, no wallets, no cloud, registry or git credentials. Strict mode makes the mode isolated at least. To use them:
+Strict mode keeps a repository you do not trust from steering the session, and isolated mode keeps the project's code, as the runners build and run it, from reading anything of yours: no keys, no wallets, no cloud, registry or git credentials. Strict mode makes the mode isolated at least. Neither covers code that a plugin you enabled runs, such as a language server that runs the build scripts; the launch line loads none of your plugins ([What remains a risk](#what-remains-a-risk)). To use them:
 
 1. Start Claude Code with the [launch line](#default-and-strict-mode), which passes `templates/strict-settings.json`. The template sets `AUDITOR_STRICT=1` and `AUDITOR_EXEC_MODE=isolated`, which no file and no command line can loosen, and turns on Claude Code's sandbox with the block [below](#claude-codes-sandbox).
 2. At intake, answer **Untrusted source** (Q46), which writes `isolated` to `audit_<n>/exec-mode` and the `strict` file beside it. For isolated runs without strict mode's refusals, answer **Isolated** instead; `AUDITOR_EXEC_MODE=isolated` in the environment Claude Code runs in keeps them isolated even if the `exec-mode` file is changed.
@@ -178,7 +178,7 @@ It does not count a key under another name or in another place (`REDIS_PWD`, `PG
 "<auditor-skill root>/scripts/runner/probe.sh" --only isolation
 ```
 
-`AUDITOR_EXEC_MODE=none` is the third choice: the bundled runners build and run none of the project's code, and each step that needs it is recorded as not run.
+`AUDITOR_EXEC_MODE=none` is the third choice: the bundled runners build and run none of the project's code, and each step that needs it is recorded as not run. A plugin you enabled may still run some, unless you start with the launch line.
 
 ### A container or a VM
 
@@ -326,7 +326,7 @@ claude -p "/auditor:hunt <program> --collect" --setting-sources user --allowedTo
 claude -p "Audit this repository with the auditor-skill" --setting-sources user --allowedTools "Skill(auditor:auditor-skill)" "Skill(auditor:auditor-skill *)"
 ```
 
-**The default builds on your host.** `claude -p "/auditor:audit-cycle ."` on your own machine records native mode and builds and tests the project there without asking. For code you don't trust, use strict mode, whose isolated mode makes a host with readable keys refuse the builds, or set `AUDITOR_EXEC_MODE=none`, so that the runners build none of it.
+**The default builds on your host.** `claude -p "/auditor:audit-cycle ."` on your own machine records native mode and builds and tests the project there without asking. For code you don't trust, use strict mode through the launch line, whose isolated mode makes a host with readable keys refuse the builds, and which loads none of your plugins; or set `AUDITOR_EXEC_MODE=none`, so that the runners build none of it.
 
 An absolute Bash path in your own rules would approve a program whatever words follow it, and the plugin's path changes with each version. Keep extra rules to names.
 
@@ -338,6 +338,7 @@ If your organization sets `allowManagedPermissionRulesOnly` in managed settings,
 
 - **Native mode, the default, runs the project's code on your host, unasked.** Unless intake, `AUDITOR_EXEC_MODE` or strict mode says otherwise, the runners build and test the project, and run the exploits the agent writes, on your machine without a prompt for each run, and the report says so. Each child of `target.sh` and `run.sh --crate` starts with a cleaned environment and a throwaway `HOME` and wallet, so no token, `RPC_URL` or default keypair reaches it (with an older `cargo build-sbf`, `run.sh` builds with your real `HOME`, and says so), but a build script can still read any file you can and, on an open network, connect anywhere. A non-interactive run records native unless `AUDITOR_EXEC_MODE` or strict mode says otherwise.
 - **In default mode the repository's project config loads beside the plugin.** Claude Code loads a repository's `.claude/` skills, commands, agents, hooks and settings, and its `.mcp.json` servers once you trust the folder; preflight only notes them, and the report lists the notes. For a repository you do not trust, start with the [launch line](#default-and-strict-mode), or audit a clean copy, so that they never load.
+- **Your own plugins run the project's code outside the runners.** Without the launch line, the plugins you enabled load in every session, with their hooks and language servers. A language-server plugin such as `rust-analyzer-lsp` runs the repository's build scripts and proc-macros on your machine, outside the runners and the execution mode, so neither isolated mode nor Q46's **None** covers it. The launch line's `--setting-sources ""` loads none of them, and its `--plugin-dir` loads only auditor-skill. Without the line, disable such plugins before you open a repository you do not trust.
 - **The guard covers names, not every way a repository can steer a session.** Preflight's guard notes, and in strict mode refuses, config under this plugin's names and settings that set its variables ([Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode)). A command file under one of the plugin's command names replaces that command, which then never runs preflight, and hooks, `CLAUDE_ENV_FILE` and a project `env` holding `BASH_ENV` or `CLAUDE_CODE_SHELL_PREFIX` run before any bundled tool. Only the launch line, whose `--setting-sources ""` loads no settings file, or a clean copy keeps them out.
 - **The `exec-mode` file is the agent's to write.** A hijacked agent could turn isolated into native there. The runners take the stricter of the file, `AUDITOR_EXEC_MODE` and strict mode, and the report states the mode, so for a repository you do not trust, start with the launch line, whose `AUDITOR_STRICT=1` and `AUDITOR_EXEC_MODE=isolated` no file can loosen.
 - **Pre-approved calls skip auto mode's classifier.** It gives no second opinion on a runner call; the runners' own checks and the recorded mode are what bound it.

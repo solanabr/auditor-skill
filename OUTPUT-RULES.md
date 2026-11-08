@@ -381,7 +381,7 @@ The bundled tools these rules name are the steps the commands run without a prom
 |---|---|---|
 | **native** | Target-controlled code runs on the auditor's own machine. The default when nothing is recorded. | In Coverage & Limitations: target code ran on the auditor's host, and which steps ran it. |
 | **isolated** | Target-controlled code runs in a container or VM with no keys or credentials mounted (`~/.config/solana`, cloud credentials, `~/.ssh`), no container daemon socket or `tcp://` `DOCKER_HOST`, and no forwarded git login (a Dev Container reuses the host's, and a Codespace gets a GitHub token), or under Claude Code's sandbox with read-deny rules on key and credential paths plus an egress allowlist. A read-only source mount and CPU / memory / time limits help too. Strict mode (11f) makes the mode isolated at least. | Which isolation was used. |
-| **none** | No target-controlled code runs: `target.sh` and `run.sh --crate` stop before they copy anything; `probe.sh`, `deps.sh` and `sast.sh` run no target code and still run. It comes from Q46's **None**, `AUDITOR_EXEC_MODE=none` or a run's `exec-mode` file. | In Coverage & Limitations: which steps did not run. |
+| **none** | The bundled runners run no target-controlled code: `target.sh` and `run.sh --crate` stop before they copy anything; `probe.sh`, `deps.sh` and `sast.sh` run no target code and still run. A plugin the user enabled may still run it, such as a language-server plugin that runs the build scripts, unless Claude Code starts with the strict launch line (11f). It comes from Q46's **None**, `AUDITOR_EXEC_MODE=none` or a run's `exec-mode` file. | In Coverage & Limitations: which steps did not run. |
 
 The mode is recorded at intake when the human answers Q46, and `/auditor:intake --auto` records native. Otherwise it is native, and the report says so. Strict mode (11f) makes it isolated at least. Nothing asks for the mode later, in an interactive run or a non-interactive one (the autonomous `/auditor:audit-cycle` flow).
 
@@ -481,9 +481,10 @@ It only turns on. A `strict` file keeps strict mode on for this and every later 
 - hooks in the repository's settings run when the session starts, before any plugin code, and a SessionStart hook can write `CLAUDE_ENV_FILE`, which every later Bash call loads;
 - a project `env` that holds `BASH_ENV` or `CLAUDE_CODE_SHELL_PREFIX` runs a script the repository ships before every bundled tool, the pre-approved ones included. Claude Code blocks a few variables in a project's `env`, such as `HOME`, `TMPDIR`, `XDG_*` and `CLAUDE_CONFIG_DIR` ([settings reference](https://code.claude.com/docs/en/settings-reference)), and these two are not among them;
 - an archive's `.claude/settings.local.json`: outside a repository nothing is tracked, so default mode takes the file for the user's own, and in either mode its hooks and `env` have applied by the time preflight runs;
+- the plugins the user enabled load with their hooks and language servers. A language-server plugin such as `rust-analyzer-lsp` runs the repository's build scripts and proc-macros on the user's machine, outside the runners and the execution mode, so neither isolated mode nor Q46's **None** covers it;
 - `--strict` and intake's "Untrusted source" answer travel through the agent, so text the repository loads, such as its `CLAUDE.md`, can talk the agent out of them. Only `AUDITOR_STRICT=1` set through the launch line holds.
 
-The launch line keeps the first three out, since its `--setting-sources ""` loads no settings file, and so does a clean copy.
+The launch line keeps the first four out, since its `--setting-sources ""` loads no settings file and none of the user's plugins. A clean copy keeps out the first three.
 
 **The launch line**, for a repository you do not trust:
 

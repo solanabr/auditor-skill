@@ -22,7 +22,9 @@ it, and once to the machines that run it.
 - **Strict mode**: in default mode the checks that would refuse a repository for what it contains print notes
   instead, by design (`OUTPUT-RULES.md` Rule 11f). In a session started with the strict launch line (Rule 11f), a
   way to make strict mode refuse less than Rule 11f lists, or to turn it off from inside the audited repository, is
-  a security issue.
+  a security issue. Third-party plugins beside auditor-skill are out of scope: what they run, such as a language
+  server that runs a project's build scripts, is theirs. The strict launch line loads none of the plugins you
+  enabled.
 - **Corpus content that could steer an auditor or an AI agent into a dangerous action** — for example a
   "verification step" that instructs running a destructive command, sending data to an external
   endpoint, or that materially misdescribes a vulnerability so that a real finding is dismissed.
