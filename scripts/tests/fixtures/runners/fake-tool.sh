@@ -10,7 +10,8 @@
 #   env: <NAME=value>       one line per variable, sorted
 # followed by the lines each behaviour below adds. FAKE_* settings choose the behaviour: exit statuses, what a
 # build writes, files to show, a listing of the working directory, output to print, time to sleep, where cargo
-# metadata finds packages. The semgrep stand-in lists its targets with git, as semgrep does.
+# metadata finds packages, the toolchains rustup has, the platform tools cargo build-sbf names. The semgrep
+# stand-in lists its targets with git, as semgrep does.
 T=@T@
 name=${0##*/}
 [ -f "$T/fake/settings" ] && . "$T/fake/settings"
@@ -29,7 +30,11 @@ arg_after() { # arg_after <option> <arguments>...: the word after <option>
 }
 case "$name" in
   rustup)
-    case "$1" in default) [ "${FAKE_RUSTUP_DEFAULT:-}" = none ] && exit 1; echo "stable-fake (default)" ;; esac
+    case "$1" in
+      default) [ "${FAKE_RUSTUP_DEFAULT:-}" = none ] && exit 1; echo "stable-fake (default)" ;;
+      # rustup which --toolchain <t> <program>: installed when FAKE_RUSTUP_INSTALLED names <t>.
+      which) case " ${FAKE_RUSTUP_INSTALLED:-} " in *" $3 "*) echo "/fake/toolchains/$3/bin/$4" ;; *) exit 1 ;; esac ;;
+    esac
     exit 0 ;;
   node) exit 0 ;;
   cargo-build-sbf|cargo-audit|cargo-outdated) exit 0 ;;

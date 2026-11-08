@@ -959,7 +959,49 @@ run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
 check "no rustup default to pin: exit 3" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: no Rust toolchain to pin: set RUSTUP_TOOLCHAIN or a rustup default' '$T/err'"
 run "$TARGET" "$WT" RUSTUP_TOOLCHAIN=1.85.0 -- cargo-test --run audit_1 --src .
 check "the caller's RUSTUP_TOOLCHAIN is kept, and rustup is not asked" \
-  sh -c "[ '$RC' = 0 ] && ! grep -q '^== rustup' '$T/calls' && grep -qxF 'env: RUSTUP_TOOLCHAIN=1.85.0' '$T/calls'"
+  sh -c "[ '$RC' = 0 ] && ! grep -q '^== rustup' '$T/calls' && grep -qxF 'env: RUSTUP_TOOLCHAIN=1.85.0' '$T/calls' && ! grep -q 'rust-toolchain' '$T/out'"
+settings
+# Outside strict mode, with no RUSTUP_TOOLCHAIN from the caller, the plain channel the copy's top-level
+# rust-toolchain (else rust-toolchain.toml) names is pinned when rustup has it installed; otherwise the build
+# keeps rustup's default. A note says which, and a toolchain given by path is never taken. $T/tcwt is not a
+# repository: a crate and a rust-toolchain.toml with a comment, a multi-line array and a profile.
+TW=$T/tcwt
+mkdir -p "$TW/src"
+printf '[package]\nname = "tc"\nversion = "0.1.0"\n' > "$TW/Cargo.toml"
+printf '# pinned\n[toolchain]\nchannel = "1.79.0"\ncomponents = [\n  "rustfmt",\n  "clippy",\n]\nprofile = "minimal"\n' > "$TW/rust-toolchain.toml"
+( cd "$TW" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$TW/audit_1/exec-mode"
+settings FAKE_RUSTUP_INSTALLED="1.79.0 nightly-2024-01-01"
+run "$TARGET" "$TW" -- cargo-test --run audit_1 --src .
+check "a rust-toolchain.toml pinning 1.79.0, which rustup has: exit 0, a note, and the cargo steps pinned to it" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF \">> note: the copy's rust-toolchain.toml pins 1.79.0; building with it\" '$T/out'"
+check "... cargo fetch and cargo test get RUSTUP_TOOLCHAIN=1.79.0, after rustup is asked whether it has it" calls_are \
+  "rustup default|rustup which --toolchain 1.79.0 cargo|cargo fetch --manifest-path $S/src/Cargo.toml|cargo test --offline --workspace|"
+check "... (the pin)" in_blocks '^== cargo (fetch|test)' '^env: RUSTUP_TOOLCHAIN=1[.]79[.]0$'
+settings
+run "$TARGET" "$TW" -- cargo-test --run audit_1 --src .
+check "... which rustup has not installed: exit 0, a note, and rustup's default" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '>> note: the copy pins 1.79.0, which rustup has not installed; building with stable-fake (rustup toolchain install 1.79.0 adds it)' '$T/out'"
+check "... (the default)" in_blocks '^== cargo (fetch|test)' '^env: RUSTUP_TOOLCHAIN=stable-fake$'
+printf 'nightly-2024-01-01\n' > "$TW/rust-toolchain"
+settings FAKE_RUSTUP_INSTALLED="1.79.0 nightly-2024-01-01"
+run "$TARGET" "$TW" -- cargo-test --run audit_1 --src .
+check "a one-line rust-toolchain beside it wins, as rustup reads it first" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF \">> note: the copy's rust-toolchain pins nightly-2024-01-01; building with it\" '$T/out' && ! grep -q 'rust-toolchain.toml' '$T/out'"
+rm -f "$TW/rust-toolchain"
+for body in '[toolchain]\nchannel = "1.79.0"\npath = "/opt/toolchain"\n' '[toolchain]\nchannel = "1.79.0; rm"\n' 'toolchain = { channel = "1.79.0" }\n'; do
+  printf "$body" > "$TW/rust-toolchain.toml"
+  run "$TARGET" "$TW" -- cargo-test --run audit_1 --src .
+  check "a rust-toolchain.toml holding '$(printf "$body" | tr '\n' ' ')': not taken, a note, rustup's default, and rustup not asked about it" \
+    sh -c "[ '$RC' = 0 ] && grep -qxF \">> note: the copy's rust-toolchain.toml names a toolchain by path, or no plain channel, which target.sh does not take; building with stable-fake\" '$T/out' && ! grep -q '^== rustup which' '$T/calls'"
+done
+printf '[toolchain]\nchannel = "1.79.0"\n' > "$TW/rust-toolchain.toml"
+run "$TARGET" "$TW" RUSTUP_TOOLCHAIN=1.85.0 -- cargo-test --run audit_1 --src .
+check "... and with RUSTUP_TOOLCHAIN from the caller the file is not read" \
+  sh -c "[ '$RC' = 0 ] && ! grep -q 'rust-toolchain' '$T/out' && grep -qxF 'env: RUSTUP_TOOLCHAIN=1.85.0' '$T/calls'"
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$TW" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+  check "... nor in strict mode" sh -c "[ '$RC' = 0 ] && ! grep -q 'rust-toolchain' '$T/out' && ! grep -q '^== rustup which' '$T/calls'"
+fi
 settings
 # Where it runs: TMPDIR with a trailing slash, a TMPDIR inside the working directory, the installation inside
 # it, and PATH entries inside it.

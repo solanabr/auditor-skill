@@ -62,18 +62,21 @@
 #
 # The environment of every step is the cleaned one of scripts/lib/isolation.sh: env -i, a throwaway HOME
 # holding a fresh Solana keypair, TMPDIR in the scratch directory, the cleaned PATH, the user's CARGO_HOME,
-# RUSTUP_HOME and AVM_HOME, and RUSTUP_TOOLCHAIN pinned to the caller's value, else rustup's default, with
-# RUSTUP_AUTO_INSTALL=0: the copy's rust-toolchain file is not read. The downloads come first, and none of
-# them runs code from the copy: cargo fetch, started outside the copy so that the copy's .cargo/config is not
-# read either; cargo build-sbf --install-only, with the real HOME, where the platform tools live; and npm ci
-# --ignore-scripts, with npm's user and global config files empty, its cache and logs in the scratch directory
-# and its git the one on PATH, and no .npmrc of the target: npm takes a project's settings from the package
-# root it finds from --dir up and expands ${VAR} in them from its environment, so target.sh removes each
-# .npmrc from the top of the copy down to --dir first, and says which; and a module NODE_OPTIONS preloads lets
-# npm start no program but git and node, since npm 10 runs the prepare script of a git or directory dependency
-# despite --ignore-scripts (so npm ci stops at such a dependency, and a note says so), and ends at once the
-# npm install npm runs in a git dependency's checkout, which would read that checkout's .npmrc (with scripts
-# ignored it has nothing to prepare, and a git dependency's bundleDependencies stay out).
+# RUSTUP_HOME and AVM_HOME, and RUSTUP_TOOLCHAIN pinned to the caller's value, with RUSTUP_AUTO_INSTALL=0.
+# Without one it is rustup's default, except outside strict mode when the copy's top-level rust-toolchain (or,
+# without it, rust-toolchain.toml) names a plain channel, and no path, that rustup has installed: then that
+# channel, and a note says so, as it does when the channel is not installed or the file names no plain
+# channel. The downloads come first, and none of them runs code from the copy: cargo fetch, started outside
+# the copy so that the copy's .cargo/config is not read either; cargo build-sbf --install-only, with the real
+# HOME, where the platform tools live; and npm ci --ignore-scripts, with npm's user and global config files
+# empty, its cache and logs in the scratch directory and its git the one on PATH, and no .npmrc of the target:
+# npm takes a project's settings from the package root it finds from --dir up and expands ${VAR} in them from
+# its environment, so target.sh removes each .npmrc from the top of the copy down to --dir first, and says
+# which; and a module NODE_OPTIONS preloads lets npm start no program but git and node, since npm 10 runs the
+# prepare script of a git or directory dependency despite --ignore-scripts (so npm ci stops at such a
+# dependency, and a note says so), and ends at once the npm install npm runs in a git dependency's checkout,
+# which would read that checkout's .npmrc (with scripts ignored it has nothing to prepare, and a git
+# dependency's bundleDependencies stay out).
 # A Corepack npm shim takes no npm release from the copy's packageManager field. Only these get the proxy
 # variables.
 # Every build and test after them runs offline (CARGO_NET_OFFLINE=true), without the proxy variables, in
@@ -647,13 +650,14 @@ NPM=(npm_config_userconfig="$S/npm/userconfig" npm_config_globalconfig="$S/npm/g
   npm_config_fund=false npm_config_audit=false npm_config_ignore_scripts=true npm_config_git="$GIT"
   "NODE_OPTIONS=$PRELOAD" "npm_config_node_options=$PRELOAD" "npm_config_script_shell=$FALSE" COREPACK_ENABLE_PROJECT_SPEC=0)
 ISO_ENV+=(RUSTUP_AUTO_INSTALL=0 CARGO_TERM_COLOR=never)
+TC_DEFAULT=""
 case "$ACTION" in
   npm-ci) ;;
   *)
     if [ -z "${RUSTUP_TOOLCHAIN:-}" ] && command -v rustup >/dev/null 2>&1; then
       tc=$(cd "$S" && iso_run rustup default 2>/dev/null </dev/null) || tc=""
       case "$tc" in
-        *"(default)"*) ISO_ENV+=("RUSTUP_TOOLCHAIN=${tc%% *}") ;;
+        *"(default)"*) TC_DEFAULT=${tc%% *}; ISO_ENV+=("RUSTUP_TOOLCHAIN=$TC_DEFAULT") ;;
         *) finish 3 "no Rust toolchain to pin: set RUSTUP_TOOLCHAIN or a rustup default" ;;
       esac
     fi ;;
@@ -858,6 +862,80 @@ at=${DIR_ARG:-the top of the copy}
 real_file() { [ -f "$1" ] && [ ! -L "$1" ]; }
 note() { echo ">> note: $1"; printf '>> note: %s\n' "$1" >&9; }
 
+# What rust_toolchain runs with python3 -I, from /: "<file>" prints the plain channel a rust-toolchain file
+# names, the one line of its legacy form or the channel of its [toolchain] table; exit 1 for anything else:
+# a file that is not regular or over 64 KiB, a path key (a toolchain of the copy's own), a channel that is no
+# plain name, or a line it cannot read.
+TOOLCHAIN_PY='import os, re, stat, sys
+
+CHANNEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,99}")
+HEADER = re.compile(r"\[\s*([A-Za-z0-9_.-]+)\s*\]\s*(#.*)?")
+KEY = re.compile(r"([A-Za-z0-9_.-]+)\s*=\s*(.*)")
+STRING = re.compile(r"\x22([^\x22\\]*)\x22\s*(#.*)?|\x27([^\x27]*)\x27\s*(#.*)?")
+try:
+    st = os.lstat(sys.argv[1])
+    if not stat.S_ISREG(st.st_mode) or st.st_size > 65536:
+        sys.exit(1)
+    with open(sys.argv[1], "rb") as f:
+        lines = [l.strip() for l in f.read().decode("utf-8-sig").splitlines()]
+except (OSError, UnicodeDecodeError):
+    sys.exit(1)
+lines = [l for l in lines if l and not l.startswith("#")]
+if not any(l.startswith("[") or "=" in l for l in lines):
+    if len(lines) == 1 and CHANNEL.fullmatch(lines[0]):
+        print(lines[0])
+        sys.exit(0)
+    sys.exit(1)
+table, channel, depth = "", None, 0
+for line in lines:
+    if depth > 0:
+        depth += line.count("[") - line.count("]")
+        continue
+    m = HEADER.fullmatch(line)
+    if m:
+        table = m.group(1)
+        continue
+    m = KEY.fullmatch(line)
+    if not m:
+        sys.exit(1)
+    key, value = m.group(1), m.group(2)
+    if value.startswith("["):
+        depth = value.count("[") - value.count("]")
+    if table == "" and key.startswith("toolchain."):
+        key = key[len("toolchain."):]
+    elif table != "toolchain":
+        continue
+    if key == "path":
+        sys.exit(1)
+    if key == "channel":
+        v = STRING.fullmatch(value)
+        if not v:
+            sys.exit(1)
+        channel = v.group(1) if v.group(1) is not None else v.group(3)
+if channel is None or not CHANNEL.fullmatch(channel):
+    sys.exit(1)
+print(channel)
+'
+# rust_toolchain: outside strict mode, when target.sh pinned rustup's default (no RUSTUP_TOOLCHAIN from the
+# caller), the plain channel the copy's top-level rust-toolchain names, else its rust-toolchain.toml (rustup
+# reads the first when both are there): pinned instead when rustup has it installed. A note says which.
+rust_toolchain() {
+  local f c
+  for f in rust-toolchain rust-toolchain.toml; do
+    [ -e "$S/src/$f" ] || [ -L "$S/src/$f" ] || continue
+    c=$( (cd / && exec python3 -I -c "$TOOLCHAIN_PY" "$S/src/$f") 2>/dev/null) || c=""
+    if [ -z "$c" ]; then
+      note "the copy's $f names a toolchain by path, or no plain channel, which target.sh does not take; building with $TC_DEFAULT"
+    elif (cd "$S" && iso_run rustup which --toolchain "$c" cargo) >/dev/null 2>&1 </dev/null; then
+      ISO_ENV+=("RUSTUP_TOOLCHAIN=$c")
+      note "the copy's $f pins $c; building with it"
+    else
+      note "the copy pins $c, which rustup has not installed; building with $TC_DEFAULT (rustup toolchain install $c adds it)"
+    fi
+    return 0
+  done
+}
+[ "$CONFINE_STRICT" = 1 ] || [ -z "$TC_DEFAULT" ] || rust_toolchain
 # no_npmrc: npm takes a project's settings from the .npmrc of the package root it finds from its working
 # directory up (a workspace's root above it among them), and expands ${VAR} in them from its environment, the
 # proxy variables included. Before npm ci, every .npmrc from the top of the copy down to AD goes, of any kind.
