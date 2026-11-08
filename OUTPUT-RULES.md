@@ -530,7 +530,9 @@ Under `claude -p` and in CI, export `AUDITOR_STRICT=1` in the job's environment 
 | `git-ro.sh`, the recipes, the collector: the work-tree scan for named pipes and devices where git reads its own files | skipped, since their reads open no work-tree file | runs |
 | `git-ro.sh blame`: a `blame.ignoreRevsFile` in the repository | honoured, from a copy of that file | refused |
 | `git-ro.sh`, `target.sh`: a git without the May-2024 clone fixes | a note on every read; `copy` makes the same bare copy through read-only plumbing, and `target.sh` copies the commit's tracked files that way, never with `git clone` | `copy` refused (exit 69); `target.sh` stops (exit 3) |
+| `git-ro.sh copy`: a partial clone | copied through plumbing when every object of `HEAD` is present, with a note, and marked a partial clone itself; stops (exit 3) when one is missing | stops (exit 3) |
 | `rundir.sh new`: tracked paths under `audit_*` or `incident_*` | the next free name, and a note per path | refused |
+| `rundir.sh new`: the next name held by a file, a link or a folder spelled in other letters | passed over, with a note that names it as the disk spells it | refused |
 | `rundir.sh`, the tools that write in a run directory: a link inside it that resolves inside it; git cannot tell whether it is tracked | both accepted, the second when its `.gitignore` holds `*` | refused |
 | `target.sh`, `run.sh`: no recorded mode | native | isolated |
 | `target.sh`: a `cargo build-sbf` without `--install-only`, `--skip-tools-install` and `--offline` | built in the throwaway `HOME`, offline, with a note; when its platform tools are missing, a blocker (exit 3) names the command that installs them | isolated mode: built with the real `HOME` inside the isolated runner, with a note |
