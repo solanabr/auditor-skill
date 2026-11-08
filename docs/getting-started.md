@@ -121,13 +121,7 @@ The commands run their bundled steps without asking: the working-tree check, run
 
 ## Scopes at a glance
 
-| Scope | Covers | Checklists |
-|-------|--------|-----------|
-| `full` | everything | all 20 + 141 vectors |
-| `program` | Solana program only | 01-07 |
-| `backend` | backend API | 08-09 |
-| `frontend` | frontend | 08, 10 |
-| (quick lane) | known vectors only, grep-based | `/auditor:quick-scan` |
+`--scope` on `/auditor:audit`, `/auditor:audit-cycle` and `/auditor:audit-assist` picks the part of the repository a run reviews: `full` (the default: the checklists and vectors the repository matches, up to all 20 + 141 vectors), `program`, `backend` or `frontend`. [SKILL.md](../SKILL.md#scope-gated-loading--load-what-the-repo-needs) defines each one. The Quick commands take no scope.
 
 Scope is enforced by *scope-gated loading*: out-of-scope checklists are never read, and out-of-scope items render `[N/A — out of scope]` from the gate. See [output-and-rigor.md](output-and-rigor.md#scope-gated-loading).
 

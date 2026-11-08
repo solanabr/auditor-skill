@@ -185,16 +185,7 @@ The audit is complete when every **in-scope** item has an explicit verdict; out-
 
 2. **Review estimated costs:** Check [COSTS.md](COSTS.md) for token/dollar estimates based on your repo size and chosen model.
 
-3. **Choose your scope:**
-
-| Scope | What It Covers | Estimated Time (50K lines) |
-|-------|---------------|---------------------------|
-| FULL | Everything — all 20 checklists + 141 vectors | 60-90 min |
-| PROGRAM | Smart contract only (checklists 01-07) | 20-35 min |
-| BACKEND | Backend API (checklists 08-09) | 15-25 min |
-| FRONTEND | Frontend (checklists 08, 10) | 15-25 min |
-| DEVOPS | Infra + supply chain (checklists 11-13) | 10-15 min |
-| QUICK | Known vectors only (grep-based scan) | 5-10 min |
+3. **Choose your scope** for Standard and Full: `--scope full|program|backend|frontend` picks the part of the repository a run reviews. [SKILL.md](SKILL.md#scope-gated-loading--load-what-the-repo-needs) defines each one; the Quick commands take none.
 
 ---
 

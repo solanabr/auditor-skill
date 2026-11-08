@@ -56,6 +56,17 @@ auditor-skill does not read its whole corpus up front. It discovers the repo, de
 
 Checklists outside this set are **never read** — a Rust-only repo never loads 14 or the TS/web vectors.
 
+**Scopes, defined here once.** `--scope` on `/auditor:audit`, `/auditor:audit-cycle` and `/auditor:audit-assist` picks the part of the repository a run reviews; a path argument narrows that part to the path. In that part, the table above picks the checklists:
+
+| Scope | Reviews | Checklists |
+|-------|---------|------------|
+| `full` (the default) | the whole repository | every row above that the repository matches |
+| `program` | the on-chain programs | 01–07 + the any-repo row |
+| `backend` | off-chain services: APIs, servers, workers, indexers, keepers | 08 + 09 for TypeScript, 14 for Python, 15 for other languages, 20 for Rust, as they occur + the any-repo row |
+| `frontend` | the web client | 08 + 10 + the any-repo row |
+
+The any-repo row is read against the scoped part, and 19 joins any scope whose part has agent components. No `--scope` value names DEVOPS: intake records that scope when the `QUESTIONS.md` Q39 answer is "DevOps / infrastructure only", and it reviews 07 + the any-repo row. Q39's narrower answers (one area, named files) narrow any scope further. A scope is not a depth (Audit Modes): `--scope full` is the whole repository at Standard or Full depth, and the Quick commands take no `--scope`. README.md, FULL-AUDIT.md and the docs point here.
+
 **Step 3 — Load on demand.** Load an in-scope checklist when its phase begins; load a known-vector only when its phase + language/domain trigger reaches it (`known-vectors/INDEX.md` groups vectors by `{phase, language, trigger}`). Beyond the phase+language gate, vectors and feature-specific checklist sections also load on **feature presence** via the INDEX **"Load when (markers)"** column and the prescan advisory manifest (`references/orchestration/pre-scan.md`): a vector/section whose feature markers are *provably absent* (zero grep hits, and, for a marker a prescan array covers, that array empty; an empty array alone is not proof) is skip-deferred and renders `[N/A — feature absent]`. This is advisory only — it reopens on demand the instant a manual read surfaces the feature, and every in-scope item still gets a verdict (Rule 0).
 
 **Completeness is output-side.** The audit is COMPLETE iff every in-scope item + phase-triggered vector has a verdict. Out-of-scope items render `[N/A — out of scope: <reason>]` from the gate. Every full report includes a **Scope Coverage** table. Full rule: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 0.
