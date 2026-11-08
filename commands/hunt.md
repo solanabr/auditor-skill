@@ -121,9 +121,12 @@ Code asks about a shell read outside the working directory.
    `--strict`, run `"${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" --strict` instead.
    Its first line names the mode, default or strict (Rule 11f): pass it to the agent
    for the ledger and the report. In default mode it refuses nothing the repository
-   contains but what could hang its checks: what strict mode would refuse (project
-   config, config under this plugin's names, a link out of the tree, a linked
-   worktree) is a `preflight: note:` line. Pass each note to the agent as it stands,
+   contains but three shapes of a git directory that its own checks cannot read
+   safely: one that could hang them (a named pipe or device, a `.git` file over
+   16 KiB), a name holding a line end, and a git config with more than 64 includes.
+   What strict mode would refuse besides (project config, config under this
+   plugin's names, a link out of the tree, a linked worktree) is a
+   `preflight: note:` line. Pass each note to the agent as it stands,
    for the report, and go on; when one names project config, tell the user once that
    Claude Code loaded it with this session, and that strict mode is for a repository
    they do not trust: nothing in the repository can turn strict mode off when Claude
