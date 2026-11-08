@@ -120,10 +120,10 @@ Code asks about a shell read outside the working directory.
    Run `"${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"`; when the arguments hold
    `--strict`, run `"${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" --strict` instead.
    Its first line names the mode, default or strict (Rule 11f): pass it to the agent
-   for the ledger and the report. In default mode it refuses nothing the repository
-   contains but three shapes of a git directory that its own checks cannot read
-   safely: one that could hang them (a named pipe or device, a `.git` file over
-   16 KiB), a name holding a line end, and a git config with more than 64 includes.
+   for the ledger and the report. In default mode it refuses only what could hang
+   or confuse its own checks (a named pipe or device in a `.git`, a `.git` file over
+   16 KiB, a line end in a name there, a git config with more than 64 includes), a
+   bad argument, and a run from inside the installation.
    What strict mode would refuse besides (project config, config under this
    plugin's names, a link out of the tree, a linked worktree) is a
    `preflight: note:` line. Pass each note to the agent as it stands,
