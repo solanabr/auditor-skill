@@ -20,7 +20,7 @@ Commands are namespaced `auditor`, so you invoke them as `/auditor:audit`, `/aud
 | Full automated engagement → client report | `/auditor:audit-cycle` | [audit-flows.md](audit-flows.md#flow-a--auditoraudit-cycle-automated) |
 | Human-in-the-loop engagement | `/auditor:audit-assist` | [audit-flows.md](audit-flows.md#flow-b--auditoraudit-assist-interactive) |
 | Review a fix round against a prior report | `/auditor:re-audit [prior] [base..head]` | [commands.md](commands.md#auditorre-audit) |
-| Set up scope + trust model before auditing | `/auditor:intake` (alias `/scope`) | [commands.md](commands.md#auditorintake) |
+| Set up scope + trust model before a Full run | `/auditor:intake` | [commands.md](commands.md#auditorintake) |
 | Enumerate assets / actors / trust boundaries | `/auditor:threat-model` | [commands.md](commands.md#auditorthreat-model) |
 | Threat-model a fork or inherited codebase from its history | `/auditor:threat-model --bootstrap` | [commands.md](commands.md#auditorthreat-model) |
 | Quantify an economic attack ($ P/L) | `/auditor:economic-sim <finding>` | [commands.md](commands.md#auditoreconomic-sim) |
