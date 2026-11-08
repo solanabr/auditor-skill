@@ -1184,9 +1184,6 @@ confine_rundir() {
     confine_refuse "$what must be a run directory named audit_<n> or incident_<n> in the working directory: $shown"
   [ ! -L "$CONFINE_WT/$r" ] || confine_refuse "$what is a symbolic link: $shown"
   [ -d "$CONFINE_WT/$r" ] || confine_refuse "$what is not an existing directory: $shown"
-  # Named as the disk spells it, as new makes it and as the strict markers are read.
-  confine_spelled "$r" ||
-    confine_refuse "$what is spelled $(confine_text "$CONFINE_SPELLED") on disk, and a run directory's name is lowercase: $shown"
   links=$(find "$CONFINE_WT/$r" -type l -print 2>/dev/null) || confine_refuse "$what cannot be fully read: $shown"
   if [ -n "$links" ]; then
     [ "$CONFINE_STRICT" != 1 ] && confine_links_inside "$CONFINE_WT/$r" || confine_refuse "$what holds a symbolic link: $shown"
@@ -1198,6 +1195,10 @@ confine_rundir() {
   else
     [ "$CONFINE_STRICT" != 1 ] || confine_refuse "git cannot tell whether $what is tracked: $shown"
   fi
+  # Named as the disk spells it, as new makes it and as the strict markers are read. After the tracked
+  # check, which looks in any letter case, so a folder git tracks is refused for that.
+  confine_spelled "$r" ||
+    confine_refuse "$what is spelled $(confine_text "$CONFINE_SPELLED") on disk, and a run directory's name is lowercase: $shown"
   confine_ignore_all "$CONFINE_WT/$r/.gitignore" || confine_refuse "$what has no .gitignore holding exactly *: $shown"
   CONFINE_RUN=$r
 }
