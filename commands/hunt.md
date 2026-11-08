@@ -130,8 +130,9 @@ Code asks about a shell read outside the working directory.
    plugin's names, a link out of the tree, a linked worktree) is a
    `preflight: note:` line. Pass each note to the agent as it stands,
    for the report, and go on; when one names project config, tell the user once that
-   Claude Code loaded it with this session, and that strict mode is for a repository
-   they do not trust: nothing in the repository can turn strict mode off when Claude
+   Claude Code loaded it with this session, unless the session was started with the
+   strict launch line, and that strict mode is for a repository they do not trust:
+   nothing in the repository can turn strict mode off when Claude
    Code starts with the strict launch line, or with `AUDITOR_STRICT=1` in managed
    settings, while started any other way the repository's own settings (hooks,
    `env`, `CLAUDE_ENV_FILE`) apply first and can switch it off (Rule 11f). On a

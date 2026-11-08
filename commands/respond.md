@@ -126,8 +126,9 @@ Code asks about a shell read outside the working directory.
    the mode, default or strict (Rule 11f), and goes to the agent for the ledger and
    the plan. In default mode each `preflight: note:` line goes to the agent as it
    stands, and the run goes on; when one names project config, tell the user once
-   that Claude Code loaded it with this session, and that strict mode is for a
-   repository they do not trust (Rule 11f). On a refusal (exit 64, one
+   that Claude Code loaded it with this session, unless the session was started
+   with the strict launch line, and that strict mode is for a repository they do
+   not trust (Rule 11f). On a refusal (exit 64, one
    `preflight: refused: …` line), stop: show the line and its advice; an incident
    workspace of its own, outside the repository, also works. A call that is denied
    or cannot run stops the run too, in both modes: say why, since the session's own
