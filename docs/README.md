@@ -10,14 +10,14 @@ Commands are namespaced `auditor`, so you invoke them as `/auditor:audit`, `/aud
 
 ## Pick a depth
 
-| Depth | When | Run | Reads | Writes | Cost |
+| Depth | When | Run | Reads | Writes | [Cost](../COSTS.md#cost-and-time-by-depth) |
 |-------|------|-----|-------|--------|------|
-| **Quick** | a branch or pull request, a first look at a repository, one function | `/auditor:diff-audit` · `/auditor:quick-scan` (whole repository) · `/auditor:deep-review <file> <fn>` | the changed code + one hop of callers and callees · SAST, advisories and the CRITICAL/HIGH vectors · one function | `PR-REPORT.md` · `QUICK-SCAN.md` · `DEEP-REVIEW-<unit>.md` | $ |
-| **Standard** | one module or program before it merges | `/auditor:audit <path> --scope …` | every in-scope item for that path | `REPORT.md`, internal: a risk score and a deploy verdict | $$ |
-| **Full** | a release, or a report for someone outside the team | `/auditor:audit-cycle` (unattended) · `/auditor:audit-assist` (you steer) · `/auditor:re-audit` after fixes | everything in scope, a threat model, peer review (re-audit: the fix delta) | `REPORT.md`, client style: no deploy guarantee (audit-cycle adds a PDF, and PoCs with `--with-poc`) · `RE-AUDIT.md`, with an updated deploy verdict | $$$$ |
-| **[CI](ci.md)** | every pull request | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | as Quick | `findings.json` and SARIF on the runner, one pass/fail line in the log | $ (the tools job uses no model) |
+| **Quick** | a branch or pull request, a first look at a repository, one function | `/auditor:diff-audit` · `/auditor:quick-scan` (whole repository) · `/auditor:deep-review <file> <fn>` | the changed code + one hop of callers and callees · SAST, advisories and the CRITICAL/HIGH vectors · one function | `PR-REPORT.md` · `QUICK-SCAN.md` · `DEEP-REVIEW-<unit>.md` | $1–4 · under 10 min |
+| **Standard** | one module or program before it merges | `/auditor:audit <path> --scope …` | every in-scope item for that path | `REPORT.md`, internal: a risk score and a deploy verdict | $13–19 · 35–60 min |
+| **Full** | a release, or a report for someone outside the team | `/auditor:audit-cycle` (unattended) · `/auditor:audit-assist` (you steer) · `/auditor:re-audit` after fixes | everything in scope, a threat model, peer review (re-audit: the fix delta) | `REPORT.md`, client style: no deploy guarantee (audit-cycle adds a PDF, and PoCs with `--with-poc`) · `RE-AUDIT.md`, with an updated deploy verdict | about $20 · about 1 h, on a 3K-line program |
+| **[CI](ci.md)** | every pull request | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | as Quick | `findings.json` and SARIF on the runner, one pass/fail line in the log | tools job $0; review about $1 a pull request |
 
-Costs are relative marks; [COSTS.md](../COSTS.md) has the numbers. Outside the depths: `poc`, `patch`, `economic-sim` and `triage` work on one finding; `intake` and `threat-model` are Full's building blocks; `audit-report` assembles the internal report from a walk run in pieces; `spec-audit` checks code against a spec; `hunt` and `respond` are for after an incident. More on each depth: [audit-flows.md](audit-flows.md).
+Costs and times were measured on 2026-11-08 with `claude-opus-5-5`, on a 3K-line and a 12K-line program; Full ran once, on the 3K-line one ([COSTS.md](../COSTS.md#cost-and-time-by-depth)). Outside the depths: `poc`, `patch`, `economic-sim` and `triage` work on one finding; `intake` and `threat-model` are Full's building blocks; `audit-report` assembles the internal report from a walk run in pieces; `spec-audit` checks code against a spec; `hunt` and `respond` are for after an incident. More on each depth: [audit-flows.md](audit-flows.md).
 
 ## I want to… → use this
 
@@ -66,5 +66,5 @@ In CI, `--ci` on `/auditor:diff-audit` and `/auditor:quick-scan` asks nothing, w
 - [`SKILL.md`](../SKILL.md) — the orchestrator the agent reads first.
 - [`OUTPUT-RULES.md`](../OUTPUT-RULES.md) — the mandatory output format, severity scale and operating-safety rules (Rule 11).
 - [`AGENTS.md`](../AGENTS.md) — agent orchestration overview.
-- [`COSTS.md`](../COSTS.md) — token/dollar estimates by model and repo size.
+- [`COSTS.md`](../COSTS.md) — measured cost and time per depth.
 - [`QUESTIONS.md`](../QUESTIONS.md) — the 47-question pre-audit questionnaire.

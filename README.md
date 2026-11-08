@@ -12,14 +12,14 @@ auditor-skill is a Claude Code plugin that security-reviews Solana programs and 
 
 CI runs Quick on every pull request ([docs/ci.md](docs/ci.md)). Quick, Standard and Full need nothing beyond installing the plugin; intake is part of Full only.
 
-| Depth | When | Run | Reads | Writes | Cost |
+| Depth | When | Run | Reads | Writes | [Cost](COSTS.md#cost-and-time-by-depth) |
 |-------|------|-----|-------|--------|------|
-| **Quick** | a branch or pull request, a first look at a repository, one function | `/auditor:diff-audit` · `/auditor:quick-scan` (whole repository) · `/auditor:deep-review <file> <fn>` | the changed code + one hop of callers and callees · SAST, advisories and the CRITICAL/HIGH vectors · one function | `PR-REPORT.md` · `QUICK-SCAN.md` · `DEEP-REVIEW-<unit>.md` | $ |
-| **Standard** | one module or program before it merges | `/auditor:audit <path> --scope …` | every in-scope item for that path | `REPORT.md`, internal: a risk score and a deploy verdict | $$ |
-| **Full** | a release, or a report for someone outside the team | `/auditor:audit-cycle` (unattended) · `/auditor:audit-assist` (you steer) · `/auditor:re-audit` after fixes | everything in scope, a threat model, peer review (re-audit: the fix delta) | `REPORT.md`, client style: no deploy guarantee (audit-cycle adds a PDF, and PoCs with `--with-poc`) · `RE-AUDIT.md`, with an updated deploy verdict | $$$$ |
-| **[CI](docs/ci.md)** | every pull request | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | as Quick | `findings.json` and SARIF on the runner, one pass/fail line in the log | $ (the tools job uses no model) |
+| **Quick** | a branch or pull request, a first look at a repository, one function | `/auditor:diff-audit` · `/auditor:quick-scan` (whole repository) · `/auditor:deep-review <file> <fn>` | the changed code + one hop of callers and callees · SAST, advisories and the CRITICAL/HIGH vectors · one function | `PR-REPORT.md` · `QUICK-SCAN.md` · `DEEP-REVIEW-<unit>.md` | $1–4 · under 10 min |
+| **Standard** | one module or program before it merges | `/auditor:audit <path> --scope …` | every in-scope item for that path | `REPORT.md`, internal: a risk score and a deploy verdict | $13–19 · 35–60 min |
+| **Full** | a release, or a report for someone outside the team | `/auditor:audit-cycle` (unattended) · `/auditor:audit-assist` (you steer) · `/auditor:re-audit` after fixes | everything in scope, a threat model, peer review (re-audit: the fix delta) | `REPORT.md`, client style: no deploy guarantee (audit-cycle adds a PDF, and PoCs with `--with-poc`) · `RE-AUDIT.md`, with an updated deploy verdict | about $20 · about 1 h, on a 3K-line program |
+| **[CI](docs/ci.md)** | every pull request | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | as Quick | `findings.json` and SARIF on the runner, one pass/fail line in the log | tools job $0; review about $1 a pull request |
 
-Costs are relative marks; [COSTS.md](COSTS.md) has the numbers. Outside the depths: `poc`, `patch`, `economic-sim` and `triage` work on one finding; `intake` and `threat-model` are Full's building blocks; `audit-report` assembles the internal report from a walk run in pieces; `spec-audit` checks code against a spec; `hunt` and `respond` are for [after an incident](#after-an-incident).
+Costs and times were measured on 2026-11-08 with `claude-opus-5-5`, on a 3K-line and a 12K-line program; Full ran once, on the 3K-line one ([COSTS.md](COSTS.md#cost-and-time-by-depth)). Outside the depths: `poc`, `patch`, `economic-sim` and `triage` work on one finding; `intake` and `threat-model` are Full's building blocks; `audit-report` assembles the internal report from a walk run in pieces; `spec-audit` checks code against a spec; `hunt` and `respond` are for [after an incident](#after-an-incident).
 
 **What's inside:** 20 checklists · 1,465 verification items · 141 known attack vectors · executable PoCs + fix patches.
 
@@ -187,7 +187,7 @@ The audit is complete when every **in-scope** item has an explicit verdict; out-
 
 1. **Intake, for Full only.** Full runs it for you: `/auditor:audit-cycle` with the [QUESTIONS.md](QUESTIONS.md) defaults, each listed in the report, and `/auditor:audit-assist` by asking at its first checkpoint. The answers set the severity calibration, the trust model and which compliance checklists apply. With an agent that has no commands, fill a copy of QUESTIONS.md first. Quick and Standard need no intake.
 
-2. **Review estimated costs:** Check [COSTS.md](COSTS.md) for token/dollar estimates based on your repo size and chosen model.
+2. **Check the cost:** [COSTS.md](COSTS.md) has the measured cost and time of each depth.
 
 3. **Choose your scope** for Standard and Full: `--scope full|program|backend|frontend` picks the part of the repository a run reviews. [SKILL.md](SKILL.md#scope-gated-loading--load-what-the-repo-needs) defines each one; the Quick commands take none.
 
@@ -202,7 +202,7 @@ auditor-skill/
 ├── OUTPUT-RULES.md          ← Mandatory output format, severity scale
 ├── FULL-AUDIT.md            ← Step-by-step execution plan for complete audits
 ├── QUESTIONS.md             ← Pre-audit questionnaire (intake asks it in a Full run)
-├── COSTS.md                 ← Estimated costs by model and repo size
+├── COSTS.md                 ← Measured cost and time per depth
 ├── CONTRIBUTING.md          ← Branch / PR flow, corpus-count rules, no AI-attribution policy
 ├── SECURITY.md              ← Private vulnerability reporting for the skill and its tooling
 │
@@ -401,7 +401,7 @@ Read the auditor-skill files in ~/.claude/skills/auditor-skill/ and perform a fu
 
 ## What's new
 
-- **Three depths and a CI mode (v7.7).** The README and docs start from what you want checked: Quick (`/auditor:diff-audit`, `/auditor:quick-scan`, `/auditor:deep-review`), Standard (`/auditor:audit <path> --scope …`) and Full (`/auditor:audit-cycle` or `/auditor:audit-assist`, then `/auditor:re-audit`). The scopes are defined once, in SKILL.md, and intake is part of Full only. Each Quick command writes a report in its run directory (`PR-REPORT.md`, `QUICK-SCAN.md`, `DEEP-REVIEW-<unit>.md`). `--ci` and `--fail-on <N>` on `diff-audit` and `quick-scan` run them unattended: they write `audit_<n>/findings.json` and end with one verdict line, and `templates/ci/auditor-pr.yml` runs Quick on every pull request ([docs/ci.md](docs/ci.md)). On a public repository CI publishes pass/fail only, and no longer fails a job for want of a private channel.
+- **Three depths and a CI mode (v7.7).** The README and docs start from what you want checked: Quick (`/auditor:diff-audit`, `/auditor:quick-scan`, `/auditor:deep-review`), Standard (`/auditor:audit <path> --scope …`) and Full (`/auditor:audit-cycle` or `/auditor:audit-assist`, then `/auditor:re-audit`). The scopes are defined once, in SKILL.md, and intake is part of Full only. Each Quick command writes a report in its run directory (`PR-REPORT.md`, `QUICK-SCAN.md`, `DEEP-REVIEW-<unit>.md`). `--ci` and `--fail-on <N>` on `diff-audit` and `quick-scan` run them unattended: they write `audit_<n>/findings.json` and end with one verdict line, and `templates/ci/auditor-pr.yml` runs Quick on every pull request ([docs/ci.md](docs/ci.md)). On a public repository CI publishes pass/fail only, and no longer fails a job for want of a private channel. COSTS.md now gives the measured cost and time of each depth, in place of April 2026's estimates.
 - **Strict mode is opt-in (v7.7).** By default the checks that used to stop a run print a note instead: the run goes on, and the report lists each note under Coverage & Limitations. Only what could hang or confuse the checks themselves still stops it: a named pipe or device in a `.git`, a `.git` file over 16 KiB, a line end in a name there, or a git config with more than 64 includes. Builds and PoCs run natively unless intake, `AUDITOR_EXEC_MODE` or strict mode says otherwise, and nothing asks for the execution mode mid-run. Strict mode, for code you don't trust, keeps the refusals and builds only in isolated mode: `AUDITOR_STRICT=1`, `--strict` on a command, or intake's "Untrusted source" answer turns it on, and the launch line with `templates/strict-settings.json` gives its full effect ([OUTPUT-RULES.md Rule 11f](OUTPUT-RULES.md#11f--default-and-strict-mode)).
 - **Bundled tools run without asking (v7.7).** The commands pre-approve the bundled entry points they run, each checking its arguments and taking paths only inside the working tree: read-only git, run directories, the collectors, the runners (`target.sh`, `deps.sh`, `sast.sh`), the PoC runner and the Rust tools, which take a `--contract=1` marker an older build refuses. Also new: `audit-logs`, a Rust profiler for the detection & response recipes; opt-in post-patch validation; rules of engagement before live probes (Q47); audit-scan's workflow pass; forensic-readiness items in checklist 17; and a per-project layout recorded at intake.
 - **Bundled steps run without asking (v7.7).** Each `/auditor:*` command, and the root skill, starts with `scripts/preflight.sh`, which checks the working tree for Claude Code skills, commands, agents, hooks, MCP servers or settings beyond a few harmless keys. By default what strict mode would refuse is a note in the report, apart from the few shapes still refused in both modes, which Rules 11e and 11f list. Each command then pre-approves file reads, for any path, and of the bundled programs only those its steps use: run directories, read-only git, the collectors, the program snapshot, RPC reads, the lockfile recipes, the probe, dependency, SAST and build runners, the PoC runner, the PDF renderer, `audit-scan` and `audit-mem`; the analysis skill in the next entry pre-approves the analysis recipes, `jq-ro.sh` and `audit-logs`. Each of those programs checks its own arguments and itself writes only into run directories, the `audit-mem` store and scratch directories outside the tree, besides the toolchain caches its downloads fill. Runs stay smooth, and the limits are disclosed rather than gated: in native mode, the default unless intake, `AUDITOR_EXEC_MODE` or strict mode says otherwise, the project's builds and tests run on your machine without a prompt for each run; the isolated-mode self-check knows credentials only by their names and places; and preflight covers neither a session you start in such a tree for other work nor a command that a repository file has replaced; starting Claude Code with the strict launch line, which loads none of the repository's skills, commands or settings, rules both out ([Permissions and isolation](#permissions-and-isolation)).
@@ -470,9 +470,9 @@ grep command or check to perform
 2. Add new items following the existing format (ID prefix + sequential number)
 3. Update the item count in [SKILL.md](SKILL.md)
 
-### Updating Cost Estimates
+### Updating Costs
 
-If model pricing changes, update [COSTS.md](COSTS.md) with new rates.
+When models or prices change, re-measure and update [COSTS.md](COSTS.md).
 
 ---
 
@@ -503,10 +503,10 @@ MIT — use it, fork it, improve it, sell services built on it. Attribution appr
 A: It covers more items than most paid audits (1,465 plus 141 known-vector checks vs typical 50-200), but an AI auditor cannot do everything a human can (social engineering assessment, business logic review requiring domain expertise, legal compliance opinions). Use this as a first pass, then hire humans for what it flags.
 
 **Q: Which AI model should I use?**
-A: In Claude Code each agent names its own model tier: seven run on Opus, and context-builder and audit-reporter on Sonnet ([docs/agents.md](docs/agents.md)). The Quick commands name no agent, so your session's model runs them (`/model`, or `claude --model`). [COSTS.md](COSTS.md) has the estimates.
+A: In Claude Code each agent names its own model tier: seven run on Opus, and context-builder and audit-reporter on Sonnet ([docs/agents.md](docs/agents.md)). The Quick commands name no agent, so your session's model runs them (`/model`, or `claude --model`). [COSTS.md](COSTS.md)'s figures were measured with `claude-opus-5-5` as the session model; Sonnet as the session model is not measured yet.
 
 **Q: How long does an audit take?**
-A: It depends on the depth, the repository's size and the model. Quick scales with the change, Standard with the module, and Full takes longest: six agents carry it from context reconstruction through a threat model and peer review to the report, and `--with-poc` adds two more. [COSTS.md](COSTS.md) has the estimates.
+A: It depends on the depth, the repository's size and the model. Quick scales with the change, Standard with the module, and Full takes longest: six agents carry it from context reconstruction through a threat model and peer review to the report, and `--with-poc` adds two more. Measured: Quick under 10 minutes; Standard 36 minutes on a 3K-line program and 56 on a 12K-line one; Full 61 minutes on the 3K-line one. Nothing at 50K lines was measured ([COSTS.md](COSTS.md)).
 
 **Q: Can I use this in CI/CD?**
 A: Yes. CI runs Quick on every pull request: copy `templates/ci/auditor-pr.yml` into `.github/workflows/` and follow [docs/ci.md](docs/ci.md#setup). Its tools job runs the bundled analyzers with no model and no secrets, for fork pull requests too. Its review job runs `/auditor:diff-audit --ci` on pull requests from your own branches, in strict mode with nothing built, and fails when a counted finding reaches `AUDITOR_FAIL_ON` (7 by default), when an analyzer did not run, or when the review stopped early ([what the verdict means](docs/ci.md#what-the-verdict-means)). On a public repository the job posts pass/fail only — no finding text or counts: logs, job summaries and uploaded artifacts are readable by any signed-in GitHub user, so the details stay on the runner, you read them by running the same command in a clone of your own, and the job never fails only because no private channel exists (OUTPUT-RULES Rule 11d). For a scheduled scan of the default branch, run `/auditor:quick-scan --ci`.

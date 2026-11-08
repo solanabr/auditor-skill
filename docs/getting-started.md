@@ -107,7 +107,7 @@ Audit the Solana program in programs/my-program/ using the auditor-skill with PR
 /auditor:audit-cycle --scope full
 ```
 
-The report lands at `audit_<n>/REPORT.md`, in a run directory that `rundir.sh new audit` makes: `<n>` is the next number whose name the repository tracks nothing under, and the directory is created with `mkdir` (not `-p`), stopping if it already exists. An existing `audit_<n>/` is reused only when git does not track it and it holds no symbolic link that leads out of it (in strict mode, none at all), after you confirm which one; nothing is written into a tracked run directory ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). Review [COSTS.md](../COSTS.md) first — a Full run on a large repo can burn real credits.
+The report lands at `audit_<n>/REPORT.md`, in a run directory that `rundir.sh new audit` makes: `<n>` is the next number whose name the repository tracks nothing under, and the directory is created with `mkdir` (not `-p`), stopping if it already exists. An existing `audit_<n>/` is reused only when git does not track it and it holds no symbolic link that leads out of it (in strict mode, none at all), after you confirm which one; nothing is written into a tracked run directory ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). Review [COSTS.md](../COSTS.md) first: a Full run cost about $20 and an hour on a 3K-line program.
 
 **CI** — to run Quick on every pull request, copy `templates/ci/auditor-pr.yml` into `.github/workflows/` and follow [ci.md](ci.md). A CI run asks nothing and denies every call that would ask ([section 6](#6-prompts-and-isolation)); an analyzer that did not run fails its verdict.
 
