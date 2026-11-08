@@ -518,7 +518,7 @@ Under `claude -p` and in CI, export `AUDITOR_STRICT=1` in the job's environment 
 | `git-ro.sh`, the recipes, `collect.sh --repo .`: a session below the top level | the enclosing repository is read | refused |
 | `git-ro.sh`, the recipes, the collector: a checkout another user owns; a link in a hooks directory; a worktree, submodule or separate git directory that points back | read | refused |
 | `git-ro.sh`, the recipes, the collector: any other link in a git directory | refused | refused |
-| `git-ro.sh copy`: a source another user owns | copied through plumbing, as for an old git, never cloned | refused |
+| `git-ro.sh copy`, `target.sh`: a source another user owns | copied through plumbing, as for an old git, never cloned (`copy` makes the same bare copy; `target.sh` a commit's tracked files), with a note from `target.sh` | refused |
 | `git-ro.sh`, the recipes: a git directory outside the working directory in any other layout | noted: no history is read from it (the collector refuses it) | refused |
 | `git-ro.sh`, the recipes, the collector: borrowed objects (alternates), grafts | read, with a note | refused |
 | `git-ro.sh`, the recipes, the collector: the work-tree scan for named pipes and devices where git reads its own files | skipped, since their reads open no work-tree file | runs |
