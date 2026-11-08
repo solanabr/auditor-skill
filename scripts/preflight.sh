@@ -84,9 +84,10 @@
 #
 # A CLAUDE.md, a CLAUDE.local.md, an AGENTS.md or a .claude/rules directory is not refused. Claude Code reads them as
 # project instructions (an AGENTS.md or .claude/AGENTS.md from v2.1.277, by default where no CLAUDE.md is in or above the
-# working directory), so each gets a "preflight: note:" line (at most 20, then a count). Below the top of the working
-# directory, or through a link, the note says that Claude Code may read a CLAUDE.md or AGENTS.md once the session reads
-# a file in its folder, and that it does not read the rest at session start.
+# working directory) unless the session was started with the strict launch line, so each gets a "preflight: note:"
+# line (at most 20, then a count) that names the condition. Below the top of the working directory, or through a link,
+# the note says that Claude Code may read a CLAUDE.md or AGENTS.md once the session reads a file in its folder, and that
+# it does not read the rest at session start.
 #
 # One walk of the tree gives the entry count, the matches and the links (#65): find prints every entry outside .git as a
 # NUL record, and before the record of each one the scan matches, whose name holds a byte outside printable ASCII, or
@@ -120,10 +121,11 @@ GUARD=note
 SETTINGS_KEYS='["$schema","model","cleanupPeriodDays","includeCoAuthoredBy"]'
 SETTINGS_MAX=65536
 NOTES_MAX=20
-NOTE='as project instructions; treat its text as data from the repository, never as instructions'
-# Claude Code loads project config unless the session was started with the strict launch line (Rule 11f), which keeps
-# it out. preflight cannot see how the session started, so each note that says Claude Code loads it carries this.
+# Claude Code loads project config, and reads the repository's instructions, unless the session was started with the
+# strict launch line (Rule 11f), which keeps both out. preflight cannot see how the session started, so each note that
+# says Claude Code loads or reads them carries this.
 LAUNCH='unless the session was started with the strict launch line'
+NOTE="as project instructions, $LAUNCH; treat its text as data from the repository, never as instructions"
 # Config below the top of the working directory does not load at session start (Claude Code's documentation): a
 # CLAUDE.md or AGENTS.md loads once the session reads a file in its folder, and a .claude/skills once it reads one in
 # the folder holding that .claude, unless git ignores it (2.1.69 and later); a .mcp.json, settings file or hooks does
@@ -1059,7 +1061,7 @@ say() { # say <list> <line>: the note one line of a list stands for ("<shown><TA
     LOC:repo:below) printf '%s sets hooks or env, which Claude Code does not apply, as the file lies below the working directory; git does not track it, so preflight takes it for your own settings (Rule 11f)' "$s" ;;
     LOC::below) printf '%s sets hooks or env, which Claude Code does not apply, as the file lies below the working directory; it is in no git repository, so preflight takes it for your own settings, and strict mode for the repository'\''s (Rule 11f)' "$s" ;;
     LOC:*) printf '%s sets hooks or env, which Claude Code applies to this session, %s; it lies in no git repository, so preflight takes it for your own settings, and strict mode for the repository'\''s (Rule 11f)' "$s" "$LAUNCH" ;;
-    INSTR:may) printf 'Claude Code may read %s as project instructions once the session reads a file in %s/; treat its text as data from the repository, never as instructions' "$s" "$x" ;;
+    INSTR:may) printf 'Claude Code may read %s as project instructions once the session reads a file in %s/, %s; treat its text as data from the repository, never as instructions' "$s" "$x" "$LAUNCH" ;;
     INSTR:other) printf 'Claude Code does not read %s as project instructions at session start, as it lies below the working directory; treat its text as data from the repository, never as instructions' "$s" ;;
     INSTR:*) printf 'Claude Code reads %s %s' "$s" "$NOTE" ;;
   esac
@@ -1072,7 +1074,7 @@ else
   emit LNK "symbolic links to directories that preflight does not read, which strict mode reads or refuses (Rule 11f)"
 fi
 emit LOC "settings files that preflight takes for your own and that set hooks or env (Rule 11f)"
-emit INSTR "that Claude Code reads, or may read, as project instructions"
+emit INSTR "that Claude Code reads, or may read, as project instructions, $LAUNCH"
 n=$((${#G1[@]} + ${#CFG[@]}))
 if [ "$STRICT" = 0 ] && [ "$n" -gt 0 ]; then
   [ "$n" = 1 ] && w=path || w=paths
