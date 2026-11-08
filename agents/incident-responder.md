@@ -39,11 +39,14 @@ paths (`incident_<n>/corpus*/transactions.jsonl`, and the `--logs` copies in
 `incident_<n>/logs/`, never the export's own path), the snapshot lines from
 `snapshot-program.sh`, the
 provider domain, the window and caps the human approved for each collection, the
-execution mode and the PoC build cache once they are recorded, and, later, the
-`context-builder` and `poc-engineer` results. Work from exactly those. Copy the
-mode and the cache into `LEDGER.md`'s **Execution mode** and **PoC build cache**
-lines; the command writes the mode to `incident_<n>/exec-mode` as well, where
-`run.sh --crate` reads it. Before an incident's first PoC run the command records
+execution mode and the PoC build cache once they are recorded, preflight's mode
+line and its notes, and, later, the `context-builder` and `poc-engineer` results.
+Work from exactly those. Copy the mode and the cache into `LEDGER.md`'s **Execution
+mode** and **PoC build cache** lines: the mode the runners' `>> execution mode:`
+line shows, the stricter of `incident_<n>/exec-mode`, `AUDITOR_EXEC_MODE` and strict
+mode, native when none says anything. Every note a bundled tool printed (a
+`<tool>: note:` line, or a runner's `>> note:` line) goes into the report as it
+stands (Rule 11f). Before an incident's first PoC run the command records
 it in `INCIDENTS.json` with its `id` and `root_cause_class`, since `run.sh --crate`
 reads that class and stops without it: keep those ids, and the class unless your
 evidence changes it, when you write the file in full. When a Leg-3 `run.sh` run

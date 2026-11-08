@@ -275,7 +275,8 @@ Code asks about a shell read outside the working directory.
    (`incident_<n>/corpus*/transactions.jsonl` once a collection ran, and the
    `--logs` copies in `incident_<n>/logs/`); the snapshot lines; the provider
    domain; the window and caps the collection used, and whether it ended with its
-   `collection gaps: N` line; and the execution mode, if one is already recorded.
+   `collection gaps: N` line; the execution mode, if one is already recorded; and
+   preflight's mode line and every note step 0 and step 2 printed.
    The fork starts `LEDGER.md` from `${CLAUDE_PLUGIN_ROOT}/templates/hunt-ledger.md`
    and runs `profile.sh` over every corpus path the brief names, or the same profile
    from `audit-logs` when it is built, for outcome/version histograms, window, and

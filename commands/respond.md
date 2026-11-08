@@ -181,7 +181,8 @@ Code asks about a shell read outside the working directory.
 
 2. **Turn the lead into seed entities, in the `auditor:dnr-analyze` skill.** Invoke
    it with the Skill tool, with arguments that start `respond seed incident_<n>`
-   (the step-1 directory) and carry the lead and the snapshot lines. Pass an
+   (the step-1 directory) and carry the lead, the snapshot lines, and preflight's
+   mode line and every note step 0 printed. Pass an
    `INC-<n>.<k>` id, a signature or an address as it is. Write an alert or free
    text to a new file, `incident_<n>/lead.txt` (`lead-2.txt`, … once that exists),
    with the Write tool and name that file instead, since its text may come from an

@@ -75,8 +75,9 @@
 #       not read.
 #   G   The lines agents/poc-engineer.md gives a runner it writes, run as the first lines of such a runner in a
 #       crate, from the working directory and from the crate, find <R> from the runner's path and take the
-#       stricter of <R>/exec-mode and AUDITOR_EXEC_MODE as run.sh --crate does; they stop on none, on no mode, on
-#       an exec-mode that is not a regular file holding one word and at most one newline, and on an
+#       stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT, or a strict entry in their
+#       own <R>) as run.sh --crate does, native when none of them says anything; they stop on none, on an
+#       exec-mode that is not a regular file holding one word and at most one newline, and on an
 #       AUDITOR_EXEC_MODE that names no mode, and in isolated mode unless probe.sh --only isolation finds nothing
 #       readable. poc-harness.md §1 shows the same lines.
 #   I   Every python3 call in the bodies and the corpus, in a code span or a code line that starts with python3
@@ -1393,10 +1394,12 @@ else bad "the python3 -I check could not read the tree"; fi
 # ---- 6. the mode lines a runner poc-engineer writes starts with -------------------------------------------
 # Run as the first lines of a runner in a crate at audit_1/poc/F-1, started from the working directory and from
 # the crate itself, with a stand-in installation whose probe.sh prints the isolation line FAKE_ISOLATION holds:
-# like run.sh --crate, they take the stricter of <R>/exec-mode and AUDITOR_EXEC_MODE; they stop on none, on no
-# mode, on an exec-mode that is not a regular file holding one word and at most one newline (run.sh's mode_file
-# reads it so), and on an AUDITOR_EXEC_MODE that names no mode, and in isolated mode unless the self-check finds
-# nothing readable. poc-harness.md §1 shows the same lines, with the corpus's name for the root.
+# like run.sh --crate, they take the stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT,
+# read as Rule 11f reads it, with a note for a value that is no word for on or off, or a strict entry of any kind
+# in their own <R>, not in another run directory), native when none of them says anything (spec §4.7); they stop
+# on none, on an exec-mode that is not a regular file holding one word and at most one newline (run.sh's
+# mode_file reads it so), and on an AUDITOR_EXEC_MODE that names no mode, and in isolated mode unless the
+# self-check finds nothing readable. poc-harness.md §1 shows the same lines, with the corpus's name for the root.
 G="$T/gate"
 mkdir -p "$G/inst/scripts/runner" "$G/ws/audit_1/poc/F-1" "$G/home"
 printf '#!/bin/bash\nprintf "%%s\\n" "${FAKE_ISOLATION:-isolation: readable: SSH keys (1); ~/.ssh/id_ed25519}"\n' \
@@ -1421,12 +1424,14 @@ fi
   awk -v root="$G/inst" '$0 == "AUDITOR_ROOT=\047${CLAUDE_PLUGIN_ROOT}\047" { print "AUDITOR_ROOT=\047" root "\047"; next } { print }' "$G/lines"
   printf 'echo "past the gate: $AUDITOR_EXEC_MODE"\n'; } > "$G/ws/audit_1/poc/F-1/run.sh"
 CLEAN='isolation: none of the credentials the self-check reads is readable'
-# <exec-mode>|<AUDITOR_EXEC_MODE>|<self-check>|<want>: an empty exec-mode is none at all, @dir a directory,
-# @link:<word> a symbolic link to a file that holds <word>, @bytes:<format> the bytes printf writes from <format>
-# (\n a newline), and any other a file that holds the word and one newline.
-while IFS='|' read -r file env iso want; do
+# <exec-mode>|<AUDITOR_EXEC_MODE>|<AUDITOR_STRICT>|<marker>|<self-check>|<want>|<note>: an empty exec-mode is none
+# at all, @dir a directory, @link:<word> a symbolic link to a file that holds <word>, @bytes:<format> the bytes
+# printf writes from <format> (\n a newline), and any other a file that holds the word and one newline. The
+# marker is audit_1/strict as an empty file, a directory or a dangling link, or (other) incident_1/strict, which is
+# not this runner's <R>. A run that goes on prints <note>, when given, on the line before the gate's.
+while IFS='|' read -r file env strict marker iso want note; do
   [ -n "$want" ] || continue
-  rm -rf "$G/ws/audit_1/exec-mode" "$G/ws/audit_1/linked"
+  rm -rf "$G/ws/audit_1/exec-mode" "$G/ws/audit_1/linked" "$G/ws/audit_1/strict" "$G/ws/incident_1"
   case "$file" in
     '') ;;
     @dir) mkdir "$G/ws/audit_1/exec-mode" ;;
@@ -1434,49 +1439,73 @@ while IFS='|' read -r file env iso want; do
     @bytes:*) printf -- "${file#@bytes:}" > "$G/ws/audit_1/exec-mode" ;;
     *) printf '%s\n' "$file" > "$G/ws/audit_1/exec-mode" ;;
   esac
+  case "$marker" in
+    file) : > "$G/ws/audit_1/strict" ;;
+    dir) mkdir "$G/ws/audit_1/strict" ;;
+    dangling) ln -s nowhere "$G/ws/audit_1/strict" ;;
+    other) mkdir -p "$G/ws/incident_1" && : > "$G/ws/incident_1/strict" ;;
+  esac
   set -- FAKE_ISOLATION="$CLEAN"
   [ "$iso" = readable ] && set -- FAKE_ISOLATION="isolation: readable: SSH keys (1); ~/.ssh/id_ed25519"
   [ -n "$env" ] && set -- "$@" AUDITOR_EXEC_MODE="$env"
+  [ -n "$strict" ] && set -- "$@" AUDITOR_STRICT="$strict"
+  expect="past the gate: $want"
+  [ -n "$note" ] && expect="$note
+$expect"
   for from in 'working directory' crate; do
     if [ "$from" = crate ]; then
       out=$(cd "$G/ws/audit_1/poc/F-1" && env -i PATH="$PATH" HOME="$G/home" "$@" bash ./run.sh 2>&1); rc=$?
     else
       out=$(cd "$G/ws" && env -i PATH="$PATH" HOME="$G/home" "$@" bash audit_1/poc/F-1/run.sh 2>&1); rc=$?
     fi
-    label="runner gate, started from the $from: exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}', self-check $iso"
+    label="runner gate, started from the $from: exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}', AUDITOR_STRICT '${strict:-unset}', strict marker ${marker:-none}, self-check $iso"
     case "$want" in
       stop) if [ "$rc" = 3 ] && [ "${out#*past the gate}" = "$out" ] && [ "${out#*'[PoC-ATTEMPTED] blocker:'}" != "$out" ]; then
               ok "$label -> exit 3, nothing past the gate"
             else bad "$label: exit $rc, want 3 before anything else: ${out:0:300}"; fi ;;
-      *)    if [ "$rc" = 0 ] && [ "$out" = "past the gate: $want" ]; then ok "$label -> runs in $want mode"
+      *)    if [ "$rc" = 0 ] && [ "$out" = "$expect" ]; then ok "$label -> runs in $want mode"
             else bad "$label: exit $rc, want a run in $want mode: ${out:0:300}"; fi ;;
     esac
   done
 done <<'CASES'
-native||clean|native
-|native|clean|native
-||clean|stop
-none|native|clean|stop
-native|none|clean|stop
-isolated|native|clean|isolated
-isolated|native|readable|stop
-native|isolated|readable|stop
-native|isolated|clean|isolated
-|isolated|readable|stop
-native|Isolated|clean|stop
-native|NONE|clean|stop
-isolated|isolate|clean|stop
-|Isolated|clean|stop
-Isolated|native|clean|stop
-isolated native|native|clean|stop
-@dir|native|clean|stop
-@link:native|native|clean|stop
-@link:isolated||clean|stop
-@bytes:native||clean|native
-@bytes:native\n\n||clean|stop
-@bytes:native\n\n\n\nnone||clean|stop
-@bytes:native\n\n\n\nisolated||clean|stop
-@bytes:isolated\n\n|native|clean|stop
+native||||clean|native
+|native|||clean|native
+||||clean|native
+none|native|||clean|stop
+native|none|||clean|stop
+isolated|native|||clean|isolated
+isolated|native|||readable|stop
+native|isolated|||readable|stop
+native|isolated|||clean|isolated
+|isolated|||readable|stop
+native|Isolated|||clean|stop
+native|NONE|||clean|stop
+isolated|isolate|||clean|stop
+|Isolated|||clean|stop
+Isolated|native|||clean|stop
+isolated native|native|||clean|stop
+@dir|native|||clean|stop
+@link:native|native|||clean|stop
+@link:isolated||||clean|stop
+@bytes:native||||clean|native
+@bytes:native\n\n||||clean|stop
+@bytes:native\n\n\n\nnone||||clean|stop
+@bytes:native\n\n\n\nisolated||||clean|stop
+@bytes:isolated\n\n|native|||clean|stop
+||1||clean|isolated
+||1||readable|stop
+native||1||clean|isolated
+|native|yes||clean|isolated
+none||1||clean|stop
+||0||clean|native
+||OFF||clean|native
+||maybe||clean|isolated|>> note: AUDITOR_STRICT is 'maybe', read as on
+native|||file|clean|isolated
+native|||dir|clean|isolated
+native|||dangling|clean|isolated
+native|||file|readable|stop
+native|||other|clean|native
+|Isolated|1||clean|stop
 CASES
 
 echo "---- command forms: $pass passed, $failn failed"
