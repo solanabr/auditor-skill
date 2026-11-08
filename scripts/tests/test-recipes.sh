@@ -448,7 +448,7 @@ check "no case started a program the fixture's config names" test -z "$(fired)"
 # line runs a bundled script any other way (bash, cd or an assignment in front, or inside $( )). The calls of
 # git-ro.sh, the recipes, the runners, rpc-read.sh and rundir.sh then run as written, their placeholders
 # filled, in a fixture with no cargo, npm, curl or solana on PATH: git-ro.sh, the recipes and rundir.sh do
-# their work, and each runner reaches the blocker it gives when its tool or the recorded mode is missing, so
+# their work, and each runner reaches the blocker it gives when its tool is missing, so
 # none is refused. A code line that starts with a relative bundled path, a span that names a quoted root without
 # starting with it, and an audit-scan or audit-mem call missing --contract=1 right after it (or its subcommand)
 # are each refused.
@@ -616,7 +616,7 @@ while IFS=$'\t' read -r f n tool how cmd; do
     git-ro.sh) good=""; case "$RC" in 0|1|141) grep -q -e 'refused:' -e '^fatal:' "$T/err" || good=y ;; esac ;;
     recipes/*|rundir.sh) good=$( [ "$RC" = 0 ] && ! grep -q 'refused:' "$T/err" && echo y) ;;
     runner/deps.sh) good=$( [ "$RC" = 3 ] && grep -q '^deps: blocker: .* is not on PATH' "$T/err" && echo y) ;;
-    runner/target.sh) good=$( [ "$RC" = 3 ] && grep -q '^target: blocker: no recorded mode' "$T/err" && echo y) ;;
+    runner/target.sh) good=$( [ "$RC" = 3 ] && grep -q '^target: blocker: .* is not on PATH, so ' "$T/err" && echo y) ;;
     rpc-read.sh) good=$( [ "$RC" = 3 ] && grep -q '^\[blocker\] solana CLI not on PATH' "$T/err" && echo y) ;;
     *) good="" ;;
   esac
