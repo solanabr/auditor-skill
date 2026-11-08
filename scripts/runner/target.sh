@@ -36,10 +36,12 @@
 # incident --patch names (INC-<n>.<k>), or of every incident without one. In native mode it needs every
 # incident's, whatever --patch names, and builds nothing while any incident is supply_chain_or_ci: a patch of
 # one incident builds the same tree as the others. And natively nothing is built, whatever --run names, while
-# the INCIDENTS.json of any incident_* directory of the working directory (its name in any letter case)
-# records a supply_chain_or_ci incident or cannot be read, or the working directory cannot be listed, since
-# every --src is the working tree or a copy of it; a directory without INCIDENTS.json, or whose file records
-# no incident, counts for nothing (OUTPUT-RULES.md Rule 11a).
+# the INCIDENTS.json of any run directory of the auditor's in the working directory (incident_<n>, with the
+# .gitignore of exactly * that scripts/rundir.sh writes) records a supply_chain_or_ci incident or cannot be
+# read, or the working directory cannot be listed, since every --src is the working tree or a copy of it; a
+# run directory without INCIDENTS.json, or whose file records no incident, counts for nothing, and any other
+# incident_* directory (a client's Incident_Response/, a run moved aside) is passed over, with a note
+# (OUTPUT-RULES.md Rule 11a).
 #
 # The copy, in a scratch directory outside the working directory. A --src that is the top level of a git
 # repository (its git directory inside the working directory, holding no symbolic link, borrowing no objects
@@ -53,19 +55,19 @@
 # the way.
 #
 # The environment of every step is the cleaned one of scripts/lib/isolation.sh: env -i, a throwaway HOME
-# holding a fresh Solana keypair, TMPDIR in the scratch directory, the cleaned PATH, the user's CARGO_HOME and
-# RUSTUP_HOME, and RUSTUP_TOOLCHAIN pinned to the caller's value, else rustup's default, with
+# holding a fresh Solana keypair, TMPDIR in the scratch directory, the cleaned PATH, the user's CARGO_HOME,
+# RUSTUP_HOME and AVM_HOME, and RUSTUP_TOOLCHAIN pinned to the caller's value, else rustup's default, with
 # RUSTUP_AUTO_INSTALL=0: the copy's rust-toolchain file is not read. The downloads come first, and none of
-# them runs code from the copy: cargo fetch, started outside the copy so that the copy's .cargo/config is
-# not read either; cargo build-sbf --install-only, with the real HOME, where the platform tools live; and
-# npm ci --ignore-scripts, with npm's user and global config files empty, its cache and logs in the scratch
-# directory and its git the one on PATH, and no .npmrc of the target: npm takes a project's settings from the
-# package root it finds from --dir up and expands ${VAR} in them from its environment, so target.sh removes
-# each .npmrc from the top of the copy down to --dir first, and says which; and a module NODE_OPTIONS
-# preloads lets npm start no program but git and node, since npm 10 runs the prepare script of a git or
-# directory dependency despite --ignore-scripts (so npm ci stops at such a dependency, and a note says so),
-# and ends at once the npm install npm runs in a git dependency's checkout, which would read that checkout's
-# .npmrc (with scripts ignored it has nothing to prepare, and a git dependency's bundleDependencies stay out).
+# them runs code from the copy: cargo fetch, started outside the copy so that the copy's .cargo/config is not
+# read either; cargo build-sbf --install-only, with the real HOME, where the platform tools live; and npm ci
+# --ignore-scripts, with npm's user and global config files empty, its cache and logs in the scratch directory
+# and its git the one on PATH, and no .npmrc of the target: npm takes a project's settings from the package
+# root it finds from --dir up and expands ${VAR} in them from its environment, so target.sh removes each
+# .npmrc from the top of the copy down to --dir first, and says which; and a module NODE_OPTIONS preloads lets
+# npm start no program but git and node, since npm 10 runs the prepare script of a git or directory dependency
+# despite --ignore-scripts (so npm ci stops at such a dependency, and a note says so), and ends at once the
+# npm install npm runs in a git dependency's checkout, which would read that checkout's .npmrc (with scripts
+# ignored it has nothing to prepare, and a git dependency's bundleDependencies stay out).
 # A Corepack npm shim takes no npm release from the copy's packageManager field. Only these get the proxy
 # variables.
 # Every build and test after them runs offline (CARGO_NET_OFFLINE=true), without the proxy variables, in
@@ -90,9 +92,10 @@
 # stdout line says how the action ended and where these are. The scratch directory is removed on exit.
 #
 # Exit: 0 the action succeeded · 1 it ran and failed · 3 blocker (no mode or mode none, the self-check, a tool
-# missing or, in native mode, a cargo build-sbf without --install-only, a revision or package not found, a
-# patch that does not apply, submodules, a download that failed, the watchdog, an incident whose root cause
-# an INCIDENTS.json does not give or that keeps the build from native mode) · 64 refused. Needs bash >= 3.2,
+# missing or, in native mode, a cargo build-sbf without --install-only whose platform tools are not installed,
+# a revision or package not found, a patch that does not apply, submodules, a download that failed, the
+# watchdog, an incident whose root cause an INCIDENTS.json does not give or that keeps the build from native
+# mode) · 64 refused. Needs bash >= 3.2,
 # git, python3, env, find, grep, mkdir, mktemp, rm, chmod, cp, ln, cat, wc, tail and date; cargo,
 # cargo-build-sbf, anchor or npm as the action needs.
 
