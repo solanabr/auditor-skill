@@ -103,7 +103,7 @@ That invocation asks unless the user-level rules in
 `docs/permissions-and-isolation.md` (Turns and resuming) are set: the human may
 answer "Yes", or "Yes, and don't ask again", whose rule goes into this repository's
 `.claude/settings.local.json`,
-which step 0 no longer refuses while git does not track it.
+which step 0 no longer refuses while git does not track it (outside a git repository strict mode still refuses it, so answer "Yes" there).
 A `claude -p` run is one turn with no replies, and a call that would ask is denied
 there: pass each denied call, and the gap it leaves, to the agent for the ledger and
 the plan.

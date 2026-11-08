@@ -101,7 +101,7 @@ That invocation asks unless the user-level rules in
 `docs/permissions-and-isolation.md` (Turns and resuming) are set: the human may
 answer "Yes", or "Yes, and don't ask again", whose rule goes into this repository's
 `.claude/settings.local.json`,
-which step 0 no longer refuses while git does not track it.
+which step 0 no longer refuses while git does not track it (outside a git repository strict mode still refuses it, so answer "Yes" there).
 A `claude -p` run is one turn with no replies, and a call that would ask is denied
 there: pass each denied call, and the gap it leaves, to the agent for the ledger and
 the report.
@@ -205,7 +205,8 @@ Code asks about a shell read outside the working directory.
    into the working tree, such as a `.claude/` or a `.mcp.json` in the export. In
    default mode each thing they find is a note for the report, and the run goes on:
    the tools still refuse the whole run directory when a link in it leads out of it
-   (Rule 11d), and then the run stops with their line. In strict mode, when either
+   (Rule 11d), and then the run stops with their line: tell the human to delete the
+   copy and copy the export again without that link. In strict mode, when either
    finds something, stop: show what it printed, and tell the human to delete the
    copy and copy the export again without it. Pass the analysis the `--logs` copies
    in `incident_<n>/logs/`, never the export's own path.
