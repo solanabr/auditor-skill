@@ -35,7 +35,7 @@ Declare scope per OUTPUT-RULES Rule 0 + SKILL Scope-Gated Loading; record the Sc
 | 15 general language | yes/no | `.go`/`.java`/`.rb`/`.php` |
 | 19 AI-agent | yes/no | `.mcp.json` / agent SDK |
 | 20 off-chain Rust | yes/no | `.rs` outside `programs/` |
-| 11–13, 16–18 universal | yes | any repo |
+| 11–13, 16–18 universal | yes in `full`; in a narrower scope, the ones SKILL.md Step 2 lists | any repo |
 
 ---
 
