@@ -53,7 +53,9 @@ SC-059..062, and how many changed packages were left without an artifact diff. O
 - What the command does not cover: quick-scan evaluates the CRITICAL and HIGH vectors only; diff-audit, the
   changed code and its 1-hop neighbours; deep-review, one unit.
 - The corpus this run read: each checklist section and known-vector file, by id, and any selected file the Read
-  tool could not open, so a reader can tell what each verdict rests on.
+  tool could not open, so a reader can tell what each verdict rests on. For the vectors, also the index rows the
+  command's rule selected and those it left out, by id, so a reader can check the selection against
+  `known-vectors/INDEX.md`.
 - Outside services the run contacted (Rule 11b), from `audit_<n>/disclosures.tsv`.
 
 ## Notes & Nitpicks
