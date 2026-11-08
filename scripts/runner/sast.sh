@@ -55,6 +55,9 @@ case "$here" in
 esac
 . "$root/scripts/lib/confine.sh" || { printf 'sast: refused: scripts/lib/confine.sh cannot be read\n' >&2; exit 64; }
 . "$root/scripts/lib/isolation.sh" || { printf 'sast: refused: scripts/lib/isolation.sh cannot be read\n' >&2; exit 64; }
+# confine.sh's own notes (an AUDITOR_STRICT value read as on) print on stdout, each a line of its own before
+# the last, so stderr holds only the blocker or refusal.
+confine_note() { printf '>> note: %s\n' "$1"; }
 confine_init sast "$root"
 confine_need env git find mkdir mktemp rm chmod cat date
 WT=$CONFINE_WT

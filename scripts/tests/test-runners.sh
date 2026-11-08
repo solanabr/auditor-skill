@@ -320,6 +320,26 @@ run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
 check "a strict marker in audit_1: isolated, the marker named as the source" \
   grep -qxF '>> execution mode: isolated (the stricter of audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset; strict mode: on (audit_1/strict); native when none is recorded)' "$T/out"
 rm -f "$WT/audit_1/strict"
+# An AUDITOR_STRICT value that is neither on nor off is read as on, with a note from confine.sh: each runner
+# prints it on stdout, as its own notes, so that stderr holds at most the blocker or refusal line. In a working
+# directory of their own, so that what they keep numbers nothing the cases below count.
+MW=$T/maybewt
+mkdir -p "$MW/src"
+tgit init -q "$MW" && tgit -C "$MW" symbolic-ref HEAD refs/heads/main
+printf '[package]\nname = "maybe"\nversion = "0.1.0"\nedition = "2021"\n' > "$MW/Cargo.toml"
+printf '# generated\nversion = 3\n\n[[package]]\nname = "maybe"\nversion = "0.1.0"\n' > "$MW/Cargo.lock"
+printf 'pub fn m() {}\n' > "$MW/src/lib.rs"
+tgit -C "$MW" add -A && tgit -C "$MW" commit -qm maybe
+( cd "$MW" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$MW/audit_1/exec-mode"
+MAYBE=">> note: AUDITOR_STRICT is 'maybe', read as on"
+run "$TARGET" "$MW" AUDITOR_STRICT=maybe -- cargo-test --run audit_1 --src .
+check "AUDITOR_STRICT=maybe: target.sh prints confine.sh's note on stdout, none on stderr, and the mode is isolated" \
+  sh -c "grep -qxF \"$MAYBE\" '$T/out' && ! grep -q 'note:' '$T/err' && [ \"\$(grep -c . '$T/err')\" -le 1 ] && grep -q '^>> execution mode: isolated .*strict mode: on (AUDITOR_STRICT=maybe)' '$T/out'"
+run "$DEPS" "$MW" AUDITOR_STRICT=maybe -- cargo-audit --run audit_1 --manifest Cargo.lock --no-fetch
+check "... deps.sh too" sh -c "grep -qxF \"$MAYBE\" '$T/out' && ! grep -q 'note:' '$T/err' && [ \"\$(grep -c . '$T/err')\" -le 1 ]"
+run "$SAST" "$MW" AUDITOR_STRICT=maybe -- semgrep --run audit_1 --path src --ruleset p/rust
+check "... and sast.sh, before its last line" \
+  sh -c "grep -qxF \"$MAYBE\" '$T/out' && [ \"\$(sed -n '\$p' '$T/out')\" != \"$MAYBE\" ] && ! grep -q 'note:' '$T/err' && [ \"\$(grep -c . '$T/err')\" -le 1 ]"
 for bad in 'native extra' Native 'native native' ''; do
   printf '%s\n' "$bad" > "$WT/audit_1/exec-mode"
   run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
@@ -991,6 +1011,21 @@ check "a source another user owns: exit 0, the note, and the build sees the comm
 check "... git ran ls-tree and cat-file --batch, and never clone" \
   sh -c "grep -q ' ls-tree -r -z --full-tree ' '$T/othergit.log' && grep -q ' cat-file --batch\$' '$T/othergit.log' && ! grep -qw clone '$T/othergit.log'"
 check "... and no program or hook the repository's config names ran" test -z "$(ls -A "$T/marks")"
+# A source that borrows objects (git clone --shared writes objects/info/alternates). Outside strict mode
+# confine_repo takes it with a note, which prints on stdout as target.sh's own notes do, and the clone reads
+# the borrowed objects; strict mode refuses it, as today. (The default-mode case needs Lane 1's confine_repo,
+# lane/l1-core a36bdba.)
+AL=$T/alwt
+tgit clone -q --shared "$WT" "$AL" 2>/dev/null
+( cd "$AL" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$AL/audit_1/exec-mode"
+settings FAKE_SHOW=programs/demo/src/lib.rs
+run "$TARGET" "$AL" -- cargo-test --run audit_1 --src .
+check "a --src that borrows objects: exit 0, confine.sh's note on stdout and none on stderr, and the build sees HEAD (v2)" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '>> note: --src borrows objects from another repository (objects/info/alternates), so its history is read from there too; strict mode refuses this (Rule 11f)' '$T/out' && [ ! -s '$T/err' ] && grep -qxF 'show: // v2' '$T/calls'"
+run "$TARGET" "$AL" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+check "... strict mode refuses it, as today, before anything is copied" \
+  sh -c "[ '$RC' = 64 ] && [ \"\$(cat '$T/err')\" = 'target: refused: --src borrows objects from another repository (objects/info/alternates); audit a full copy: .' ] && [ -z \"\$(ls -A '$NT')\" ]"
+settings
 # Strict mode reads nothing of a checkout another user owns, so today's refusal comes at its first read, the
 # check that git tracks nothing under the run directory.
 run "$TARGET" "$WT" PATH="$T/othergit:$FPATH" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .

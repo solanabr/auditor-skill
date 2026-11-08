@@ -46,24 +46,27 @@
 # moved aside) is passed over, with a note (OUTPUT-RULES.md Rule 11a).
 #
 # The copy, in a scratch directory outside the working directory. A --src that is the top level of a git
-# repository (its git directory inside the working directory, holding no symbolic link, borrowing no objects
-# and rewriting no parents, and not a partial clone), or a copy git-ro.sh copy made in <R>, is cloned with
-# --no-local, no hooks and no submodules, system and global git config dropped, so git's ownership check stays
-# on in both modes. Outside strict mode, --src . in a session started below the top level of a repository
-# takes that repository, as scripts/lib/confine.sh's confine_repo accepts it, and --dir is then a path from
-# its top. --rev (HEAD when absent) must name a commit, which is checked out; --patch, a file in <R>/patches/
-# of at most 16 MiB, is applied with git apply --index. With a git that lacks the May-2024 clone fixes, or a
-# source another user owns (which that check refuses), target.sh never clones: outside strict mode it writes
-# the tracked files of that commit itself, from git ls-tree and git cat-file --batch through hgit_tree (no
-# path with an empty, . or .. component or a .git, none written through a symbolic link), into a new
-# repository that holds no commit, and applies --patch with git apply, and a note says so, since a copy never
-# runs the source repository's configured code; strict mode stops (exit 3) at the old git, and refuses a
-# source another user owns (exit 64). A revision that has submodules stops the run in strict mode, since
-# target.sh never fetches them; outside it, a note says so and the build sees them as empty directories. Any
-# other directory --src names is copied file by file, symbolic links kept as links, without audit_*,
-# incident_* and .audit-memory at its top, and without target/ or node_modules/ directories, each name in any
-# letter case; --rev and --patch need a repository. --dir is a path inside the copy with no symbolic link on
-# the way.
+# repository as scripts/lib/confine.sh's confine_repo takes it, or a copy git-ro.sh copy made in <R>, is
+# cloned with --no-local, no hooks and no submodules, system and global git config dropped, so git's ownership
+# check stays on in both modes. confine_repo takes a git directory inside the working directory that holds no
+# symbolic link, borrows no objects (objects/info/alternates) and rewrites no parents (info/grafts); outside
+# strict mode it also takes a separate git directory that git's own layout ties back to the work tree, a link
+# in a hooks directory, and alternates and grafts, each of the last two with a note, while a separate git
+# directory that nothing ties back is refused in both modes. A partial clone stops the run. Outside strict
+# mode, --src . in a session started below the top level of a repository takes that repository, as
+# scripts/lib/confine.sh's confine_repo accepts it, and --dir is then a path from its top. --rev (HEAD when
+# absent) must name a commit, which is checked out; --patch, a file in <R>/patches/ of at most 16 MiB, is
+# applied with git apply --index. With a git that lacks the May-2024 clone fixes, or a source another user
+# owns (which that check refuses), target.sh never clones: outside strict mode it writes the tracked files of
+# that commit itself, from git ls-tree and git cat-file --batch through hgit_tree (no path with an empty, . or
+# .. component or a .git, none written through a symbolic link), into a new repository that holds no commit,
+# and applies --patch with git apply, and a note says so, since a copy never runs the source repository's
+# configured code; strict mode stops (exit 3) at the old git, and refuses a source another user owns
+# (exit 64). A revision that has submodules stops the run in strict mode, since target.sh never fetches them;
+# outside it, a note says so and the build sees them as empty directories. Any other directory --src names is
+# copied file by file, symbolic links kept as links, without audit_*, incident_* and .audit-memory at its top,
+# and without target/ or node_modules/ directories, each name in any letter case; --rev and --patch need a
+# repository. --dir is a path inside the copy with no symbolic link on the way.
 #
 # The environment of every step is the cleaned one of scripts/lib/isolation.sh: env -i, a throwaway HOME
 # holding a fresh Solana keypair, TMPDIR in the scratch directory, the cleaned PATH, the user's CARGO_HOME,
@@ -125,6 +128,9 @@ case "$here" in
 esac
 . "$root/scripts/lib/confine.sh" || { printf 'target: refused: scripts/lib/confine.sh cannot be read\n' >&2; exit 64; }
 . "$root/scripts/lib/isolation.sh" || { printf 'target: refused: scripts/lib/isolation.sh cannot be read\n' >&2; exit 64; }
+# confine.sh's own notes (an AUDITOR_STRICT value read as on; outside strict mode, a --src repository's
+# alternates or grafts) print as target.sh's do, on stdout, so stderr holds only the blocker or refusal.
+confine_note() { printf '>> note: %s\n' "$1"; }
 confine_init target "$root"
 confine_need env git find grep mkdir mktemp rm chmod cp ln cat wc tail date
 WT=$CONFINE_WT
