@@ -1,6 +1,6 @@
 ---
 name: auditor:audit
-description: Full scope-gated security audit of a Solana / full-stack repository — discovery, context reconstruction, per-item checklist verdicts, false-positive validation, and a severity-ranked report.
+description: Standard-depth, scope-gated security audit of a Solana / full-stack repository or one path in it — discovery, context reconstruction, per-item checklist verdicts, false-positive validation, and a severity-ranked report.
 argument-hint: "[path] [--scope full|program|backend|frontend] [--strict]"
 allowed-tools:
   - Read
@@ -25,7 +25,7 @@ allowed-tools:
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rpc-read.sh" *)'
 ---
 
-# auditor-skill — Full Audit
+# auditor-skill — Item-by-Item Audit (Standard)
 
 **Arguments:** $ARGUMENTS
 
