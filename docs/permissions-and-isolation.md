@@ -8,7 +8,7 @@ The rules behind this page are [`OUTPUT-RULES.md` Rule 11](../OUTPUT-RULES.md#ru
 
 By default the auditor refuses no repository for what it contains. Where a check would stop the run in strict mode, the tool prints a note and goes on, and the report lists every note under Coverage & Limitations. That covers a repository's Claude Code project config (an AI-kit project's `.claude/` and `.mcp.json`, say), a link out of the tree, a linked worktree, a checkout another user owns, a tracked run folder, a large tree and the rest [Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode) lists. Builds and PoCs run on your machine (native) unless intake, `AUDITOR_EXEC_MODE` or strict mode says otherwise, and the report says so. Nothing asks a security question mid-run.
 
-What the auditor itself may do is limited in both modes: git only reads, writes go only into its own run folders, none of your credentials is used, and every pre-approved tool checks its arguments.
+What the auditor itself may do is limited in both modes: git only reads, writes go only into its own run folders, none of your credentials is used, and every pre-approved tool checks its arguments. The few shapes that could hang or confuse the tools' own checks are refused in both modes too, such as a named pipe in a `.git` or a name there that holds a line end.
 
 **Strict mode** is for a repository you do not trust. It refuses what default mode only notes, and runs builds only in isolated mode. Any of these turns it on:
 
