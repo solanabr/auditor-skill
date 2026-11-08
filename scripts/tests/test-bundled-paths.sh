@@ -12,7 +12,7 @@
 #      stated (the PINS list);
 #   4. every rooted path those files name exists in this checkout (binaries: declared in the crate), one
 #      written from a variable its file sets to the root included (ROOT="<auditor-skill root>", then "$ROOT/…");
-#   5. Rule 11e and its pointers in SKILL.md / AGENTS.md / FULL-AUDIT.md are in place; 11a–11e keep their
+#   5. Rule 11e and its pointers in SKILL.md / AGENTS.md / FULL-AUDIT.md are in place; 11a–11f keep their
 #      headings;
 #   6. the .audit-memory store check runs case-insensitively everywhere: no line pairs `ls-files` with
 #      `.audit-memory` without --icase-pathspecs (the canonical form is pinned in OUTPUT-RULES.md and
@@ -20,7 +20,11 @@
 #   7. /auditor:hunt, /auditor:respond, incident-responder and auditor:dnr-analyze name every corpus file they read (references/,
 #      templates/, checklists/, discovery/, OUTPUT-RULES.md, …) from ${CLAUDE_PLUGIN_ROOT}: no relative corpus
 #      directory and no bare corpus file name. Run-directory outputs (audit_<n>/threat-model.md,
-#      INCIDENT_REPORT.md) are not corpus files.
+#      INCIDENT_REPORT.md) are not corpus files;
+#   8. templates/strict-settings.json parses, its sandbox block and permissions are the ones
+#      docs/permissions-and-isolation.md shows, its allow list is the resume rules shown there and in the
+#      README's and getting-started's "once, after installing" blocks, and its env turns strict mode on and holds
+#      the runners to isolated mode (spec §5.7).
 # Each detector is first run against known-good and known-bad lines and a file of 1 MiB, so a broken pattern
 # fails the test.
 # Usage (from the repo root): bash scripts/tests/test-bundled-paths.sh   (VERBOSE=1 lists every check)
@@ -280,7 +284,7 @@ done
 
 # ---- 5. the rule and its pointers ---------------------------------------------------------------------
 for h in '### 11a — Execution mode' '### 11b — Outside-service disclosure' '### 11c — Untrusted git checkouts' \
-         '### 11d — Output hygiene' '### 11e — Bundled paths'; do
+         '### 11d — Output hygiene' '### 11e — Bundled paths' '### 11f — Default and strict mode'; do
   if grep -qxF -- "$h" OUTPUT-RULES.md; then ok "OUTPUT-RULES.md has '$h'"; else bad "OUTPUT-RULES.md lost the heading '$h'"; fi
 done
 for f in SKILL.md AGENTS.md FULL-AUDIT.md; do
@@ -361,6 +365,34 @@ for f in $CORPUS_FILES; do
   if [ -z "$n" ]; then ok "$f: every corpus file is read from \${CLAUDE_PLUGIN_ROOT}"; continue; fi
   for n in $n; do bad "$f:$n: corpus file not read from \${CLAUDE_PLUGIN_ROOT}: $(sed -n "${n}p" "$f" | cut -c1-160)"; done
 done
+
+# ---- 8. the strict template matches the docs ----------------------------------------------------------------
+TEMPLATE_PY='
+import json, re, sys
+t = json.load(open(sys.argv[1], encoding="utf-8"))
+def blocks(p):
+    return [json.loads(b) for b in re.findall(r"```json\n(.*?)```", open(p, encoding="utf-8").read(), re.S)]
+docs = blocks(sys.argv[2])
+sandbox = [b for b in docs if "sandbox" in b]
+rules = [b for b in docs if "allow" in b.get("permissions", {})]
+assert len(sandbox) == 1 and len(rules) == 1, "the docs show one sandbox block and one rules block"
+assert t["sandbox"] == sandbox[0]["sandbox"], "its sandbox block differs from the docs"
+assert all(t["permissions"].get(k) == v for k, v in sandbox[0]["permissions"].items()), "its permissions differ from the docs"
+assert t["permissions"]["allow"] == rules[0]["permissions"]["allow"], "its resume rules differ from the docs"
+assert t["env"] == {"AUDITOR_STRICT": "1", "AUDITOR_EXEC_MODE": "isolated"}, "its env differs"
+for p in sys.argv[3:]:
+    once = [b for b in blocks(p) if "allow" in b.get("permissions", {})]
+    assert len(once) == 1 and once[0]["permissions"]["allow"] == t["permissions"]["allow"], p + ": its rules block differs from the template"
+'
+# The check itself, on a copy whose env no longer turns strict mode on, must fail.
+sed 's/"AUDITOR_STRICT": "1"/"AUDITOR_STRICT": "0"/' templates/strict-settings.json > "$RT/strict-settings.json"
+if python3 -I -c "$TEMPLATE_PY" "$RT/strict-settings.json" docs/permissions-and-isolation.md >/dev/null 2>&1; then
+  bad "the strict-template check passes a template whose env sets AUDITOR_STRICT to 0"
+else ok "the strict-template check fails a template whose env sets AUDITOR_STRICT to 0"; fi
+if msg=$(python3 -I -c "$TEMPLATE_PY" templates/strict-settings.json docs/permissions-and-isolation.md README.md \
+    docs/getting-started.md 2>&1); then
+  ok "templates/strict-settings.json parses and carries the docs' sandbox block and resume rules, as README.md and docs/getting-started.md show them"
+else bad "templates/strict-settings.json: ${msg##*$'\n'}"; fi
 
 echo "---- bundled paths: $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
