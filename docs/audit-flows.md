@@ -19,7 +19,7 @@ auditor-skill offers a spectrum from a 5-minute grep triage to a full automated 
 
 All three heavyweight flows run the **same lifecycle** over the same corpus. The difference is autonomy: `audit-cycle` runs it to completion, `audit-assist` pauses for you, `re-audit` runs the delta subset.
 
-Every flow first runs `preflight.sh` on the working tree, then runs its bundled steps without asking: run directories, read-only git, the Rust tools, and the runners that build and test in the execution mode recorded at intake. What still asks, and how to run isolated or in `claude -p`: [permissions-and-isolation.md](permissions-and-isolation.md).
+Every flow first runs `preflight.sh` on the working tree. Its first line names the mode: in default mode it notes what it finds and the flow goes on; in strict mode, for a repository you do not trust, it refuses project config and the rest [Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode) lists. Then the flow runs its bundled steps without asking: run directories, read-only git, the Rust tools, and the runners that build and test in the execution mode in force, native unless intake, `AUDITOR_EXEC_MODE` or strict mode says otherwise. What still asks, and how to run in strict mode, isolated or in `claude -p`: [permissions-and-isolation.md](permissions-and-isolation.md).
 
 ## The lifecycle (shared spine)
 
