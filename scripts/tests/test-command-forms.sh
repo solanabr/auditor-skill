@@ -1278,6 +1278,9 @@ commands/quick-scan.md	Coverage & Limitations gives the same list, and the ids o
 commands/diff-audit.md	Before the first vector Read, write the selected list as text in a message, not only in your thinking: the id of every row you selected.
 commands/diff-audit.md	the ids of the rows you selected, and the ids of the rows in those sections you left out
 templates/pr-report.md	command's rule selected and those it left out, by id, so a reader can check the selection against
+templates/pr-report.md	request to that service, so a row says what the tool was set to send, not that it went out
+templates/pr-report.md	a local copy instead, and otherwise that it may have been sent.
+commands/diff-audit.md	(`deps.sh` adds a row to `audit_<n>/disclosures.tsv` before its first request to each service)
 commands/quick-scan.md	Skip no kept file and cut none short by choice, not even to save cost or time; Coverage & Limitations names only a file the Read tool could not open.
 commands/diff-audit.md	Read each vector file whole, with no line limit, several in each message. Read every selected file before you start the report
 commands/diff-audit.md	Skip no selected file and cut no vector file short by choice, not even to save cost or time; name there only one the Read tool could not open.
@@ -1390,6 +1393,8 @@ commands/diff-audit.md	spawn every agent in the foreground
 commands/diff-audit.md	If you start an agent
 commands/quick-scan.md	no longer matches the write rule for `audit_*/`
 commands/quick-scan.md	list the kept files in a message of your own
+templates/pr-report.md	Outside services the run contacted
+commands/diff-audit.md	records each service it contacts
 commands/diff-audit.md	no longer matches the write rule for `audit_*/`
 commands/deep-review.md	no longer matches the write rule for `audit_*/`
 GONE
