@@ -65,7 +65,7 @@ Write it as one line, the options in brackets only where they apply. Give it the
 
 Put `--network` in place of `--offline` only when the user passed an `https://` `--parent` / `--vulns` value or confirmed the exact URL, or named a `--repo`, `--parent` or `--vulns` path outside the working directory; that call prompts, and each URL it fetches is recorded in `audit_<n>/disclosures.tsv`. If a section of `history.md` prints `TRUNCATED`, re-run with a higher `--cap` before using it. Then hand `audit_<n>/bootstrap/` to `auditor:threat-modeler` together with the other inputs.
 
-If the collector exits 3 because the target is a partial clone, collect from a full copy you control instead (`OUTPUT-RULES.md` Rule 11c): reading its missing objects would fetch from the promisor remote its config names.
+In default mode the collector reads a partial clone for what it holds; its first stderr line is a `collect.sh: note:` that says so, which goes into Coverage & Limitations as it stands. In strict mode it exits 3 there instead: collect from a full copy you control (`OUTPUT-RULES.md` Rules 11c and 11f).
 
 Collector flags (`references/audit-lifecycle/threat-model-bootstrap.md` §2 has the table and exit statuses):
 - The mode, as the first argument: `--detect`, `--offline` or `--network`. Then `--repo <dir>` (the target, at its repository's top level; in `--detect` and `--offline` a path inside the working directory, `.` when the audit runs in the target) and `--out audit_<n>/bootstrap`: required. Each option once.

@@ -149,8 +149,10 @@ Code asks about a shell read outside the working directory.
      `incident_<n>`, whose **first** file is its `.gitignore` holding a single `*`
      (Rule 11d: raw corpora and off-chain logs carry PII and are never committed),
      with `bin/`, `poc/`, `patches/`, `exec/` and `logs/` in it. On a refusal (exit
-     64, one `rundir: refused: …` line, for instance when the repository tracks a
-     run directory), stop and show the line. Reuse an existing `incident_*` only
+     64, one `rundir: refused: …` line, for instance, in strict mode, when the
+     repository tracks a run directory; in default mode it takes the next free name
+     and notes the tracked paths, which go to the agent for the report), stop and
+     show the line. Reuse an existing `incident_*` only
      after the human confirms which one, and only when
      `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check incident_<n>` prints
      `ok incident_<n>` (`--fresh` always creates a new one). A reused incident
@@ -191,15 +193,19 @@ Code asks about a shell read outside the working directory.
    about a `cp` with flags from outside the working directory whatever the rules
    say, so an interactive run prompts once for it, and a `claude -p` run is refused
    it. If it is refused, stop and tell the human, since nothing can read the export
-   where it is. Then check the copy, inside the working directory, where neither
-   check asks: `find incident_<n>/logs/<name> -type l` must print nothing (a copied
-   symbolic link makes the tools refuse the whole run directory), and
-   `"${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"`, run again, refuses a copy that
-   brought Claude Code project config into the working tree, such as a `.claude/` or
-   a `.mcp.json` in the export. When either finds something, stop: show what it
-   printed, and tell the human to delete the copy and copy the export again without
-   it. Pass the analysis the `--logs` copies in `incident_<n>/logs/`, never the
-   export's own path.
+   where it is; no bundled tool copies a file from outside the working directory,
+   so this one prompt stays. Then check the copy, inside the working directory,
+   where neither check asks: `find incident_<n>/logs/<name> -type l` lists each
+   symbolic link the copy holds, and `"${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"`,
+   run again (`"${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" --strict` when the
+   arguments hold `--strict`), looks for Claude Code project config the copy brought
+   into the working tree, such as a `.claude/` or a `.mcp.json` in the export. In
+   default mode each thing they find is a note for the report, and the run goes on:
+   the tools still refuse the whole run directory when a link in it leads out of it
+   (Rule 11d), and then the run stops with their line. In strict mode, when either
+   finds something, stop: show what it printed, and tell the human to delete the
+   copy and copy the export again without it. Pass the analysis the `--logs` copies
+   in `incident_<n>/logs/`, never the export's own path.
    Otherwise collect it — **gated** (README rule 3):
    - Resolve seed addresses: the arguments, else `declare_id!` / `Anchor.toml`, plus
      vault / authority / mint / treasury from `audit_<n>/threat-model.md` or
@@ -342,9 +348,11 @@ Code asks about a shell read outside the working directory.
    (the class step 5 found in place of `unknown`); step 7 writes the file in full,
    keeping those ids. And natively neither `run.sh --crate` nor `target.sh` builds
    anything, whatever run directory it is given, an audit's included, while the
-   `INCIDENTS.json` of any `incident_*` directory in the working directory (its
-   name in any letter case) records a `supply_chain_or_ci` incident or cannot be
-   read (Rule 11a). Hand `auditor:poc-engineer` the PoC build cache from the ledger header,
+   `INCIDENTS.json` of any of the auditor's own incident directories in the working
+   directory (an `incident_<n>` as `rundir.sh` makes it, its `.gitignore` holding
+   exactly `*`) records a `supply_chain_or_ci` incident or cannot be read; another
+   `Incident*` folder, such as a client's in an archive, is passed over with a
+   note (Rule 11a). Hand `auditor:poc-engineer` the PoC build cache from the ledger header,
    if any, and pass one it creates to the agent for that header.
    Before the Leg 3 line counts, check the crate's harness copy and its
    `non-registry code:` line as `/auditor:poc` step 6 does.
