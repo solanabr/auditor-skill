@@ -2,7 +2,7 @@
 ================================================================================
 PERSISTED INTAKE ARTIFACT
 ================================================================================
-Written by /intake (alias /scope) to audit_<n>/intake.md. This is the persisted
+Written by /auditor:intake to audit_<n>/intake.md. This is the persisted
 form of QUESTIONS.md — the passive questionnaire turned into a durable file that
 BOTH flows read (audit-cycle applies defaults; audit-assist asks the human).
 Fixes "answers live only in conversation state."
