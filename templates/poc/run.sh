@@ -307,10 +307,13 @@
 #     resolved Cargo.lock again after the downloads, before anything compiles; and it
 #     stops before a test runs when the build compiled code from outside the crate.
 #     In native mode it builds no crate, an audit's included, while the INCIDENTS.json
-#     of any incident_* directory in the working directory (its name in any letter
-#     case) records a supply_chain_or_ci incident or cannot be read, or the working
-#     directory cannot be listed: any PoC can build the target's crates. A directory
-#     without that file, or whose file records no incident, counts for nothing.
+#     of any run directory the auditor made in the working directory (incident_<n>,
+#     with the .gitignore of * that scripts/rundir.sh writes) records a
+#     supply_chain_or_ci incident or cannot be read, or the working directory cannot be
+#     listed: any PoC can build the target's crates. A run directory without that file,
+#     or whose file records no incident, counts for nothing. Any other incident_* folder,
+#     in any letter case (a client's Incident_Response/, a run moved aside), is passed
+#     over, and a >> note: line names those that hold an INCIDENTS.json.
 #     ./run.sh does not read INCIDENTS.json.
 
 set -Eeuo pipefail
@@ -578,19 +581,22 @@ incident_rule() {
 }
 
 # native_rule: natively nothing from the working directory is built, whichever run directory the
-# crate is in, while the INCIDENTS.json of any incident_* directory there records a
+# crate is in, while the INCIDENTS.json of a run directory the auditor made there records a
 # supply_chain_or_ci incident or cannot be read: any PoC can build the target's crates, which may
 # then be the payload (OUTPUT-RULES.md Rule 11a). target.sh applies the same rule, through the same
-# iso_incident_runs of scripts/lib/isolation.sh: a directory without INCIDENTS.json, or whose file
-# records no incident (a hunt that ruled everything out), counts for nothing, and a directory that
-# cannot be searched is read, so that its refusal stops the run.
+# iso_incident_runs of scripts/lib/isolation.sh: a run directory without INCIDENTS.json, or whose
+# file records no incident (a hunt that ruled everything out), counts for nothing, a directory that
+# cannot be searched is read, so that its refusal stops the run, and any other incident_* folder is
+# passed over, with a note naming those that hold an INCIDENTS.json.
 native_rule() {
   local rc=0
   iso_incident_runs "${WT}" || rc=$?
   case "${rc}:${ISO_CLASS}" in
     0:supply_chain_or_ci)
       blocker "${ISO_INCIDENTS} records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." ;;
-    0:*) ;;
+    0:*)
+      [[ -z "${ISO_PASSED:-}" ]] ||
+        echo ">> note: the incident rule counts only the run directories the auditor made (incident_<n>, with a .gitignore of exactly *), so it passed over ${ISO_PASSED} (Rule 11a)" ;;
     2:*) blocker "python3 is not on PATH, so run.sh cannot tell whether ${ISO_INCIDENTS%/INCIDENTS.json} holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." ;;
     '3:cannot be listed') blocker "the working directory cannot be listed, so run.sh cannot tell whether an incident_* directory in it records a supply_chain_or_ci incident, and nothing from it is built natively until it can be listed (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." ;;
     *) blocker "${ISO_INCIDENTS} ${ISO_CLASS}: nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built." ;;

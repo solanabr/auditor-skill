@@ -100,11 +100,12 @@
 #     manifests, and from the resolved Cargo.lock before anything compiles) and sources
 #     outside the crate, and a build that compiled code from outside it;
 #     in native mode no crate runs, an audit's included, while the INCIDENTS.json of
-#     any incident_* directory in the working directory, in any letter case, records
-#     such an incident or cannot be read (a path past PATH_MAX, a working directory
-#     that cannot be listed), as iso_incident_class's no-id form (pinned) reports it: a
-#     directory without that file, or whose file records no incident, counts for
-#     nothing;
+#     any run directory the auditor made in the working directory (incident_<n> with
+#     the .gitignore rundir.sh writes) records such an incident or cannot be read (a
+#     path past PATH_MAX, a working directory that cannot be listed), as
+#     iso_incident_class's no-id form (pinned) reports it: a run directory without that
+#     file, or whose file records no incident, counts for nothing, and any other
+#     incident_* folder, in any letter case, is passed over with a note;
 #   * the isolation self-check (scripts/lib/isolation.sh): in isolated mode, a fake HOME
 #     holding any credential it reads stops the run before anything is copied, and so
 #     does a check that cannot finish; in native mode it is a warning. Through a driver,
@@ -2900,11 +2901,13 @@ pin_got="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" bash "$T/class-driv
 rm -f "$T/ij-empty.json"
 [ "$pin_got" = "3 records no incident" ] && ok "iso_incident_class with no id, an empty incidents list -> '3 records no incident'" || bad "iso_incident_class with no id, an empty incidents list: '$pin_got', want '3 records no incident'"
 
-# Native mode reads the INCIDENTS.json of every incident_* directory in the working directory, whichever run
-# directory the crate is in: while one records a supply_chain_or_ci incident or cannot be read, nothing from
-# the working directory is built natively, an audit's crate included, since any PoC can build the target's
-# crates. A directory without that file, or whose file records no incident, counts for nothing; one that
-# cannot be searched is read, and a linked one is read through. Isolated mode reads none of them.
+# Native mode reads the INCIDENTS.json of every run directory the auditor made in the working directory
+# (incident_<n>, with the .gitignore of * rundir.sh writes), whichever run directory the crate is in: while one
+# records a supply_chain_or_ci incident or cannot be read, nothing from the working directory is built
+# natively, an audit's crate included, since any PoC can build the target's crates. A run directory without
+# that file, or whose file records no incident, counts for nothing, and one that cannot be searched is read.
+# Any other incident_* folder (another name, no such .gitignore, a link) is the repository's or a client's: it
+# is passed over, and a note names it (addendum K). Isolated mode reads none of them.
 ( cd "$WT" && "$ROOT/scripts/rundir.sh" new incident ) >/dev/null || bad "rundir.sh could not make incident_2"
 IJ2="$WT/incident_2/INCIDENTS.json"
 want_sc="records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
@@ -2969,17 +2972,44 @@ code="$(ngate AUDITOR_EXEC_MODE=native PATH="$T/shim:$T/nopy" -- --crate audit_1
 [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: python3 is not on PATH, so run.sh cannot tell whether incident_1 holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." "$T/out" \
   && new_nothing_ran && one_blocker && ok "an audit's crate in native mode without python3, beside incident_* directories -> exit 3, the blocker says what cannot be told" \
   || { bad "an audit's crate in native mode without python3, beside incident_* directories: exit $code"; cat "$T/out" >&2; }
-mkdir -p "$T/elsewhere-run" "$WT/incident_old"
+mkdir -p "$T/elsewhere-run"
 printf '{"incidents": [{"id": "INC-3.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$T/elsewhere-run/INCIDENTS.json"
-cp "$T/elsewhere-run/INCIDENTS.json" "$WT/incident_old/INCIDENTS.json"
-for odd in incident_old incident_3; do
-  [ "$odd" = incident_3 ] && { rm -rf "$WT/incident_old"; ln -s "$T/elsewhere-run" "$WT/incident_3"; }
+NOTE_PASSED='>> note: the incident rule counts only the run directories the auditor made (incident_<n>, with a .gitignore of exactly *), so it passed over '
+# <folder>|<what it is>|<passed or refused>: a directory holding the INCIDENTS.json above and, for gitignore:<text>,
+# a .gitignore holding that text and a newline; link: a symbolic link to such a directory outside.
+while IFS='|' read -r odd what expect; do
+  [ -n "$expect" ] || continue
+  rm -rf "${WT:?}/$odd"
+  case "$what" in
+    link) ln -s "$T/elsewhere-run" "$WT/$odd" ;;
+    *) mkdir "$WT/$odd" && cp "$T/elsewhere-run/INCIDENTS.json" "$WT/$odd/"
+       case "$what" in gitignore:*) printf '%s\n' "${what#gitignore:}" > "$WT/$odd/.gitignore" ;; esac ;;
+  esac
   code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
-  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $odd/INCIDENTS.json $want_sc" "$T/out" && new_nothing_ran && one_blocker \
-    && ok "an audit's crate in native mode beside $odd/ ($([ "$odd" = incident_3 ] && echo a link to a directory outside || echo a directory)) whose INCIDENTS.json records a supply_chain_or_ci incident -> exit 3" \
-    || { bad "an audit's crate beside $odd/, native: exit $code"; cat "$T/out" >&2; }
-done
-rm -f "$WT/incident_3"
+  rm -rf "${WT:?}/$odd"
+  label="an audit's crate in native mode beside $odd/ ($what) whose INCIDENTS.json records a supply_chain_or_ci incident"
+  if [ "$expect" = refused ]; then
+    [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $odd/INCIDENTS.json $want_sc" "$T/out" && new_nothing_ran && one_blocker \
+      && ok "$label -> a run directory the auditor made: exit 3" || { bad "$label: exit $code, want the refusal"; cat "$T/out" >&2; }
+  else
+    [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && grep -qxF "${NOTE_PASSED}$odd/INCIDENTS.json (Rule 11a)" "$T/out" \
+      && ok "$label -> not a run directory the auditor made: passed over, with the note, and the crate runs" || { bad "$label: exit $code, want a run and the note"; cat "$T/out" >&2; }
+  fi
+done <<'CASES'
+incident_4|gitignore:*|refused
+incident_old|a directory|passed
+incident_3|link|passed
+incident_4|a directory|passed
+incident_4|gitignore:node_modules|passed
+Incident_Response|a directory|passed
+CASES
+# More than five such folders: the note names the first five, then how many more.
+for i in 1 2 3 4 5 6 7; do mkdir "$WT/incident_old$i" && cp "$T/elsewhere-run/INCIDENTS.json" "$WT/incident_old$i/"; done
+code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+rm -rf "$WT"/incident_old?
+[ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && [ "$(grep -cF "${NOTE_PASSED}" "$T/out")" = 1 ] \
+  && grep -F "${NOTE_PASSED}" "$T/out" | grep -q 'INCIDENTS.json and 2 more (Rule 11a)$' \
+  && ok "seven folders the auditor did not make -> one note: the first five, then 2 more" || { bad "seven passed-over folders: exit $code"; cat "$T/out" >&2; }
 if [ "$ISOLATED_OK" = 1 ]; then
   printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$IJ2"
   code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
@@ -2989,11 +3019,11 @@ fi
 # Only python3 tells that an INCIDENTS.json is missing, so a stat that fails for another reason stops the run:
 # a path past PATH_MAX (1024 bytes on macOS, 4096 on Linux) hides no run directory. In a working directory
 # PATH_MAX-22 bytes long incident_1/INCIDENTS.json lies past it (a model run there, since a --vulnerable-so
-# path would too); in one PATH_MAX-200 bytes long, a run moved aside under a long name, whose INCIDENTS.json (a
-# name of 190 bytes) or which itself (230) lies past it. Each file is written through a relative path and
-# records a supply_chain_or_ci incident. The incident_* directories are read in any letter case, since a volume
-# that ignores case finds incident_2 under INCIDENT_2, and a working directory that cannot be listed stops the
-# run too.
+# path would too). In one PATH_MAX-200 bytes long, a run moved aside under a long name, whose INCIDENTS.json (a
+# name of 190 bytes) or which itself (230) lies past it, is no run directory the auditor made, so it is passed
+# over; so is a folder spelled INCIDENT_2 or Incident_2, which rundir.sh never makes. Each file is written
+# through a relative path and records a supply_chain_or_ci incident. A working directory that cannot be listed
+# stops the run.
 PM="$(getconf PATH_MAX / 2>/dev/null)"
 case "$PM" in ''|*[!0-9]*) PM=1024 ;; esac
 long() { printf '%*s' "$1" '' | tr ' ' "$2"; }
@@ -3041,13 +3071,13 @@ if DW="$(deep_dir $((PM - 200)))" && [ "${#DW}" = $((PM - 200)) ]; then
   n2="incident_1.$(long 179 x)"; n3="incident_1.$(long 219 y)"
   ( cd "$DW" && mkdir "$n2" && printf '%s\n' "$SCJ" > "$n2/INCIDENTS.json" )
   code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
-  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $n2/INCIDENTS.json cannot be read: $want_un" "$T/out" && new_nothing_ran && one_blocker \
-    && ok "an audit's crate in native mode beside a run moved aside under a name of 190 bytes, its INCIDENTS.json past PATH_MAX -> exit 3, nothing copied" \
+  [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" \
+    && ok "an audit's crate in native mode beside a run moved aside under a name of 190 bytes, its INCIDENTS.json past PATH_MAX -> no run directory the auditor made: passed over, and the crate runs" \
     || { bad "an audit's crate beside a long-named run whose INCIDENTS.json lies past PATH_MAX, native: exit $code"; cat "$T/out" >&2; }
   ( cd "$DW" && mv "$n2" "$n3" )
   code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
-  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: ${n3:0:200}.../INCIDENTS.json cannot be read: $want_un" "$T/out" && new_nothing_ran && one_blocker \
-    && ok "... and under a name of 230 bytes, the run itself past PATH_MAX -> exit 3, the name cut after 200 bytes" \
+  [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" \
+    && ok "... and under a name of 230 bytes, the run itself past PATH_MAX -> passed over, and the crate runs" \
     || { bad "an audit's crate beside a run whose own path lies past PATH_MAX, native: exit $code"; cat "$T/out" >&2; }
   ( cd "$DW" && rm -rf "$n3" )
   code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
@@ -3057,8 +3087,8 @@ if DW="$(deep_dir $((PM - 200)))" && [ "${#DW}" = $((PM - 200)) ]; then
     ( cd "$DW" && mkdir "$spelled" && printf '%s\n' "$SCJ" > "$spelled/INCIDENTS.json" )
     code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
     ( cd "$DW" && rm -rf "$spelled" )
-    [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $spelled/INCIDENTS.json $want_sc" "$T/out" && new_nothing_ran && one_blocker \
-      && ok "an audit's crate in native mode beside a run spelled $spelled whose INCIDENTS.json records a supply_chain_or_ci incident -> exit 3, nothing copied" \
+    [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && grep -qxF "${NOTE_PASSED}$spelled/INCIDENTS.json (Rule 11a)" "$T/out" \
+      && ok "an audit's crate in native mode beside a folder spelled $spelled whose INCIDENTS.json records a supply_chain_or_ci incident -> passed over, with the note, and the crate runs" \
       || { bad "an audit's crate beside $spelled/, native: exit $code"; cat "$T/out" >&2; }
   done
   if [ "$(id -u)" != 0 ]; then
