@@ -17,8 +17,8 @@ it, and once to the machines that run it.
   a host its documentation does not name, or run the project's code in a mode less strict than the one Rule 11a
   sets (the stricter of the recorded mode, `AUDITOR_EXEC_MODE` and strict mode, native when none is recorded) is
   a security issue. So is an allow rule that reaches a program outside that set. A session started below a
-  repository's top level reads that repository's history and committed files, paths above the working directory
-  included: that is by design (`OUTPUT-RULES.md` Rule 11c).
+  repository's top level, in a folder that holds tracked files, reads that repository's history and committed
+  files, paths above the working directory included: that is by design (`OUTPUT-RULES.md` Rule 11c).
 - **Strict mode**: in default mode the checks that would refuse a repository for what it contains print notes
   instead, by design (`OUTPUT-RULES.md` Rule 11f). In a session started with the strict launch line (Rule 11f), a
   way to make strict mode refuse less than Rule 11f lists, or to turn it off from inside the audited repository, is
