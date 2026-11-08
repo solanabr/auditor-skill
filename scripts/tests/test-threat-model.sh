@@ -73,6 +73,10 @@ link_leaves() {
   r=$(cd -P "$2" && pwd -P)/ || return 1
   case "$p" in "$r"*) return 1 ;; esac
 }
+# api <dir> <code>: status of <code> run from <dir> with scripts/lib/confine.sh sourced and confine_init
+# done, in default mode. A case that needs a default-mode rule Lane 1 has yet to commit asks this first
+# whether the confinement already applies it, and skips, saying what it waits for, until it does.
+api() { (cd "$1" && bash -c '. "$1" && confine_init api "$2" 2 && eval "$3"' api "$ROOT/scripts/lib/confine.sh" "$ROOT" "$2") >/dev/null 2>&1 </dev/null; }
 
 # =================================================================================================
 # Target fixture: guard edits, attribute anchoring, quiet fix, whole-message keyword, revert.
@@ -1463,6 +1467,79 @@ check "T-x: a --repo with a named pipe as its .gitattributes is refused (exit 3)
   test "$(rc --network --repo fifo-wt --out "$(newrun)/bootstrap")" = 3
 check "T-x: ... naming the pipe" grep -qF "collect.sh: a named pipe or device is where git reads its own files in the work tree, and git would wait on it for good: " "$T/rc.err"
 rm -rf "$FW"
+
+# =================================================================================================
+# T-y: --repo . in a session started below the top level of a repository (OUTPUT-RULES.md Rule 11c).
+# Default mode reads that repository as git does from the working directory: pathspecs and the paths
+# printed are relative to it, and what lies outside it is left out, so a TRUNCATED line's git-ro.sh call
+# works as pasted there. Strict mode refuses the session, and any other --repo is still a top level.
+# =================================================================================================
+MONO="$T/mono"; mkrepo "$MONO"
+YPAD=$(i=0; while [ $i -lt 450 ]; do printf '// padding line %s\n' "$i"; i=$((i + 1)); done)
+put "$MONO" README.md 'Example pool, forked from the upstream reference pool.'
+put "$MONO" audits/top-audit.md '# audit of the whole repository'
+put "$MONO" programs/bar/src/lib.rs '#[account(mut, has_one = bar_admin)]'
+put "$MONO" programs/foo/src/lib.rs '#[account(mut, has_one = foo_admin)]'
+put "$MONO" programs/foo/src/big.rs "$YPAD
+#[account(mut, has_one = big_admin)]"
+put "$MONO" programs/foo/audits/foo-audit.md '# audit of foo'
+commit "$MONO" -m "initial"
+put "$MONO" programs/bar/src/lib.rs '#[account(mut)]'
+put "$MONO" programs/foo/src/lib.rs '#[account(mut)]'
+commit "$MONO" -m "Rework accounts"
+put "$MONO" programs/foo/src/big.rs '// emptied'
+commit "$MONO" -m "Empty the big module"
+C_YBIG=$(short "$MONO" HEAD); F_YBIG=$(git -C "$MONO" rev-parse HEAD)
+SUB="$MONO/programs/foo"
+if api "$SUB" 'confine_repo . --repo && [ -n "$CONFINE_PREFIX" ]'; then
+  YR=$(newrun "$SUB")
+  check "T-y: from a subdirectory of a repository, --offline --repo . reads that repository (exit 0)" \
+    test "$(rc_in "$SUB" --offline --repo . --out "$YR/bootstrap")" = 0
+  YH="$SUB/$YR/bootstrap/history.md"
+  check "T-y: ... the Target row names the working directory and the repository" \
+    has "$YH" "| Target | \`$SUB\`, which is \`programs/foo/\` in the repository at \`$MONO\`: the paths below are relative to it, and what lies outside it is left out |"
+  check "T-y: ... the default pathspec is taken from the working directory" has "$YH" "| Target paths | \`*.rs\` |"
+  section_of "$YH" "R3" > "$T/r3y.txt"
+  check "T-y: ... R3 names a removed guard by its path from the working directory" \
+    has "$T/r3y.txt" "REMOVED x1 src/lib.rs: #[account(mut, has_one = foo_admin)]"
+  check "T-y: ... and leaves out the guard removed outside it" hasnt "$T/r3y.txt" "bar_admin"
+  check "T-y: ... R4 counts files by that path, and none outside it" \
+    sh -c "awk '/^## R4/,/^## R5/' '$YH' | grep -q ' src/lib.rs\$' && ! awk '/^## R4/,/^## R5/' '$YH' | grep -q 'programs/'"
+  check "T-y: ... R6 lists the report below the working directory, and neither the report nor the README above it" \
+    sh -c "awk '/report-like files in the pinned tree/,/^\`\`\`\$/' '$YH' | grep -qx 'audits/foo-audit.md' && ! grep -q 'top-audit.md\|forked from' '$YH'"
+  check "T-y: ... and R7 copies that report from the pinned tree" \
+    sh -c "grep -F 'pinned tree: audits/foo-audit.md' '$SUB/$YR/bootstrap/inputs.tsv' | grep -q copied && grep -rq 'audit of foo' '$SUB/$YR/bootstrap/inputs/'"
+  YHINT=$(rest_cmd "$SUB/$YR/bootstrap/diffs/target-$C_YBIG.diff")
+  check "T-y: a cut diff's TRUNCATED line names its file by the path from the working directory" \
+    test "$YHINT" = "$GITRO show $F_YBIG -- 'src/big.rs'"
+  ( cd "$SUB" && bash -c "$YHINT" ) > "$T/y-hint.out" 2>&1
+  check "T-y: ... and, run there as pasted, git-ro.sh shows the rest of that file's diff" \
+    grep -qF -- '-#[account(mut, has_one = big_admin)]' "$T/y-hint.out"
+  YD=$(cd "$SUB" && "$COLLECT" --detect --repo . --out "$YR/bootstrap" 2>/dev/null)
+  check "T-y: --detect from there finds the report below the working directory (T4)" \
+    test "$(printf '%s\n' "$YD" | sed -n 2p)" = "T4 yes in-tree-report"
+  YN=$(newrun "$SUB")
+  check "T-y: --network --repo . reads the repository the same way (exit 0)" \
+    sh -c "[ \"\$(cd '$SUB' && '$COLLECT' --network --repo . --out '$YN/bootstrap' 2>/dev/null; echo \$?)\" = 0 ] && grep -qF 'REMOVED x1 src/lib.rs: #[account(mut, has_one = foo_admin)]' '$SUB/$YN/bootstrap/history.md'"
+  YS=$(newrun "$SUB")
+  check "T-y (strict): the session is refused with the status for a --repo that is no top level (exit 3)" \
+    test "$(cd "$SUB" && AUDITOR_STRICT=1 "$COLLECT" --offline --repo . --out "$YS/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 3
+  check "T-y (strict): ... in one line saying strict mode reads a repository only from its top level" \
+    sh -c "[ \"\$(grep -c . '$T/rc.err')\" = 1 ] && grep -q '^collect.sh: refused: .*strict mode reads a repository only from its top level' '$T/rc.err'"
+  check "T-y (strict): ... and nothing is written" test ! -e "$SUB/$YS/bootstrap"
+else
+  skp "T-y: --repo . below a top level: waits for Lane 1's §4.2 commit (confine_repo . does not yet take the repository around the working directory)"
+fi
+check "T-y: an explicit --repo naming that subdirectory, from the top level, is still refused (exit 3)" \
+  test "$(rc_in "$MONO" --offline --repo programs/foo --out "$(newrun "$MONO")/bootstrap")" = 3
+# A repository that tracks nothing under the working directory, such as dotfiles in a home directory,
+# is not taken for the target of what was unpacked below it.
+DOT="$T/dotfiles"; mkrepo "$DOT"; put "$DOT" .profile 'export EDITOR=vi'; commit "$DOT" -m "dotfiles"
+mkdir -p "$DOT/unpacked"; printf 'pub fn u() {}\n' > "$DOT/unpacked/lib.rs"
+YU=$(newrun "$DOT/unpacked")
+check "T-y: below a repository that tracks nothing there, --repo . is refused, as no top level (exit 3)" \
+  test "$(rc_in "$DOT/unpacked" --offline --repo . --out "$YU/bootstrap")" = 3
+check "T-y: ... and nothing is written" test ! -e "$DOT/unpacked/$YU/bootstrap"
 
 # =================================================================================================
 # The case file: hostile argument vectors, each refused with one stderr line, nothing on stdout, and

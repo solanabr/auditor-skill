@@ -22,6 +22,7 @@
 #   --offline   collect without the network: --parent / --vulns URLs are recorded, not fetched
 #   --network   collect, fetching the https URLs given in --parent and --vulns; the only mode that reads
 #               a --repo, --parent or --vulns outside the working directory or through a symbolic link
+#               (but for the repository around a working directory below its top level: --repo . below)
 # In --detect and --offline, --repo and a local --parent or --vulns are relative to the working
 # directory, with no "." or ".." component, and reach nothing through a symbolic link; --repo, and a
 # --parent, is the top level of a repository whose git directory lies inside the working directory,
@@ -32,6 +33,10 @@
 # the caller stops the run. A --vulns file is copied into the run directory, and a pre-approved read must
 # not copy a file such as a key from outside the tree into the run folder: the commands pre-approve
 # --detect and --offline, never --network.
+# With --repo . in a session started below the top level of a repository, default mode reads that
+# repository, history above the working directory included, as git does from the working directory
+# (OUTPUT-RULES.md Rule 11c): pathspecs and the paths printed are relative to it, and changes and files
+# outside it are left out. Strict mode refuses such a session (Rule 11f). Any other --repo is a top level.
 #
 # Options (each at most once, except the repeatable --paths, --parent-paths and --vulns; a value is
 # at most 1024 bytes, with no control character):
@@ -77,8 +82,9 @@
 #              run directory that fails the checks above or that git or find cannot check, a disclosure
 #              that cannot be recorded, or an output that cannot be written),
 #              3 --repo is not the top level of a git repository that git can read (or a bare
-#              repository), the pin does not resolve, or, in strict mode, the target is a partial clone
-#              or git cannot read its config (default mode notes either and goes on).
+#              repository; strict mode refuses --repo . below a top level so, in a "collect.sh: refused:"
+#              line), the pin does not resolve, or, in strict mode, the target is a partial clone or git
+#              cannot read its config (default mode notes either and goes on).
 
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES CDPATH
@@ -242,7 +248,10 @@ fi
 # empty work tree (hgit_text_tree), so git opens no file of the target's work tree: a named pipe there
 # that confine_repo_top's scan does not see (behind a directory link, say) cannot stop a read.
 G() { hgit_text_tree "$@"; }
-DIFFSAFE=(--text --no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/)
+# --relative does nothing at a top level; below it (TPREFIX, further on) a diff prints its paths relative
+# to the working directory, as ls-tree and grep do there, and leaves out what changed outside it, whatever
+# the target's diff.relative says.
+DIFFSAFE=(--text --no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/ --relative)
 abspath() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$WT" "$1" ;; esac; }
 not_a_repo() {
   if [ -n "${CONFINE_GIT_WHY:-}" ]; then
@@ -278,6 +287,25 @@ else
     "$WT"/*) REPO_REL=${REPO_ABS#"$WT"/} ;;
   esac
 fi
+# TARGET is the directory --repo names, where auditor-skill's own outputs sit. For --repo . in a session
+# started below the top level of a repository, REPO_ABS becomes that top level, which confine_repo
+# accepts in default mode and refuses in strict mode (OUTPUT-RULES.md Rules 11c and 11f). Its git reads
+# then run with the working directory as git's current directory: pathspecs, and the paths git prints, are
+# relative to TPREFIX, the working directory's path in the repository, as with git run there.
+TARGET=$REPO_ABS TPREFIX=""
+if [ "$REPO_REL" = . ]; then
+  # In this shell first, so a file git would wait on above the working directory is refused for what it is.
+  CONFINE_CEILING='' confine_git_files "$WT"
+  TPREFIX=$(CONFINE_CEILING='' hgit "$WT" rev-parse --show-prefix 2>/dev/null) || TPREFIX=""
+fi
+if [ -n "$TPREFIX" ]; then
+  # Its refusals here, strict mode's among them, say that --repo is not a top level git can read: exit 3.
+  [ "$OFFLINE" -eq 0 ] || CONFINE_HINT=$NET_HINT
+  CONFINE_STATUS=3
+  confine_repo . --repo
+  CONFINE_HINT="" CONFINE_STATUS=2
+  REPO_ABS=$CONFINE_REPO TPREFIX=$CONFINE_PREFIX
+fi
 confine_repo_top "$REPO_ABS" || not_a_repo
 # Lazy fetching and every transport are off, so a partial clone is read for what it holds: a read that
 # needs an object it lacks finds nothing. Default mode notes it, and a config git cannot read, which could
@@ -294,7 +322,7 @@ case "$?:$CONFINE_STRICT" in
        confine_note "git cannot read the target's config, so a partial clone cannot be ruled out: missing objects are not fetched, so history and contents may be incomplete; strict mode stops here (Rule 11f)" ;;
   *)   PARTIAL="" ;;
 esac
-if [ "$OFFLINE" -eq 1 ]; then
+if [ "$OFFLINE" -eq 1 ] && [ -z "$TPREFIX" ]; then
   CONFINE_HINT=$NET_HINT
   confine_repo "$REPO_REL" --repo
   CONFINE_HINT=""
@@ -388,11 +416,12 @@ EMPTY_TREE=$(G "$REPO" hash-object -t tree /dev/null)
 ATTR_SRC=""
 G "$REPO" --attr-source="$EMPTY_TREE" check-attr diff -- probe.rs >/dev/null 2>&1 && ATTR_SRC=$EMPTY_TREE
 
-# Default pathspec: an Anchor-style programs/ tree when the commit has one, else every Rust file.
-default_paths() { # default_paths <repo> <commit>
-  if G "$1" cat-file -e "$2:programs" 2>/dev/null; then echo 'programs/*.rs'; else echo '*.rs'; fi
+# Default pathspec: an Anchor-style programs/ tree when the commit has one, else every Rust file. A
+# <rev>:<path> name is read from the top level, so the target's names it with TPREFIX in front.
+default_paths() { # default_paths <repo> <commit> [<prefix>]
+  if G "$1" cat-file -e "$2:${3-}programs" 2>/dev/null; then echo 'programs/*.rs'; else echo '*.rs'; fi
 }
-[ -n "$TPATHS_NL" ] || TPATHS_NL="$(default_paths "$REPO" "$PIN_SHA")$nl"
+[ -n "$TPATHS_NL" ] || TPATHS_NL="$(default_paths "$REPO" "$PIN_SHA" "$TPREFIX")$nl"
 TPATHS=()
 while IFS= read -r p; do [ -n "$p" ] && TPATHS+=("$p"); done <<< "$TPATHS_NL"
 
@@ -602,14 +631,14 @@ eval_triggers() {
     grep -qxF -- "$(printf '%s' "$s" | norm_url)" <<< "$remotes" || { t3="${t3:+$t3,}security_txt-source_code"; break; }
   done <<< "$src"
   # Nothing counts through a symbolic link: what one points at is never tested.
-  for d in "$REPO_ABS"/audit_*; do
+  for d in "$TARGET"/audit_*; do
     [ ! -L "$d" ] && [ -d "$d" ] && [ ! -L "$d/REPORT.md" ] && [ -f "$d/REPORT.md" ] || continue
     [ "$d" != "$CUR_RUN" ] || continue
     t4="prior-audit-dir"; break
   done
   n=$(G "$REPO" ls-tree -r --name-only "$PIN_SHA" 2>/dev/null | grep -iE '\.(pdf|md)$' | grep -ciE "$REPORT_RE")
   if [ "${n:-0}" -gt 0 ]; then t4="${t4:+$t4,}in-tree-report"; fi
-  for d in "$REPO_ABS"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
+  for d in "$TARGET"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
     [ ! -L "$d" ] && [ ! -L "$d/INCIDENTS.json" ] && [ -f "$d/INCIDENTS.json" ] || continue
     t4="${t4:+$t4,}incidents-json"; break
   done
@@ -654,7 +683,11 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
   echo
   echo "| | |"
   echo "|---|---|"
-  echo "| Target | \`$(clean "$REPO_ABS")\` |"
+  if [ -n "$TPREFIX" ]; then
+    echo "| Target | \`$(clean "$TARGET")\`, which is \`$(clean "$TPREFIX")\` in the repository at \`$(clean "$REPO_ABS")\`: the paths below are relative to it, and what lies outside it is left out |"
+  else
+    echo "| Target | \`$(clean "$REPO_ABS")\` |"
+  fi
   echo "| Pinned commit | \`$PIN_SHA\` |"
   echo "| Target paths | \`$(clean "${TPATHS[*]}")\` |"
   if [ -n "$PARENT" ]; then echo "| Parent | $(clean "$(redact "$PARENT")") — $PARENT_STATUS${PHEAD:+ @ \`$PHEAD\`} |"; else echo "| Parent | none |"; fi
@@ -850,7 +883,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
   emit_capped "$TMPD/r6f" "no audit, post-mortem or incident file"
   echo "--- auditor-skill outputs next to the target ---"
   # A symbolic link is listed as one and never followed, so what it points at is never tested.
-  for d in "$REPO_ABS"/audit_* "$REPO_ABS"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
+  for d in "$TARGET"/audit_* "$TARGET"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
     [ "$d" != "$CUR_RUN" ] || continue
     if [ -L "$d" ]; then
       clean "$d"; echo " (symbolic link, not followed)"
@@ -1024,7 +1057,7 @@ done <<< "$VULNS_NL"
 # iso_incident_runs reads it, since a volume that ignores case finds incident_1 under the name INCIDENT_1
 # (here, in T4 and in R6).
 ii=0
-for d in "$REPO_ABS"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
+for d in "$TARGET"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
   f=$d/INCIDENTS.json
   if [ -L "$d" ]; then record "$d" "-" "-" "-" "skipped: symbolic link (directory), not followed"; continue; fi
   [ -d "$d" ] || continue
@@ -1042,7 +1075,7 @@ while IFS= read -r p; do
   ri=$((ri + 1))
   if [ "$ri" -gt 20 ]; then record "(further in-tree reports)" "-" "-" "-" "skipped: cap of 20 in-tree reports, listed in R6"; break; fi
   tmp="$TMPD/tree$ri-$(safe_name "$(basename "$p")")"
-  G "$REPO" cat-file blob "$PIN_SHA:$p" > "$tmp" 2>/dev/null && ingest "pinned tree: $p" "$tmp" "tree$ri-$(safe_name "$(basename "$p")")"
+  G "$REPO" cat-file blob "$PIN_SHA:$TPREFIX$p" > "$tmp" 2>/dev/null && ingest "pinned tree: $p" "$tmp" "tree$ri-$(safe_name "$(basename "$p")")"
 done < "$TMPD/r6f.newest"
 {
   section "R7 Inputs" "Every --vulns source, incident_*/INCIDENTS.json and in-tree report; the full manifest is inputs.tsv."
