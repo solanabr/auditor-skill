@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # test-rundir.sh — self-test for scripts/rundir.sh: the case file fixtures/rundir/cases.txt, new (names,
-# numbering, .gitignore first, the standard subdirectories, repositories that track run directories),
-# check, sub and store, in repositories whose config names programs. Every case runs under each bash on
+# numbering, .gitignore first, the standard subdirectories, repositories that track run directories,
+# in default and strict mode, the strict marker), check, sub and store, in repositories whose config
+# names programs. Every case runs under each bash on
 # the machine (/bin/bash and the bash running this suite, when they differ) and must print the same
 # under each. Needs git; no network. Usage (from the repo root): bash scripts/tests/test-rundir.sh
 set -uo pipefail
@@ -242,25 +243,91 @@ check "new in a repository whose config names programs ran none of them" nomarks
 R1="$T/r1"; mkrepo "$R1"; put "$R1" audit_notes.md 'notes'; commit "$R1" -m notes
 run_once "$R1" new audit
 check "new accepts a repository that tracks a top-level file named audit_*" out_is audit_1
-for p in audit_5/REPORT.md AUDIT_6/x Incident_2/y incident_3/deep/z; do
+# A path the repository tracks under a top-level audit_* or incident_* directory (RD-02): strict mode
+# refuses; default mode takes the next number whose name the repository tracks in no letter case, and
+# notes each such top-level name (the first 5, then a count), with stdout the name alone.
+tnote() { # tnote <tracked top-level name> <run directory made>: the note new prints
+  printf "rundir: note: the repository tracks %s/, under a name the commands' Edit(audit_*/**) and Edit(incident_*/**) rules also cover; this run writes only in %s (Rule 11d)" "$1" "$2"
+}
+for c in audit_5/REPORT.md:audit_6 AUDIT_6/x:audit_1 Incident_2/y:audit_1 incident_3/deep/z:audit_1 AUDIT_1/x:audit_2; do
+  p=${c%%:*} want=${c#*:}
   R="$T/r-$(printf '%s' "$p" | tr '/' '_')"; mkrepo "$R"; put "$R" "$p" 'tracked'; commit "$R" -m tracked
   tree "$R" > "$T/tree.before"
-  run "$R" new audit
-  check "new refuses a repository that tracks $p" refused "the repository tracks $p, so writes into a run directory could reach tracked files; audit a copy"
+  AUDITOR_STRICT=1 run "$R" new audit
+  check "in strict mode new refuses a repository that tracks $p" refused "the repository tracks $p, so writes into a run directory could reach tracked files; audit a copy"
   tree "$R" > "$T/tree.after"
   check "... and creates nothing" cmp -s "$T/tree.before" "$T/tree.after"
+  run_once "$R" new audit
+  check "in default mode new makes $want there, and notes ${p%%/*}/" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|$want|$(tnote "${p%%/*}" "$want")"
+  tree "$R" > "$T/tree.after"
+  check "... changing nothing but making $want" \
+    test "$(LC_ALL=C comm -23 "$T/tree.before" "$T/tree.after" | wc -l | tr -d ' '):$(LC_ALL=C comm -13 "$T/tree.before" "$T/tree.after" | grep -cv "^\./$want\(/.*\)\{0,1\}\$")" = 0:0
 done
+R="$T/r-many"; mkrepo "$R"
+for d in audit_1 audit_2 Audit_3 incident_4 audit_reports incident_response audit_x; do put "$R" "$d/f" 'tracked'; done
+commit "$R" -m many
+run_once "$R" new audit
+check "in default mode new names the first five tracked names, then a count" \
+  test "$RC|$(cat "$T/out")|$(sed -n '$=' "$T/err")|$(sed -n '$p' "$T/err")" = "0|audit_4|6|rundir: note: the repository tracks paths under 2 more such names; this run writes only in audit_4 (Rule 11d)"
 O="$T/sm"; mkrepo "$O"; put "$O" f 'x'; commit "$O" -m x
 R="$T/r-gitlink"; mkrepo "$R"
 tgit -C "$R" update-index --add --cacheinfo "160000,$(git -C "$O" rev-parse HEAD),audit_9"
 commit "$R" -m gitlink
-run "$R" new audit
-check "new refuses a repository with a submodule named audit_*" \
+AUDITOR_STRICT=1 run "$R" new audit
+check "in strict mode new refuses a repository with a submodule named audit_*" \
   refused 'the repository tracks audit_9/, so writes into a run directory could reach tracked files; audit a copy'
+run_once "$R" new audit
+check "... and default mode makes audit_1 and notes it" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|audit_1|$(tnote audit_9 audit_1)"
 R="$T/r-outer"; mkrepo "$R"; put "$R" inner/audit_3/x 'x'; commit "$R" -m nested
-run "$R/inner" new audit
-check "new asks the repository above the working directory" \
+AUDITOR_STRICT=1 run "$R/inner" new audit
+check "in strict mode new asks the repository above the working directory" \
   refused 'the repository tracks audit_3/x, so writes into a run directory could reach tracked files; audit a copy'
+run_once "$R/inner" new audit
+check "... and default mode makes audit_4 there" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|audit_4|$(tnote audit_3 audit_4)"
+# When git cannot tell whether the repository tracks a run directory (RD-03): default mode goes on with a
+# note, strict mode refuses. A git that fails with no answer stands for that.
+mkdir -p "$T/cantell"
+printf '#!/bin/sh\necho "fatal: something else" >&2\nexit 1\n' > "$T/cantell/git"
+chmod +x "$T/cantell/git"
+P5="$T/cantell-wt"; mkdir -p "$P5"
+PATH="$T/cantell:$PATH" run_once "$P5" new audit
+check "in default mode new goes on when git cannot tell, with a note" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|audit_1|rundir: note: git cannot tell whether the repository tracks a run directory; audit_1 is new, and its .gitignore of * keeps git off it (Rule 11d)"
+AUDITOR_STRICT=1 PATH="$T/cantell:$PATH" run "$P5" new audit
+check "... and strict mode refuses" refused 'git cannot tell whether the repository tracks a run directory'
+PATH="$T/cantell:$PATH" run "$P5" check audit_1
+check "check takes a run directory git cannot tell about in default mode (CONF-16)" out_is 'ok audit_1'
+AUDITOR_STRICT=1 PATH="$T/cantell:$PATH" run "$P5" check audit_1
+check "... and strict mode refuses it" refused 'git cannot tell whether the run directory is tracked: audit_1'
+# A checkout another user owns (CONF-05; git's own test knob stands for the other user).
+mkdir -p "$T/other"
+printf '#!/bin/sh\nGIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec "%s" "$@"\n' "$(command -v git)" > "$T/other/git"
+chmod +x "$T/other/git"
+R="$T/r-other"; mkrepo "$R"; put "$R" a.rs 'x'; commit "$R" -m x
+PATH="$T/other:$PATH" run_once "$R" new audit
+check "in default mode new works in a checkout another user owns" out_is audit_1
+AUDITOR_STRICT=1 PATH="$T/other:$PATH" run "$R" new audit
+check "... and strict mode refuses it" refused 'git cannot tell whether the repository tracks a run directory'
+# The strict marker: new writes <name>/strict whenever strict mode is on, whatever turned it on, and a
+# marker in a run directory of the working directory turns it on for every later call there.
+P6="$T/marker"; mkdir -p "$P6"
+run_once "$P6" new audit
+check "new in default mode writes no marker" sh -c "[ '$RC' = 0 ] && [ ! -e '$P6/audit_1/strict' ]"
+run_once "$P6" new audit --strict
+check "new audit --strict makes audit_2" out_is audit_2
+check "... with the marker strict, holding strict" test "$(cat "$P6/audit_2/strict")" = strict
+check "... one line, readable by its owner only" test "$(wc -c < "$P6/audit_2/strict" | tr -d ' '):$(ls -l "$P6/audit_2/strict" | cut -c1-10)" = '7:-rw-------'
+check "... right after the .gitignore, beside the standard subdirectories" \
+  test "$(tree "$P6/audit_2" | tr '\n' ' ')" = '. ./.gitignore ./deps ./exec ./patches ./poc ./sast ./strict ./worksheets ./worksheets/context '
+run_once "$P6" new incident
+check "... and every later new there is strict too, from that marker" sh -c "[ \"\$(cat '$T/out')\" = incident_1 ] && [ -f '$P6/incident_1/strict' ]"
+P7="$T/marker-env"; mkdir -p "$P7"
+AUDITOR_STRICT=yes run_once "$P7" new audit
+check "AUDITOR_STRICT=yes makes new write the marker" sh -c "[ \"\$(cat '$T/out')\" = audit_1 ] && [ -f '$P7/audit_1/strict' ]"
+R="$T/r-marker"; mkrepo "$R"; put "$R" audit_1/strict 'strict'; commit "$R" -m 'a committed marker'
+run_once "$R" new audit
+check "a marker the repository tracks turns nothing on: new makes audit_2, with no marker" \
+  sh -c "[ \"\$(cat '$T/out')\" = audit_2 ] && [ ! -e '$R/audit_2/strict' ]"
 # Only git's own answer says there is no repository: a worktree whose admin directory bears git's words for
 # that, with a commondir git still reads past 16 KiB of line ends, is refused for that file.
 R="$T/r-main"; mkrepo "$R"; put "$R" f 'x'; commit "$R" -m x

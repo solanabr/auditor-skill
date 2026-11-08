@@ -1,7 +1,7 @@
 #!/bin/bash
 # rundir.sh — create, check and reuse run directories (OUTPUT-RULES.md Rule 11d).
 #
-#   "${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" new audit|incident   creates <kind>_<max+1>; prints its name
+#   "${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" new audit|incident [--strict]   creates <kind>_<max+1>; prints its name
 #   "${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check <R>            checks <R> for reuse; prints "ok <R>"
 #   "${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" sub <R> <rel>        creates one subdirectory; prints its path
 #   "${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" store                checks the in-tree audit-mem store
@@ -15,13 +15,18 @@
 # in default mode a link that resolves inside it passes, and so does one git cannot tell about); reuse a
 # directory only after the human confirms which one.
 #
-# new takes the highest n over real directories named <kind>_<n>, plus one. It refuses when the
-# repository tracks a path under a top-level directory named audit_* or incident_* (or a submodule of
-# that name), in any letter case, since writes into run directories could then reach tracked files,
-# and when the next name is already taken. It creates the directory with plain mkdir, writes .gitignore
-# first, with noclobber, then the standard subdirectories:
+# new takes the highest n over real directories named <kind>_<n>, plus one, passing over a name the
+# repository tracks in any letter case. A path the repository tracks under a top-level directory named
+# audit_* or incident_* (or a submodule of that name) gets a note on stderr, since the commands'
+# Edit(audit_*/**) and Edit(incident_*/**) rules also cover it; so does a repository git cannot tell about
+# (Rule 11d). In strict mode (OUTPUT-RULES.md Rule 11f; --strict turns it on) both are refused, as writes
+# into run directories could then reach tracked files. new refuses when the next name is taken by a file
+# or a link, and when no number is left. It creates the directory with plain mkdir, writes .gitignore
+# first, with noclobber, then, in strict mode, the marker strict (holding "strict"), which keeps every
+# later run in this working directory strict until it is deleted, then the standard subdirectories:
 #   audit: worksheets/context, poc, patches, exec, deps, sast;
 #   incident: bin, poc, patches, exec, logs.
+# stdout is the name alone; the notes go to stderr.
 #
 # sub creates <R>/<rel> (and <R>/poc for poc/<ID>) when missing, and accepts an existing one. <rel> is
 # one of poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, where <ID> is F-<1-4 digits>
@@ -62,24 +67,47 @@ tracked_run_dirs() {
     ':(glob,icase)incident_*' ':(glob,icase)incident_*/**' 2>/dev/null || return 2
 }
 
-cmd_new() { # cmd_new audit|incident
-  local kind listed line path max=0 d n name
-  [ $# -eq 1 ] || refuse "new takes one word: audit or incident"
+cmd_new() { # cmd_new audit|incident [--strict]
+  local kind listed line path top max=0 d n name doubt=0 taken=" " noted="/" nnoted=0
+  local -a notes=()
+  [ $# -ge 1 ] || refuse "new takes audit or incident, then --strict or nothing"
   kind=$1
+  shift
   case "$kind" in audit|incident) ;; *) refuse "new takes audit or incident, not $(confine_text "$kind")" ;; esac
+  if [ $# -ge 1 ] && [ "$1" = --strict ]; then confine_strict_on --strict; shift; fi
+  [ $# -eq 0 ] || refuse "new takes audit or incident, then --strict or nothing, not $(confine_text "$1")"
   # In this shell, so a file git would wait on is refused for what it is, and tracked_run_dirs finds it checked.
   CONFINE_CEILING='' confine_git_files "$WT"
-  listed=$(tracked_run_dirs) || refuse "git cannot tell whether the repository tracks a run directory"
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    path=${line#*$'\t'}
-    case "$line" in 160000\ *) path=$path/ ;; esac
-    case "$path" in
-      */*) refuse "the repository tracks $(confine_text "$path"), so writes into a run directory could reach tracked files; audit a copy" ;;
-    esac
-  done <<EOF
-$listed
-EOF
+  if listed=$(tracked_run_dirs); then
+    # Split on line ends, not read from a here-document, which bash 3.2 writes to a file in the working
+    # directory when it finds no TMPDIR it can write to.
+    IFS=$'\n'
+    set -f
+    for line in $listed; do
+      path=${line#*$'\t'}
+      case "$line" in 160000\ *) path=$path/ ;; esac
+      top=${path#\"}
+      top=${top%%/*}
+      case "$top" in
+        [Aa][Uu][Dd][Ii][Tt]_*) taken="${taken}audit_${top#*_} " ;;
+        [Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*) taken="${taken}incident_${top#*_} " ;;
+      esac
+      case "$path" in
+        */*)
+          [ "$CONFINE_STRICT" != 1 ] ||
+            refuse "the repository tracks $(confine_text "$path"), so writes into a run directory could reach tracked files; audit a copy"
+          case "$noted" in *"/$top/"*) continue ;; esac
+          noted="$noted$top/"
+          nnoted=$((nnoted + 1))
+          [ "$nnoted" -gt 5 ] || notes+=("$(confine_text "$top")/") ;;
+      esac
+    done
+    set +f
+    IFS=$' \t\n'
+  else
+    [ "$CONFINE_STRICT" != 1 ] || refuse "git cannot tell whether the repository tracks a run directory"
+    doubt=1
+  fi
   for d in "$WT/$kind"_*; do
     [ -d "$d" ] && [ ! -L "$d" ] || continue
     n=${d##*/}
@@ -89,11 +117,17 @@ EOF
     [ "$n" -le "$max" ] || max=$n
   done
   n=$((max + 1))
-  [ "$n" -le 999999 ] || refuse "no ${kind}_<n> name is left"
-  name=${kind}_$n
+  while :; do
+    [ "$n" -le 999999 ] || refuse "no ${kind}_<n> name is left"
+    name=${kind}_$n
+    case "$taken" in *" $name "*) n=$((n + 1)) ;; *) break ;; esac
+  done
   if [ -e "$WT/$name" ] || [ -L "$WT/$name" ]; then refuse "$name already exists and is not a run directory"; fi
   confine_mkdir "$WT/$name" || refuse "cannot create $name"
   confine_new_file "$WT/$name/.gitignore" '*'$'\n' || refuse "cannot write $name/.gitignore"
+  if [ "$CONFINE_STRICT" = 1 ]; then
+    confine_new_file "$WT/$name/strict" 'strict'$'\n' || refuse "cannot write $name/strict"
+  fi
   if [ "$kind" = audit ]; then
     set -- worksheets worksheets/context poc patches exec deps sast
   else
@@ -103,6 +137,13 @@ EOF
     confine_mkdir "$WT/$name/$d" || refuse "cannot create $name/$d"
   done
   printf '%s\n' "$name"
+  for path in ${notes[@]+"${notes[@]}"}; do
+    confine_note "the repository tracks $path, under a name the commands' Edit(audit_*/**) and Edit(incident_*/**) rules also cover; this run writes only in $name (Rule 11d)"
+  done
+  [ "$nnoted" -le 5 ] ||
+    confine_note "the repository tracks paths under $((nnoted - 5)) more such names; this run writes only in $name (Rule 11d)"
+  [ "$doubt" -eq 0 ] ||
+    confine_note "git cannot tell whether the repository tracks a run directory; $name is new, and its .gitignore of * keeps git off it (Rule 11d)"
 }
 
 cmd_check() { # cmd_check <R>
