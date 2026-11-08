@@ -1189,6 +1189,43 @@ os.execvp(sys.argv[1], sys.argv[1:])' "${SHELLS[0]}")
 else
   skp "mkfifo is not available: the named pipe cases"
 fi
+# A walk of a git directory that meets an entry that vanished, as when git's gc prunes loose objects while
+# find walks them: the walk stands, since what is gone cannot be waited on; any other failure is tried
+# again and refused only when it persists. Each stand-in find walks as find does, then fails as named.
+REAL_FIND=$(command -v find)
+mkrepo "$T/walkrepo"; put "$T/walkrepo" f x; commit "$T/walkrepo" -m x
+for m in vanish-once vanish-always deny-twice deny-always; do
+  mkdir -p "$T/$m"
+  case "$m" in
+    vanish-*) why='No such file or directory' ;;
+    *) why='Permission denied' ;;
+  esac
+  case "$m" in
+    *-once) upto=1 ;;
+    *-twice) upto=2 ;;
+    *) upto=999999 ;;
+  esac
+  printf '#!/bin/sh\n"%s" "$@"; rc=$?\nn=$(cat "%s" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "%s"\n[ "$n" -gt %s ] || { echo "find: $1/objects/ab: %s" >&2; exit 1; }\nexit "$rc"\n' \
+    "$REAL_FIND" "$T/$m/calls" "$T/$m/calls" "$upto" "$why" > "$T/$m/find"
+  chmod +x "$T/$m/find"
+done
+for m in vanish-once vanish-always deny-twice; do
+  rm -f "$T/$m/calls"
+  LIB_PATH="$T/$m:$PATH" lib_once "$T/walkrepo" 'confine_repo . R; printf "%s" "$CONFINE_BARE"'
+  check "a walk of the git directory that fails as $m still takes the repository" out_is false
+done
+check "... the one denied twice, after it was tried again" test "$(cat "$T/deny-twice/calls")" -ge 3
+rm -f "$T/deny-always/calls"
+LIB_PATH="$T/deny-always:$PATH" lib_once "$T/walkrepo" 'confine_repo . R'
+check "... but one that keeps failing for another reason is refused, after three tries" \
+  refused "the git directory holds a directory that cannot be read, so a named pipe or device in it cannot be ruled out: $(shown "$T/walkrepo/.git")"
+check "... whose walks were tried three times" test "$(cat "$T/deny-always/calls")" = 6
+if mkfifo "$T/walkrepo/.git/pipe" 2>/dev/null; then
+  LIB_PATH="$T/vanish-always:$PATH" lib_bounded "$T/walkrepo/.git/pipe" "$T/walkrepo" 'confine_repo . R'
+  check "... and a named pipe that is still there is refused, whatever vanished beside it" \
+    refused "a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$T/walkrepo/.git")"
+  rm "$T/walkrepo/.git/pipe"
+fi
 # A git directory holding 2000 symbolic links: one find lists them and the shell tests each, so rundir.sh
 # and confine_repo end within 5 s (a find -exec per link took minutes).
 mkrepo "$RW/links"; put "$RW/links" f x; commit "$RW/links" -m x

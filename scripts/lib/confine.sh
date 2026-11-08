@@ -31,7 +31,7 @@
 # A tool that contacts an outside service records it in <R>/disclosures.tsv (OUTPUT-RULES.md Rule 11b;
 # the format is at confine_disclose).
 # Needs bash >= 3.2 and, on the cleaned PATH, env, git, find, wc and cat (grep, when there, saves a git
-# call); confine_scratch needs mktemp, hgit_tree mktemp and rmdir (and /bin/sh after a Ctrl-C; rm for a
+# call; sleep, when there, gives a failed walk a pause before it is tried again); confine_scratch needs mktemp, hgit_tree mktemp and rmdir (and /bin/sh after a Ctrl-C; rm for a
 # file CONFINE_TREE_COPY places), confine_service sed, confine_disclose date, and confine_b58_bytes and
 # confine_links_inside python3.
 
@@ -370,6 +370,38 @@ confine_git_includes() {
 # it holds cannot be told), or a file an include names (confine_git_includes). Each is resolved first,
 # since git opens what a link to it names; then find lists the pipes and devices of each, then its
 # links, one to a line, and the shell tests where each leads, with no program per link.
+# confine_walk <find arguments>...: find with those arguments, what it prints on stdout. Status 0 when find
+# succeeds, or when each error it reports is an entry that vanished while it walked ("No such file or
+# directory"), as when git's gc prunes loose objects: an entry that is gone cannot be waited on, and find
+# walked the rest. Any other failure is tried twice more, after a short pause when sleep is on PATH, and is
+# status 1 when it persists. BSD find has no -ignore_readdir_race; a second walk keeps only the errors.
+confine_walk() {
+  local out err try=1
+  while :; do
+    out=$(find "$@" 2>/dev/null) && { printf '%s' "$out"; return 0; }
+    if err=$(find "$@" 2>&1 >/dev/null) || confine_vanished "$err"; then
+      printf '%s' "$out"
+      return 0
+    fi
+    [ "$try" -lt 3 ] || return 1
+    try=$((try + 1))
+    if command -v sleep >/dev/null 2>&1; then sleep 0.2; fi
+  done
+}
+
+confine_vanished() { # confine_vanished <find's errors>: status 0 when there is one, and each says an entry was not found
+  local l rc=1 IFS=$'\n'
+  set -f
+  for l in $1; do
+    case "$l" in
+      *': No such file or directory'|*': No such file or directory.') rc=0 ;;
+      *) rc=1; break ;;
+    esac
+  done
+  set +f
+  return "$rc"
+}
+
 confine_git_dir_files() {
   local g c d odd
   # Resolved in a subshell, so the caller's working directory stays as it is (target.sh runs from /).
@@ -379,7 +411,7 @@ confine_git_dir_files() {
     { CONFINE_GIT_WHY="the git directory cannot be resolved: $(confine_text "$2")"; return 1; }
   g=${g%/} c=${c%/}
   for d in "$g" "$c"; do
-    odd=$(find "$d" \( -type p -o -type b -o -type c \) -print 2>/dev/null) || {
+    odd=$(confine_walk "$d" \( -type p -o -type b -o -type c \) -print) || {
       CONFINE_GIT_WHY="the git directory holds a directory that cannot be read, so a named pipe or device in it cannot be ruled out: $(confine_text "$d")"
       return 1
     }
@@ -871,7 +903,7 @@ confine_repo() {
         exit "$unread"
       fi
     fi
-    odd=$(find "$d" ! -type f ! -type d ! -type s -print 2>/dev/null) || confine_refuse "$what has a git directory that find cannot fully read: $shown"
+    odd=$(confine_walk "$d" ! -type f ! -type d ! -type s -print) || confine_refuse "$what has a git directory that find cannot fully read: $shown"
     if [ -n "$odd" ]; then
       links=$(find "$d" -type l -print 2>/dev/null)
       if [ -n "$links" ] && { [ "$CONFINE_STRICT" = 1 ] || ! confine_hook_links "$d" "$links"; }; then
@@ -1002,7 +1034,7 @@ confine_alternates_ok() {
     [ -d "$a" ] || continue
     a=$(cd -P -- "$a" 2>/dev/null && printf '%s/' "$PWD") || continue
     a=${a%/}
-    odd=$(find "$a" ! -type f ! -type d ! -type s -print 2>/dev/null) ||
+    odd=$(confine_walk "$a" ! -type f ! -type d ! -type s -print) ||
       { CONFINE_GIT_WHY="borrows objects from a directory that find cannot fully read (objects/info/alternates)"; return 1; }
     [ -z "$odd" ] ||
       { CONFINE_GIT_WHY="borrows objects from a directory that holds a symbolic link, named pipe or device (objects/info/alternates)"; return 1; }
