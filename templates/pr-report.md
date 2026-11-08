@@ -52,6 +52,8 @@ SC-059..062, and how many changed packages were left without an artifact diff. O
 - Each analyzer or tool that did not run, and why: denied, failed, not built, or not installed.
 - What the command does not cover: quick-scan evaluates the CRITICAL and HIGH vectors only; diff-audit, the
   changed code and its 1-hop neighbours; deep-review, one unit.
+- The corpus this run read: each checklist section and known-vector file, by id, and any it selected but did not
+  read, so a reader can tell a verdict that rests on the procedure from one that does not.
 - Outside services the run contacted (Rule 11b), from `audit_<n>/disclosures.tsv`.
 
 ## Notes & Nitpicks
