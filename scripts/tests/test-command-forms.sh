@@ -1278,7 +1278,8 @@ commands/diff-audit.md	first check what you read against the rows you selected, 
 commands/diff-audit.md	the ids of the rows you selected, and the ids of the rows in those sections you left out
 templates/pr-report.md	command's rule selected and those it left out, by id, each left-out row with its reason, so a reader can check
 templates/pr-report.md	request to that service, so a row says what the tool was set to send, not that it went out
-templates/pr-report.md	a local copy instead, and otherwise that it may have been sent.
+templates/pr-report.md	sent only where the tool's own output names that service's address as one it reached, and otherwise that it
+templates/pr-report.md	`Loaded … security advisories (from <folder>)`, names a local copy and shows no request.
 commands/diff-audit.md	(`deps.sh` adds a row to `audit_<n>/disclosures.tsv` before its first request to each service)
 commands/quick-scan.md	Skip no kept file and cut none short by choice, not even to save cost or time; Coverage & Limitations names only a file the Read tool could not open.
 commands/diff-audit.md	Read each vector file whole, with no line limit, several in each message. Read every selected file before you start the report
@@ -1395,6 +1396,7 @@ commands/quick-scan.md	list the kept files in a message of your own
 commands/quick-scan.md	write the kept list as text in a message
 commands/diff-audit.md	write the selected list as text in a message
 templates/pr-report.md	Outside services the run contacted
+templates/pr-report.md	that nothing went out where the output shows the tool used
 commands/diff-audit.md	records each service it contacts
 commands/diff-audit.md	no longer matches the write rule for `audit_*/`
 commands/deep-review.md	no longer matches the write rule for `audit_*/`
