@@ -26,13 +26,15 @@
 # In --detect and --offline, --repo and a local --parent or --vulns are relative to the working
 # directory, with no "." or ".." component, and reach nothing through a symbolic link; --repo, and a
 # --parent, is the top level of a repository whose git directory lies inside the working directory,
-# holds no symbolic link and borrows no objects (alternates) or parents (info/grafts). A local path that
-# fails this is refused (exit 2), naming --network. --network reads such a repository: its git directory
-# is searched for named pipes and devices git would open, but not where a link to a directory there leads,
-# nor the object directories objects/info/alternates names, so a read that meets one there waits until
-# the caller stops the run. A --vulns file is copied into the run directory, and a pre-approved read must
-# not copy a file such as a key from outside the tree into the run folder: the commands pre-approve
-# --detect and --offline, never --network.
+# holds no symbolic link and borrows no objects (alternates) or parents (info/grafts). Default mode also
+# takes a git directory outside that git's own layout ties back to it, links in its hooks directory, and
+# alternates and grafts, each of the last two with a note (confine_repo, OUTPUT-RULES.md Rule 11f). A
+# local path that fails this is refused (exit 2), naming --network. --network reads such a repository:
+# its git directory is searched for named pipes and devices git would open, but not where a link to a
+# directory there leads, nor the object directories objects/info/alternates names, so a read that meets
+# one there waits until the caller stops the run. A --vulns file is copied into the run directory, and a
+# pre-approved read must not copy a file such as a key from outside the tree into the run folder: the
+# commands pre-approve --detect and --offline, never --network.
 # With --repo . in a session started below the top level of a repository, default mode reads that
 # repository, history above the working directory included, as git does from the working directory
 # (OUTPUT-RULES.md Rule 11c): pathspecs and the paths printed are relative to it, and changes and files
@@ -68,8 +70,10 @@
 #   -h, --help                print this header (as the only argument)
 #
 # Run directory (OUTPUT-RULES.md Rule 11d): audit_<n> sits directly in the working directory, is a real
-# directory holding no symbolic link, is tracked by no repository in any letter case, and has a
-# .gitignore holding exactly "*" ("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" new audit makes one).
+# directory holding no symbolic link (in default mode, none that leads outside it or to nothing), is
+# tracked by no repository in any letter case (in default mode, one git cannot place passes on its
+# .gitignore), and has a .gitignore holding exactly "*" ("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" new
+# audit makes one).
 # bootstrap/ is made in it when missing. The output is built in a temporary directory and copied in at
 # the end, after the run directory is checked again: every file is created anew with noclobber and
 # written through the descriptor opened at creation, and a re-run replaces the outputs of the run before.
@@ -79,8 +83,8 @@
 # Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input (one line,
 #              "collect.sh: refused: <reason>": a mode that is not first, an unknown or repeated option,
 #              a value out of bounds, a path the mode does not take, an --import that is not a commit, a
-#              run directory that fails the checks above or that git or find cannot check, a disclosure
-#              that cannot be recorded, or an output that cannot be written),
+#              run directory that fails the checks above or that find, or in strict mode git, cannot
+#              check, a disclosure that cannot be recorded, or an output that cannot be written),
 #              3 --repo is not the top level of a git repository that git can read (or a bare
 #              repository; strict mode refuses --repo . below a top level so, in a "collect.sh: refused:"
 #              line), the pin does not resolve, or, in strict mode, the target is a partial clone or git
@@ -245,8 +249,9 @@ fi
 # a user-given --parent URL below allows https for that call only). Every diff runs with --text and
 # every git grep with -a, so neither an attribute (-diff, diff=<driver> with binary set) nor a size
 # threshold turns a change into "Binary files differ" or hides a file from a search. G reads with an
-# empty work tree (hgit_text_tree), so git opens no file of the target's work tree: a named pipe there
-# that confine_repo_top's scan does not see (behind a directory link, say) cannot stop a read.
+# empty work tree (hgit_text_tree), so git opens no file of the target's work tree: a named pipe there,
+# which confine_repo_top's scan misses behind a directory link and default mode does not look for at all,
+# cannot stop a read.
 G() { hgit_text_tree "$@"; }
 # --relative does nothing at a top level; below it (TPREFIX, further on) a diff prints its paths relative
 # to the working directory, as ls-tree and grep do there, and leaves out what changed outside it, whatever
