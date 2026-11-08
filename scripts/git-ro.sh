@@ -150,8 +150,7 @@ WT=$CONFINE_WT
 REPO=""
 
 USAGE='usage: git-ro.sh [--repo <dir> | --git-dir <R>/src.git] <subcommand> [<arg>...], or copy <dir> <R>, partial [--repo <dir>], tracked <path>'
-FIXES='2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, 2.46 and later'
-GIT_VERSION=unknown
+GIT_OLD=''
 DIFF_USAGE='diff compares committed revisions: give A..B, A...B, A^!, A B or --cached [A], and paths after --'
 BLAME_USAGE='blame needs <rev> -- <path>: a revision, then --, then one path'
 IGNORE_REVS="blame does not run where the repository's config sets blame.ignoreRevsFile; blame a copy (git-ro.sh copy, then --git-dir)"
@@ -296,14 +295,18 @@ open_copy() { # open_copy <R>/src[-<k>].git: a copy that copy made
   [ "$CONFINE_BARE" = true ] || refuse "--git-dir is not a bare repository: $shown"
 }
 
-copy_git_ok() { # status 0 when git has the May-2024 clone fixes; sets GIT_VERSION to what git --version names
-  local v maj min pat
-  GIT_VERSION=unknown
+# copy_git_ok: status 0 when git's version is that of a release with the May-2024 clone fixes; otherwise
+# GIT_OLD says what the version shows. It is read from git --version alone, so a distribution build with
+# the fixes backported under the old number is taken for an old git.
+copy_git_ok() {
+  local v word maj min pat fix
+  GIT_OLD="this git reports no version these checks can read"
   v=$(hgit / --version </dev/null 2>/dev/null) || return 1
   v=${v#git version }
-  confine_shown "$v"
-  GIT_VERSION=$CONFINE_SHOWN
-  v=${v%% *}
+  word=${v%% *}
+  confine_shown "$word"
+  GIT_OLD="this git reports '$CONFINE_SHOWN', which is no version these checks can read"
+  v=$word
   maj=${v%%.*}; v=${v#"$maj"}; v=${v#.}
   min=${v%%.*}; v=${v#"$min"}; v=${v#.}
   pat=${v%%.*}
@@ -311,13 +314,17 @@ copy_git_ok() { # status 0 when git has the May-2024 clone fixes; sets GIT_VERSI
   [ -n "$maj" ] && [ -n "$min" ] || return 1
   [ -n "$pat" ] || pat=0
   [ "$maj" -le 2 ] || return 0
-  [ "$maj" -eq 2 ] || return 1
+  if [ "$maj" -lt 2 ] || [ "$min" -lt 39 ]; then
+    GIT_OLD="this git reports $CONFINE_SHOWN, older than 2.39.4, the oldest May-2024 fixed release"
+    return 1
+  fi
   case "$min" in
-    39|43) [ "$pat" -ge 4 ] ;;
-    40|42) [ "$pat" -ge 2 ] ;;
-    41|44|45) [ "$pat" -ge 1 ] ;;
-    *) [ "$min" -ge 46 ] ;;
+    39) fix=2.39.4 ;; 40) fix=2.40.2 ;; 41) fix=2.41.1 ;; 42) fix=2.42.2 ;; 43) fix=2.43.4 ;; 44) fix=2.44.1 ;; 45) fix=2.45.1 ;;
+    *) return 0 ;;
   esac
+  [ "$pat" -lt "${fix##*.}" ] || return 0
+  GIT_OLD="this git reports $CONFINE_SHOWN, older than $fix, that line's May-2024 fixed release"
+  return 1
 }
 
 run_copy() { # run_copy <dir> <R>
@@ -383,7 +390,7 @@ run_copy() { # run_copy <dir> <R>
   confine_new_file "$WT/$r/$dest/auditor-copy" "auditor-copy: made by git-ro.sh copy from $rel"$'\n' ||
     refuse "cannot write $r/$dest/auditor-copy"
   [ "$fixed" -eq 1 ] ||
-    confine_note "this git ($GIT_VERSION) has none of the May-2024 clone fixes for its release line ($FIXES), so copy made $r/$dest from git's plumbing instead of cloning (pack-objects in the source, index-pack in the copy); strict mode refuses this (Rule 11f)"
+    confine_note "$GIT_OLD, so copy made $r/$dest from git's plumbing instead of cloning (pack-objects in the source, index-pack in the copy); strict mode refuses this (Rule 11f)"
   printf '%s\n' "$r/$dest"
   exit 0
 }
@@ -932,7 +939,7 @@ main() {
   if [ -n "$gitdir" ]; then open_copy "$gitdir"; else confine_repo "$repo" "$what" 0; fi
   REPO=$CONFINE_REPO
   [ "$CONFINE_STRICT" = 1 ] || copy_git_ok ||
-    confine_note "this git ($GIT_VERSION) has none of the May-2024 clone fixes for its release line ($FIXES); git-ro's reads clone nothing, and copy makes its copy from git's plumbing instead of cloning (Rule 11f)"
+    confine_note "$GIT_OLD; git-ro's reads clone nothing, and copy makes its copy from git's plumbing instead of cloning (Rule 11f)"
   case "$sub" in
     partial) run_partial ;;
     config) run_config "$@" ;;

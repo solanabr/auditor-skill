@@ -711,7 +711,14 @@ mkdir -p "$T/oldgit"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/oldgit/calls"\nfor a in "$@"; do :; done\nif [ "$a" = --version ]; then cat "%s/oldgit/version"; exit 0; fi\nexec "%s" "$@"\n' "$T" "$T" "$REAL_GIT" > "$T/oldgit/git"
 chmod +x "$T/oldgit/git"
 OLD='git-ro: refused: copy needs git with the May-2024 clone fixes: 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, or 2.46 or later'
-FIXES='2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, 2.46 and later'
+old_git() { # old_git <version>: how the notes word that git (from git --version alone)
+  case "$1" in
+    2.39.3) printf 'this git reports 2.39.3, older than 2.39.4, that line'"'"'s May-2024 fixed release' ;;
+    2.43.0) printf 'this git reports 2.43.0, older than 2.43.4, that line'"'"'s May-2024 fixed release' ;;
+    2.34.1) printf 'this git reports 2.34.1, older than 2.39.4, the oldest May-2024 fixed release' ;;
+    garbage) printf "this git reports 'garbage', which is no version these checks can read" ;;
+  esac
+}
 for v in 2.39.3 2.40.1 2.41.0 2.42.1 2.43.3 2.44.0 2.45.0 2.38.9 1.9.9 'garbage' '2'; do
   printf 'git version %s\n' "$v" > "$T/oldgit/version"
   before=$(ls "$WT/audit_1" | tr '\n' ' ')
@@ -727,7 +734,7 @@ for v in 2.39.3 2.43.0 2.34.1 'garbage'; do
   PATH="$T/oldgit:$PATH" run_once "$WT" copy . audit_1
   c=$(cat "$T/out")
   check "in default mode copy with git $v makes a copy, with one note" \
-    test "$RC|$(cat "$T/err")" = "0|git-ro: note: this git ($v) has none of the May-2024 clone fixes for its release line ($FIXES), so copy made $c from git's plumbing instead of cloning (pack-objects in the source, index-pack in the copy); strict mode refuses this (Rule 11f)"
+    test "$RC|$(cat "$T/err")" = "0|git-ro: note: $(old_git "$v"), so copy made $c from git's plumbing instead of cloning (pack-objects in the source, index-pack in the copy); strict mode refuses this (Rule 11f)"
   check "... which holds every branch and tag of the repository, and its HEAD" \
     test "$(git --git-dir="$WT/$c" for-each-ref --format='%(objectname) %(refname)' | tr '\n' ' ')|$(git --git-dir="$WT/$c" symbolic-ref HEAD)" = \
       "$(git -C "$WT" for-each-ref --format='%(objectname) %(refname)' refs/heads refs/tags | tr '\n' ' ')|$(git -C "$WT" symbolic-ref HEAD)"
@@ -739,7 +746,7 @@ check "... nor did a hook, a filter or a helper" nomarks
 printf 'git version 2.34.1\n' > "$T/oldgit/version"
 PATH="$T/oldgit:$PATH" run "$WT" rev-parse HEAD
 check "a read with such a git gets a note in default mode" \
-  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|$SIGNED|git-ro: note: this git (2.34.1) has none of the May-2024 clone fixes for its release line ($FIXES); git-ro's reads clone nothing, and copy makes its copy from git's plumbing instead of cloning (Rule 11f)"
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|$SIGNED|git-ro: note: $(old_git 2.34.1); git-ro's reads clone nothing, and copy makes its copy from git's plumbing instead of cloning (Rule 11f)"
 AUDITOR_STRICT=1 PATH="$T/oldgit:$PATH" run "$WT" rev-parse HEAD
 check "... and none in strict mode" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|$SIGNED|"
 for v in 2.39.4 2.40.2 2.41.1 2.42.2 2.43.4 2.44.1 2.45.1 2.46.0 3.0.0 '2.39.5 (Apple Git-154)' 2.47.0.windows.1 2.48.0-rc1; do
