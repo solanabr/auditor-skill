@@ -73,10 +73,6 @@ link_leaves() {
   r=$(cd -P "$2" && pwd -P)/ || return 1
   case "$p" in "$r"*) return 1 ;; esac
 }
-# api <dir> <code>: status of <code> run from <dir> with scripts/lib/confine.sh sourced and confine_init
-# done, in default mode. A case that needs a default-mode rule Lane 1 has yet to commit asks this first
-# whether the confinement already applies it, and skips, saying what it waits for, until it does.
-api() { (cd "$1" && bash -c '. "$1" && confine_init api "$2" 2 && eval "$3"' api "$ROOT/scripts/lib/confine.sh" "$ROOT" "$2") >/dev/null 2>&1 </dev/null; }
 
 # =================================================================================================
 # Target fixture: guard edits, attribute anchoring, quiet fix, whole-message keyword, revert.
@@ -1097,14 +1093,10 @@ ln -s ../decoy.md "$RD/audit_11/bootstrap/history.md"
 check "T-n (strict): a run directory holding a link that ends inside it is refused (exit 2)" \
   test "$(cd "$RD" && AUDITOR_STRICT=1 "$COLLECT" --offline --repo . --out audit_11/bootstrap >/dev/null 2>"$T/rc.err"; echo $?)" = 2
 check "T-n (strict): ... saying it holds a symbolic link" refused_with "the run directory holds a symbolic link: audit_11"
-if api "$RD" 'confine_rundir audit_11 x'; then
-  check "T-n: in default mode that run directory is written to (exit 0)" test "$(rc_in "$RD" --offline --repo . --out audit_11/bootstrap)" = 0
-  check "T-n: ... the history.md link replaced by a file of its own" \
-    sh -c "[ ! -L '$RD/audit_11/bootstrap/history.md' ] && [ -s '$RD/audit_11/bootstrap/history.md' ]"
-  check "T-n: ... and nothing written through the link" test "$(cat "$RD/audit_11/decoy.md")" = decoy
-else
-  skp "T-n: a run directory holding a link that ends inside it, in default mode: waits for Lane 1's CONF-15 commit"
-fi
+check "T-n: in default mode that run directory is written to (exit 0)" test "$(rc_in "$RD" --offline --repo . --out audit_11/bootstrap)" = 0
+check "T-n: ... the history.md link replaced by a file of its own" \
+  sh -c "[ ! -L '$RD/audit_11/bootstrap/history.md' ] && [ -s '$RD/audit_11/bootstrap/history.md' ]"
+check "T-n: ... and nothing written through the link" test "$(cat "$RD/audit_11/decoy.md")" = decoy
 
 # =================================================================================================
 # T-p: partial and shallow clones. A partial clone is read for what it holds, with a note, and never
@@ -1396,14 +1388,10 @@ check "T-v (strict): when git cannot say whether the run directory is tracked, i
   test "$(cd "$FC" && AUDITOR_STRICT=1 PATH="$T/gitwrap-tracked:$PATH" "$COLLECT" --offline --repo . --out "$FR1/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 2
 check "T-v (strict): ... saying so" refused_with "git cannot tell whether the run directory is tracked: $FR1"
 check "T-v (strict): ... and nothing is written" test ! -e "$FC/$FR1/bootstrap"
-if PATH="$T/gitwrap-tracked:$PATH" api "$FC" "confine_rundir $FR1 x"; then
-  check "T-v: in default mode that run directory, whose .gitignore holds *, is written to (exit 0)" \
-    test "$(cd "$FC" && PATH="$T/gitwrap-tracked:$PATH" "$COLLECT" --offline --repo . --out "$FR1/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 0
-  check "T-v: ... with no note, and history.md is written" \
-    sh -c "[ \"\$(cat '$T/rc.err')\" = 'collect.sh: wrote $FR1/bootstrap/history.md' ] && [ -s '$FC/$FR1/bootstrap/history.md' ]"
-else
-  skp "T-v: a run directory git cannot place, in default mode: waits for Lane 1's CONF-16 commit"
-fi
+check "T-v: in default mode that run directory, whose .gitignore holds *, is written to (exit 0)" \
+  test "$(cd "$FC" && PATH="$T/gitwrap-tracked:$PATH" "$COLLECT" --offline --repo . --out "$FR1/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 0
+check "T-v: ... with no note, and history.md is written" \
+  sh -c "[ \"\$(cat '$T/rc.err')\" = 'collect.sh: wrote $FR1/bootstrap/history.md' ] && [ -s '$FC/$FR1/bootstrap/history.md' ]"
 mkdir -p "$FC/$FR2/bootstrap/sub"; ln -s "$T/elsewhere" "$FC/$FR2/bootstrap/sub/link"
 chmod 0300 "$FC/$FR2/bootstrap/sub"
 check "T-v: a run directory that cannot be fully read (a 0300 subdirectory) is refused (exit 2)" \
@@ -1490,22 +1478,18 @@ FW="$W/fifo-wt"; mkrepo "$FW"; put "$FW" a.txt 'a'; commit "$FW" -m "initial"; m
 check "T-x (strict): a --repo with a named pipe as its .gitattributes is refused (exit 3)" \
   test "$(AUDITOR_STRICT=1 rc --network --repo fifo-wt --out "$(newrun)/bootstrap")" = 3
 check "T-x (strict): ... naming the pipe" grep -qF "collect.sh: a named pipe or device is where git reads its own files in the work tree, and git would wait on it for good: " "$T/rc.err"
-if api "$W" "confine_repo_top \"$FW\""; then
-  FWR=$(newrun)
-  (cd "$W" && exec "$COLLECT" --network --repo fifo-wt --out "$FWR/bootstrap") >/dev/null 2>"$T/rc.err" &
-  fpid=$!; n=0
-  while kill -0 "$fpid" 2>/dev/null && [ "$n" -lt 600 ]; do sleep 0.1; n=$((n + 1)); done
-  if kill -0 "$fpid" 2>/dev/null; then
-    kill -KILL "$fpid" 2>/dev/null; wait "$fpid" 2>/dev/null; FRC=hung
-    ( : > "$FW/.gitattributes" ) & sleep 1; kill -KILL $! 2>/dev/null
-  else
-    wait "$fpid"; FRC=$?
-  fi
-  check "T-x: in default mode the collector reads past that pipe at once (exit 0)" test "$FRC" = 0
-  check "T-x: ... and writes history.md" test -s "$W/$FWR/bootstrap/history.md"
+FWR=$(newrun)
+(cd "$W" && exec "$COLLECT" --network --repo fifo-wt --out "$FWR/bootstrap") >/dev/null 2>"$T/rc.err" &
+fpid=$!; n=0
+while kill -0 "$fpid" 2>/dev/null && [ "$n" -lt 600 ]; do sleep 0.1; n=$((n + 1)); done
+if kill -0 "$fpid" 2>/dev/null; then
+  kill -KILL "$fpid" 2>/dev/null; wait "$fpid" 2>/dev/null; FRC=hung
+  ( : > "$FW/.gitattributes" ) & sleep 1; kill -KILL $! 2>/dev/null
 else
-  skp "T-x: a named pipe in the work tree, in default mode: waits for Lane 1's CONF-11 commit"
+  wait "$fpid"; FRC=$?
 fi
+check "T-x: in default mode the collector reads past that pipe at once (exit 0)" test "$FRC" = 0
+check "T-x: ... and writes history.md" test -s "$W/$FWR/bootstrap/history.md"
 rm -rf "$FW"
 
 # =================================================================================================
@@ -1531,45 +1515,41 @@ put "$MONO" programs/foo/src/big.rs '// emptied'
 commit "$MONO" -m "Empty the big module"
 C_YBIG=$(short "$MONO" HEAD); F_YBIG=$(git -C "$MONO" rev-parse HEAD)
 SUB="$MONO/programs/foo"
-if api "$SUB" 'confine_repo . --repo && [ -n "$CONFINE_PREFIX" ]'; then
-  YR=$(newrun "$SUB")
-  check "T-y: from a subdirectory of a repository, --offline --repo . reads that repository (exit 0)" \
-    test "$(rc_in "$SUB" --offline --repo . --out "$YR/bootstrap")" = 0
-  YH="$SUB/$YR/bootstrap/history.md"
-  check "T-y: ... the Target row names the working directory and the repository" \
-    has "$YH" "| Target | \`$SUB\`, which is \`programs/foo/\` in the repository at \`$MONO\`: the paths below are relative to it, and what lies outside it is left out |"
-  check "T-y: ... the default pathspec is taken from the working directory" has "$YH" "| Target paths | \`*.rs\` |"
-  section_of "$YH" "R3" > "$T/r3y.txt"
-  check "T-y: ... R3 names a removed guard by its path from the working directory" \
-    has "$T/r3y.txt" "REMOVED x1 src/lib.rs: #[account(mut, has_one = foo_admin)]"
-  check "T-y: ... and leaves out the guard removed outside it" hasnt "$T/r3y.txt" "bar_admin"
-  check "T-y: ... R4 counts files by that path, and none outside it" \
-    sh -c "awk '/^## R4/,/^## R5/' '$YH' | grep -q ' src/lib.rs\$' && ! awk '/^## R4/,/^## R5/' '$YH' | grep -q 'programs/'"
-  check "T-y: ... R6 lists the report below the working directory, and neither the report nor the README above it" \
-    sh -c "awk '/report-like files in the pinned tree/,/^\`\`\`\$/' '$YH' | grep -qx 'audits/foo-audit.md' && ! grep -q 'top-audit.md\|forked from' '$YH'"
-  check "T-y: ... and R7 copies that report from the pinned tree" \
-    sh -c "grep -F 'pinned tree: audits/foo-audit.md' '$SUB/$YR/bootstrap/inputs.tsv' | grep -q copied && grep -rq 'audit of foo' '$SUB/$YR/bootstrap/inputs/'"
-  YHINT=$(rest_cmd "$SUB/$YR/bootstrap/diffs/target-$C_YBIG.diff")
-  check "T-y: a cut diff's TRUNCATED line names its file by the path from the working directory" \
-    test "$YHINT" = "$GITRO show $F_YBIG -- 'src/big.rs'"
-  ( cd "$SUB" && bash -c "$YHINT" ) > "$T/y-hint.out" 2>&1
-  check "T-y: ... and, run there as pasted, git-ro.sh shows the rest of that file's diff" \
-    grep -qF -- '-#[account(mut, has_one = big_admin)]' "$T/y-hint.out"
-  YD=$(cd "$SUB" && "$COLLECT" --detect --repo . --out "$YR/bootstrap" 2>/dev/null)
-  check "T-y: --detect from there finds the report below the working directory (T4)" \
-    test "$(printf '%s\n' "$YD" | sed -n 2p)" = "T4 yes in-tree-report"
-  YN=$(newrun "$SUB")
-  check "T-y: --network --repo . reads the repository the same way (exit 0)" \
-    sh -c "[ \"\$(cd '$SUB' && '$COLLECT' --network --repo . --out '$YN/bootstrap' 2>/dev/null; echo \$?)\" = 0 ] && grep -qF 'REMOVED x1 src/lib.rs: #[account(mut, has_one = foo_admin)]' '$SUB/$YN/bootstrap/history.md'"
-  YS=$(newrun "$SUB")
-  check "T-y (strict): the session is refused with the status for a --repo that is no top level (exit 3)" \
-    test "$(cd "$SUB" && AUDITOR_STRICT=1 "$COLLECT" --offline --repo . --out "$YS/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 3
-  check "T-y (strict): ... in one line saying strict mode reads a repository only from its top level" \
-    sh -c "[ \"\$(grep -c . '$T/rc.err')\" = 1 ] && grep -q '^collect.sh: refused: .*strict mode reads a repository only from its top level' '$T/rc.err'"
-  check "T-y (strict): ... and nothing is written" test ! -e "$SUB/$YS/bootstrap"
-else
-  skp "T-y: --repo . below a top level: waits for Lane 1's §4.2 commit (confine_repo . does not yet take the repository around the working directory)"
-fi
+YR=$(newrun "$SUB")
+check "T-y: from a subdirectory of a repository, --offline --repo . reads that repository (exit 0)" \
+  test "$(rc_in "$SUB" --offline --repo . --out "$YR/bootstrap")" = 0
+YH="$SUB/$YR/bootstrap/history.md"
+check "T-y: ... the Target row names the working directory and the repository" \
+  has "$YH" "| Target | \`$SUB\`, which is \`programs/foo/\` in the repository at \`$MONO\`: the paths below are relative to it, and what lies outside it is left out |"
+check "T-y: ... the default pathspec is taken from the working directory" has "$YH" "| Target paths | \`*.rs\` |"
+section_of "$YH" "R3" > "$T/r3y.txt"
+check "T-y: ... R3 names a removed guard by its path from the working directory" \
+  has "$T/r3y.txt" "REMOVED x1 src/lib.rs: #[account(mut, has_one = foo_admin)]"
+check "T-y: ... and leaves out the guard removed outside it" hasnt "$T/r3y.txt" "bar_admin"
+check "T-y: ... R4 counts files by that path, and none outside it" \
+  sh -c "awk '/^## R4/,/^## R5/' '$YH' | grep -q ' src/lib.rs\$' && ! awk '/^## R4/,/^## R5/' '$YH' | grep -q 'programs/'"
+check "T-y: ... R6 lists the report below the working directory, and neither the report nor the README above it" \
+  sh -c "awk '/report-like files in the pinned tree/,/^\`\`\`\$/' '$YH' | grep -qx 'audits/foo-audit.md' && ! grep -q 'top-audit.md\|forked from' '$YH'"
+check "T-y: ... and R7 copies that report from the pinned tree" \
+  sh -c "grep -F 'pinned tree: audits/foo-audit.md' '$SUB/$YR/bootstrap/inputs.tsv' | grep -q copied && grep -rq 'audit of foo' '$SUB/$YR/bootstrap/inputs/'"
+YHINT=$(rest_cmd "$SUB/$YR/bootstrap/diffs/target-$C_YBIG.diff")
+check "T-y: a cut diff's TRUNCATED line names its file by the path from the working directory" \
+  test "$YHINT" = "$GITRO show $F_YBIG -- 'src/big.rs'"
+( cd "$SUB" && bash -c "$YHINT" ) > "$T/y-hint.out" 2>&1
+check "T-y: ... and, run there as pasted, git-ro.sh shows the rest of that file's diff" \
+  grep -qF -- '-#[account(mut, has_one = big_admin)]' "$T/y-hint.out"
+YD=$(cd "$SUB" && "$COLLECT" --detect --repo . --out "$YR/bootstrap" 2>/dev/null)
+check "T-y: --detect from there finds the report below the working directory (T4)" \
+  test "$(printf '%s\n' "$YD" | sed -n 2p)" = "T4 yes in-tree-report"
+YN=$(newrun "$SUB")
+check "T-y: --network --repo . reads the repository the same way (exit 0)" \
+  sh -c "[ \"\$(cd '$SUB' && '$COLLECT' --network --repo . --out '$YN/bootstrap' 2>/dev/null; echo \$?)\" = 0 ] && grep -qF 'REMOVED x1 src/lib.rs: #[account(mut, has_one = foo_admin)]' '$SUB/$YN/bootstrap/history.md'"
+YS=$(newrun "$SUB")
+check "T-y (strict): the session is refused with the status for a --repo that is no top level (exit 3)" \
+  test "$(cd "$SUB" && AUDITOR_STRICT=1 "$COLLECT" --offline --repo . --out "$YS/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 3
+check "T-y (strict): ... in one line saying strict mode reads a repository only from its top level" \
+  sh -c "[ \"\$(grep -c . '$T/rc.err')\" = 1 ] && grep -q '^collect.sh: refused: .*strict mode reads a repository only from its top level' '$T/rc.err'"
+check "T-y (strict): ... and nothing is written" test ! -e "$SUB/$YS/bootstrap"
 check "T-y: an explicit --repo naming that subdirectory, from the top level, is still refused (exit 3)" \
   test "$(rc_in "$MONO" --offline --repo programs/foo --out "$(newrun "$MONO")/bootstrap")" = 3
 # A repository that tracks nothing under the working directory, such as dotfiles in a home directory,
