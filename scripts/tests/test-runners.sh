@@ -6,13 +6,13 @@
 # npm, node, semgrep, curl and rustup) that record their arguments, working directory, HOME, ulimit -t and -f
 # and environment: the fixed command lines, the scratch copy outside the working directory, the mode rule with
 # none and strict mode, the isolated self-check, the proxy and HOME split, canary variables, the watchdog and
-# the caps, patches, revisions, submodules, artifacts, disclosure rows and large inputs. A case where strict
-# mode builds, which is isolated, runs only where isolated mode can (ISOLATED_OK). Then one case with the real
-# tool for each action whose tool is installed: cargo test and cargo clippy, cargo build-sbf (when its
-# platform tools are installed, so that nothing is downloaded), npm ci, cargo audit --no-fetch and cargo tree,
-# all offline. With REQUIRE_TOOLCHAIN=1 (CI sets it), a missing cargo or rustup fails the run instead of
-# skipping those. Needs git and python3; no network. Usage (from the repo root):
-# bash scripts/tests/test-runners.sh
+# the caps, patches, revisions, submodules, artifacts, disclosure rows and large inputs, and for each check
+# strict mode makes a refusal or a stop, the note default mode prints instead. A case where strict mode
+# builds, which is isolated, runs only where isolated mode can (ISOLATED_OK). Then one case with the real tool
+# for each action whose tool is installed: cargo test and cargo clippy, cargo build-sbf (when its platform
+# tools are installed, so that nothing is downloaded), npm ci, cargo audit --no-fetch and cargo tree, all
+# offline. With REQUIRE_TOOLCHAIN=1 (CI sets it), a missing cargo or rustup fails the run instead of skipping
+# those. Needs git and python3; no network. Usage (from the repo root): bash scripts/tests/test-runners.sh
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 TARGET=$ROOT/scripts/runner/target.sh
@@ -2199,22 +2199,105 @@ check "a scan root in a project of its own: the note names its .semgrepignore, n
   sh -c "[ '$RC' = 0 ] && grep -q '; note: .semgrepignore files narrow the scan: nested/.semgrepignore\$' '$T/out'"
 rm -rf "$WT/nested" "$WT/gf" "$WT/bare" "$WT/idx" "$WT/split" "$WT/info" "$WT/unread" "$WT/exunread" "$WT/gitnox" "$WT/infonox" \
   "$T/info-real" "$T/outer" "$T/gf.git" "$WT/.semgrepignore" "$WT/programs/.semgrepignore"
+# Symbolic links under --path. Strict mode refuses one that resolves outside --path. Otherwise one that resolves
+# inside the working directory is scanned as semgrep finds it, and one that resolves outside it is left out:
+# semgrep gets, instead of --path, the entries of each folder on the way to it, never the link, and the last
+# line names it. A node_modules folder holding such a link is left out whole, and so is every folder on the way
+# below --path when the paths would pass 5000.
 mkdir -p "$WT/src/inner"
 ln -s ../lib.rs "$WT/src/inner/near.rs"
-run "$SAST" "$WT" -- semgrep --run audit_1 --path src --ruleset p/rust
-check "a link under --path that stays inside it is fine" test "$RC" = 0
+for strict in "" 1; do
+  run "$SAST" "$WT" ${strict:+AUDITOR_STRICT=1} -- semgrep --run audit_1 --path src --ruleset p/rust
+  check "a link under --path that stays inside it is fine${strict:+ in strict mode}" sh -c "[ '$RC' = 0 ] && ! grep -q 'left out' '$T/out'"
+done
 ln -s ../../a.rs "$WT/src/inner/out.rs"
-run "$SAST" "$WT" -- semgrep --run audit_1 --path src --ruleset p/rust
-check "a link under --path to another part of the working directory is refused" \
+run "$SAST" "$WT" AUDITOR_STRICT=1 -- semgrep --run audit_1 --path src --ruleset p/rust
+check "strict mode, a link under --path to another part of the working directory is refused" \
   sh -c "[ '$RC' = 64 ] && grep -qxF 'sast: refused: --path holds a symbolic link that resolves outside it, src/inner/out.rs; semgrep could read and quote what it points to, so scan a directory without it' '$T/err'"
-run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/rust
-check "... and the same link is fine when --path holds what it points to" test "$RC" = 0
+run "$SAST" "$WT" -- semgrep --run audit_1 --path src --ruleset p/rust
+check "... while outside strict mode it is scanned as semgrep finds it: --path whole, no note" \
+  sh -c "[ '$RC' = 0 ] && grep -q -- '--error -- $WT/src\$' '$T/calls' && ! grep -q 'left out' '$T/out'"
+for strict in "" 1; do
+  run "$SAST" "$WT" ${strict:+AUDITOR_STRICT=1} -- semgrep --run audit_1 --path . --ruleset p/rust
+  check "... and the same link is fine when --path holds what it points to${strict:+, in strict mode}" test "$RC" = 0
+done
 rm -f "$WT/src/inner/out.rs"
 ln -s "$CREDHOME/.ssh/id_rsa" "$WT/src/inner/key.rs"
-run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/secrets
-check "a link that resolves outside the working directory is refused before anything is sent" \
+run "$SAST" "$WT" AUDITOR_STRICT=1 -- semgrep --run audit_1 --path . --ruleset p/secrets
+check "strict mode, a link that resolves outside the working directory is refused before anything is sent" \
   sh -c "[ '$RC' = 64 ] && grep -qxF 'sast: refused: --path holds a symbolic link that resolves outside it, src/inner/key.rs; semgrep could read and quote what it points to, so scan a directory without it' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
-rm -rf "$WT/src/inner"
+r0=$(rows)
+run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/secrets
+check "a link that resolves outside the working directory: exit 0, and semgrep gets the entries around it, never the link" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^== semgrep scan --config p/secrets .* --error -- $WT/.cargo .* $WT/a.rs .* $WT/src/inner/near.rs $WT/src/lib.rs .*' '$T/calls' && ! grep -q 'key.rs' '$T/calls' && ! grep -q -- '-- $WT\$' '$T/calls'"
+check "... the last line names the link left out, and the scan was disclosed as usual" \
+  sh -c "sed -n '\$p' '$T/out' | grep -q '^>> semgrep: 0 results (exit 0): .*; note: left out 1 symbolic link that resolves outside the working directory: src/inner/key.rs\$' && [ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 1 ]"
+# A link inside the working directory to a folder that leads to such a link would hand semgrep the link it left
+# out by another name: it is left out too, under --path (alias -> src) and from a folder outside it
+# (app/shared -> ../src, scanning app), and so is a folder the check cannot read.
+ln -s src "$WT/alias"
+ln -s ../src "$WT/app/shared"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/secrets
+check "a link to a folder that holds such a link is left out, and the note names it" \
+  sh -c "[ '$RC' = 0 ] && ! grep -qE '^== semgrep .* $WT/alias( |\$)' '$T/calls' && ! grep -q 'key.rs' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '; note: left out 1 symbolic link that resolves outside the working directory: src/inner/key.rs; note: left out 2 symbolic links to folders that lead to such links: alias, app/shared\$'"
+mkdir -p "$WT/chain/a" "$WT/chain/b"
+printf 'fn c() {}\n' > "$WT/chain/a/c.rs"
+ln -s ../b "$WT/chain/a/to-b" && ln -s ../../src "$WT/chain/b/to-src" && ln -s .. "$WT/app/up"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path app --ruleset p/secrets
+check "... and from a --path the folder lies outside of, a link to an ancestor of --path among them" \
+  sh -c "[ '$RC' = 0 ] && grep -q -- '--error -- $WT/app/Anchor.toml $WT/app/Cargo.toml $WT/app/yarn.lock\$' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '; note: left out 2 symbolic links to folders that lead to such links: app/shared, app/up\$'"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path chain/a --ruleset p/secrets
+check "... and through a chain of such links" \
+  sh -c "[ '$RC' = 0 ] && grep -q -- '--error -- $WT/chain/a/c.rs\$' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '; note: left out 1 symbolic link to a folder that leads to such a link: chain/a/to-b\$'"
+rm -f "$WT/alias" "$WT/app/shared" "$WT/app/up" "$WT/src/inner/key.rs"
+ln -s ../a "$WT/chain/b/to-a" && rm -f "$WT/chain/b/to-src"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path chain --ruleset p/secrets
+check "a loop of such links with no link out of the working directory: --path whole, no note" \
+  sh -c "[ '$RC' = 0 ] && grep -q -- '--error -- $WT/chain\$' '$T/calls' && ! grep -q 'left out' '$T/out'"
+rm -rf "$WT/chain"
+if [ "$(id -u)" != 0 ]; then
+  mkdir -p "$WT/locked"
+  printf 'fn l() {}\n' > "$WT/locked/l.rs"
+  chmod 311 "$WT/locked"
+  run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/rust
+  chmod 700 "$WT/locked"
+  check "a folder the link check cannot read is left out, and the note names it" \
+    sh -c "[ '$RC' = 0 ] && ! grep -qE '^== semgrep .* $WT/locked( |\$)' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '; note: left out 1 folder or entry the link check could not read: locked\$'"
+  rm -rf "$WT/locked"
+fi
+mkdir -p "$WT/app/node_modules/pkg"
+ln -s "$CREDHOME/.ssh" "$WT/app/node_modules/keys"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path app --ruleset p/secrets
+check "a link out of the working directory in node_modules: the folder is left out whole, and the note says so" \
+  sh -c "[ '$RC' = 0 ] && grep -q -- '--error -- $WT/app/Anchor.toml $WT/app/Cargo.toml $WT/app/yarn.lock\$' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '; note: left out 1 symbolic link that resolves outside the working directory: app/node_modules/keys; note: left out whole 1 folder that holds such a link: app/node_modules\$'"
+run "$SAST" "$WT" AUDITOR_STRICT=1 -- semgrep --run audit_1 --path app --ruleset p/secrets
+check "... which strict mode refuses" \
+  sh -c "[ '$RC' = 64 ] && grep -qxF 'sast: refused: --path holds a symbolic link that resolves outside it, app/node_modules/keys; semgrep could read and quote what it points to, so scan a directory without it' '$T/err'"
+rm -rf "$WT/app/node_modules"
+mkdir -p "$WT/many/flat"
+python3 -I -c 'import sys
+for i in range(5001):
+    open("%s/f%04d.rs" % (sys.argv[1], i), "w").close()' "$WT/many/flat"
+printf 'fn m() {}\n' > "$WT/many/m.rs"
+ln -s "$CREDHOME/.ssh/id_rsa" "$WT/many/flat/key.rs"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path many --ruleset p/secrets
+check "past 5000 paths around such a link, the folder on the way is left out whole" \
+  sh -c "[ '$RC' = 0 ] && grep -q -- '--error -- $WT/many/m.rs\$' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '; note: left out 1 symbolic link that resolves outside the working directory: many/flat/key.rs; note: left out whole 1 folder that holds such a link: many/flat\$'"
+# When --path itself holds more, semgrep runs once for each 5000 of them, and one SARIF holds a run for each.
+settings FAKE_RESULTS=2 FAKE_SEMGREP_RC=1
+run "$SAST" "$WT" -- semgrep --run audit_1 --path many/flat --ruleset p/secrets
+check "... and when --path itself holds more, semgrep runs twice, never on the link, and the last line says so" \
+  sh -c "[ '$RC' = 1 ] && [ \"\$(grep -c '^== semgrep ' '$T/calls')\" = 2 ] && ! grep -q 'key[.]rs' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '^>> semgrep: 4 results (exit 1): audit_1/sast/semgrep-[0-9]*[.]sarif; log .*; note: left out 1 symbolic link that resolves outside the working directory: many/flat/key.rs; note: the 5001 paths were too many for one semgrep call, so it ran 2 times, on at most 5000 each, and the SARIF holds one run for each\$'"
+kept=$(sed -n 's/^>> semgrep: [0-9]* results (exit 1): \(audit_1\/sast\/semgrep-[0-9]*[.]sarif\);.*/\1/p' "$T/out")
+check "... the kept SARIF holds both runs, two results in each" python3 -I -c 'import json, sys
+runs = json.load(open(sys.argv[1]))["runs"]
+sys.exit(0 if [len(r["results"]) for r in runs] == [2, 2] else 1)' "$WT/$kept"
+settings FAKE_SLEEP=3
+run "$SAST" "$WT" AUDITOR_RUN_TIMEOUT=5 -- semgrep --run audit_1 --path many/flat --ruleset p/secrets
+check "... AUDITOR_RUN_TIMEOUT bounds the two calls together" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^sast: blocker: semgrep passed the 5-second limit (AUDITOR_RUN_TIMEOUT) and was killed' '$T/err' && [ \"\$(grep -c '^== semgrep ' '$T/calls')\" = 2 ]"
+settings
+rm -rf "$WT/src/inner" "$WT/many"
 run "$SAST" "$WT" PATH="$SPATH" -- semgrep --run audit_1 --path . --ruleset p/rust
 check "sast without semgrep: exit 3, nothing sent" sh -c "[ '$RC' = 3 ] && grep -qxF 'sast: blocker: semgrep is not on PATH, so the scan cannot run here — nothing was sent.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 

@@ -9,8 +9,15 @@
 # audit. A refusal is one stderr line, "sast: refused: <reason>", with exit 64, before anything is sent; a
 # blocker is one stderr line, "sast: blocker: <reason>", with exit 3.
 #
-# --path is a confined directory or regular file under the working directory, holding no symbolic link that
-# resolves outside that path (semgrep could read and quote what it points to). Each --ruleset is one of
+# --path is a confined directory or regular file under the working directory. semgrep could read and quote
+# what a symbolic link under it points to: strict mode (OUTPUT-RULES.md Rule 11f) refuses a link that
+# resolves outside --path, and a folder past 500000 entries or that cannot be read in full. Otherwise a link
+# that resolves outside the working directory is left out, and so are a link to a folder that leads to one
+# and what the check cannot read; any other link is scanned as semgrep finds it. semgrep then scans, instead
+# of --path, the entries of each folder on the way to what is left out, never that (node_modules and target
+# folders, which the check walks last, are left out whole when they hold it), in several calls when they are
+# too many for one, and the last line names what was left out. Past 500000 entries the check stops, and the
+# scan goes on with a note. Each --ruleset is one of
 # p/rust, p/trailofbits, p/typescript, p/javascript, p/python, p/golang, p/secrets, p/github-actions and
 # p/solidity, each at most once. The scan runs
 #   semgrep scan --config <id>... --metrics=off --disable-version-check --sarif --output <scratch> --error -- <path>
@@ -27,10 +34,11 @@
 # .semgrepignore of its project, the nearest folder at or above <path> holding a .git (or a .hg, _darcs or
 # .svn folder), else <path>: for a folder, the last line names each one from the project down to <path> and
 # under it; a file given as <path> is scanned whatever they say.
-# AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default 1800) bounds the scan, under the watchdog of
-# isolation.sh's iso_watch.
+# AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default 1800) bounds the scan, all its calls together, under
+# the watchdog of isolation.sh's iso_watch.
 #
-# Output: the SARIF in <R>/sast/semgrep-<n>.sarif and semgrep's own messages in <R>/sast/semgrep-<n>.log.
+# Output: the SARIF in <R>/sast/semgrep-<n>.sarif, with one run for each call, and semgrep's own messages in
+# <R>/sast/semgrep-<n>.log.
 # The last stdout line gives the number of results and where they are. The scratch directory is removed on
 # exit.
 #
@@ -98,8 +106,9 @@ fi
 if [ "$PATH_REL" = . ]; then TARGET=$WT; else TARGET=$WT/$PATH_REL; fi
 # A symbolic link under the path that resolves outside it would let semgrep read, and quote into the SARIF,
 # a file the audit never named (a key, say), or reach one through another directory. .git is not scanned and
-# not looked in.
-if [ -d "$TARGET" ]; then
+# not looked in. Strict mode (OUTPUT-RULES.md Rule 11f) refuses such a link here; otherwise the scan leaves out
+# the links that resolve outside the working directory (LINKS_PY, below).
+if [ -d "$TARGET" ] && [ "$CONFINE_STRICT" = 1 ]; then
   command -v python3 >/dev/null 2>&1 || refuse "python3 is not on PATH, so the links under --path cannot be checked"
   out=$( (cd / && exec python3 -I -c 'import os, re, sys
 top = sys.argv[1]
@@ -153,6 +162,233 @@ cd / || blocker "cannot leave the working directory for /"
 iso_env "$S" keep-home || blocker "cannot prepare the cleaned environment in $S — nothing was sent."
 ISO_ENV+=("SEMGREP_SETTINGS_FILE=$S/semgrep-settings.yml" "SEMGREP_LOG_FILE=$S/semgrep.log" SEMGREP_ENABLE_VERSION_CHECK=0
   SEMGREP_SEND_METRICS=off)
+
+# What the links check runs outside strict mode, with python3 -I, from /: "<scan root> <working directory>
+# <targets>". It walks real folders only, each once (.git aside, node_modules and target folders after the
+# rest), at most 500000 entries in all: the scan root, then each folder inside the working directory that a
+# link names, since semgrep can reach what lies there through the link. It finds the symbolic links that
+# resolve outside the working directory, the links to a folder that leads to one (through any number of such
+# links), and the folders and entries it cannot read. Under the scan root those are left out; with none it
+# exits 0. Otherwise it writes to <targets>, NUL-separated, the paths semgrep scans instead of the root: the
+# entries of each folder on the way to what is left out, so semgrep never gets a path that is or passes
+# through it. A node_modules or target folder on the way is left out whole, and when that list passes 5000
+# paths or 256 KiB, every folder on the way below the root is. That list goes to <targets>.1, or, when the
+# entries of the root alone pass those bounds, to <targets>.1 to <targets>.<k>, one for each semgrep call;
+# exit 1. Each line it prints is a tab-separated note for the last line: left, through, whole or unread,
+# each with <n> <first five>, stopped <entries>, and calls <k> <paths>. Exit 2, with the reason, when the
+# root cannot be read or none is left.
+LINKS_PY='import bisect, os, re, sys
+
+# Real paths throughout, as os.path.realpath gives the folders links name.
+top, wt, out = os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2]), sys.argv[3]
+LIMIT, MOST, BYTES = 500000, 5000, 262144
+LATER = ("node_modules", "target")
+inside = wt + os.sep
+
+
+def shown(p):
+    return re.sub(r"[\x00-\x1f\x7f]", "?", os.path.relpath(p, wt))[:200]
+
+
+def few(paths):
+    more = len(paths) - 5
+    return ", ".join(shown(p) for p in paths[:5]) + (" and %d more" % more if more > 0 else "")
+
+
+def listed(d):
+    with os.scandir(d) as it:
+        return sorted((e for e in it if e.name != ".git"), key=lambda e: e.name)
+
+
+def below(p, d):
+    return p.startswith(d + os.sep)
+
+
+n, stopped, seen = 0, False, set()
+outside, unread, jumps = [], [], {}
+roots = [top]
+while roots and not stopped:
+    pending, later = [roots.pop(0)], []
+    for first in (True, False):
+        while pending and not stopped:
+            d = pending.pop()
+            try:
+                st = os.stat(d)
+                if (st.st_dev, st.st_ino) in seen:
+                    continue
+                seen.add((st.st_dev, st.st_ino))
+                entries = listed(d)
+            except OSError:
+                unread.append(d)
+                continue
+            for e in reversed(entries):
+                n += 1
+                if n > LIMIT:
+                    stopped = True
+                    break
+                try:
+                    if e.is_symlink():
+                        real = os.path.realpath(e.path)
+                        if not (real + os.sep).startswith(inside):
+                            outside.append(e.path)
+                        elif os.path.isdir(real):
+                            jumps[e.path] = real
+                            roots.append(real)
+                    elif e.is_dir(follow_symlinks=False):
+                        (later if first and e.name in LATER else pending).append(e.path)
+                except OSError:
+                    unread.append(e.path)
+        pending, later = later, []
+if top in unread:
+    print("--path cannot be read, so its symbolic links cannot be checked")
+    sys.exit(2)
+# A link to a folder that holds, at any depth, what is left out is left out too, until nothing changes.
+bad = sorted(set(outside) | set(unread))
+through = set()
+
+
+def holds_bad(d):
+    i = bisect.bisect_left(bad, d)
+    j = bisect.bisect_left(bad, d + os.sep)
+    return (i < len(bad) and bad[i] == d) or (j < len(bad) and below(bad[j], d))
+
+
+changed = True
+while changed:
+    changed = False
+    for link, real in sorted(jumps.items()):
+        if link not in through and holds_bad(real):
+            through.add(link)
+            bisect.insort(bad, link)
+            changed = True
+gone = set(p for p in bad if below(p, top))
+notes = []
+if stopped:
+    notes.append("stopped\t%d" % LIMIT)
+if not gone:
+    print("\n".join(notes))
+    sys.exit(0)
+way = set()
+for p in gone:
+    p = os.path.dirname(p)
+    while below(p, top):
+        way.add(p)
+        p = os.path.dirname(p)
+
+
+class Over(Exception):
+    pass
+
+
+def cover(d, deep, targets, whole):
+    for e in listed(d):
+        if e.path in gone:
+            continue
+        if e.path in way and deep and e.name not in LATER:
+            try:
+                cover(e.path, deep, targets, whole)
+            except OSError:
+                whole.append(e.path)
+        elif e.path in way:
+            whole.append(e.path)
+        else:
+            targets.append(e.path)
+            if deep and len(targets) > MOST:
+                raise Over
+
+
+# The deep list when it fits one semgrep call; otherwise the shallow one, whatever its length.
+for deep in (True, False):
+    targets, whole = [], []
+    try:
+        cover(top, deep, targets, whole)
+    except Over:
+        continue
+    except OSError:
+        print("--path cannot be listed again to leave out its links")
+        sys.exit(2)
+    if not deep or sum(len(os.fsencode(t)) + 1 for t in targets) <= BYTES:
+        break
+if not targets:
+    print("nothing under --path is left to scan once what the link check leaves out (%s) is left out" % few(sorted(gone)))
+    sys.exit(2)
+# One file of paths for each semgrep call, each within MOST paths and BYTES bytes.
+calls, size = [[]], 0
+for t in targets:
+    b = len(os.fsencode(t)) + 1
+    if calls[-1] and (len(calls[-1]) == MOST or size + b > BYTES):
+        calls.append([])
+        size = 0
+    calls[-1].append(t)
+    size += b
+for i, call in enumerate(calls, 1):
+    with open("%s.%d" % (out, i), "wb") as f:
+        for t in call:
+            f.write(os.fsencode(t) + b"\0")
+said = [("left", sorted(p for p in outside if p in gone)), ("through", sorted(p for p in through if p in gone)),
+        ("whole", whole), ("unread", sorted(p for p in unread if p in gone))]
+notes.append("calls\t%d\t%d" % (len(calls), len(targets)))
+print("\n".join(["%s\t%d\t%s" % (k, len(v), few(v)) for k, v in said if v] + notes))
+sys.exit(1)
+'
+# What merges the SARIF of several semgrep calls, with python3 -I, from /: "<out> <sarif>...": each a regular
+# file holding a SARIF log, whose runs go, in order, into one log written to <out>; exit 1 when one is not.
+MERGE_PY='import json, os, stat, sys
+
+out, parts = sys.argv[1], sys.argv[2:]
+merged = None
+for p in parts:
+    st = os.lstat(p)
+    if not stat.S_ISREG(st.st_mode) or not st.st_size:
+        sys.exit(1)
+    with open(p, encoding="utf-8") as f:
+        log = json.load(f)
+    if not isinstance(log, dict) or not isinstance(log.get("runs"), list):
+        sys.exit(1)
+    if merged is None:
+        merged = log
+    else:
+        merged["runs"].extend(log["runs"])
+with open(out, "x", encoding="utf-8") as f:
+    json.dump(merged, f)
+'
+TARGETS=("$TARGET")
+LINKS_NOTE=""
+CALLS=1 PATHS=1
+# targets_of <i>: TARGETS from the link check's list for semgrep call <i>.
+targets_of() {
+  TARGETS=()
+  while IFS= read -r -d '' t; do TARGETS+=("$t"); done < "$S/targets.$1"
+}
+if [ -d "$TARGET" ] && [ "$CONFINE_STRICT" = 0 ]; then
+  rc=0
+  report=$( (cd / && exec python3 -I -c "$LINKS_PY" "$TARGET" "$WT" "$S/targets") 2>/dev/null) || rc=$?
+  case "$rc" in
+    0|1) ;;
+    2) blocker "$report — nothing was sent." ;;
+    *) blocker "the links under --path cannot be checked (python3 stopped with status $rc) — nothing was sent." ;;
+  esac
+  # Line by line with no here-string: bash 3.2 writes a here-string to a file in the working directory.
+  while [ -n "$report" ]; do
+    line=${report%%$'\n'*}
+    case "$report" in *$'\n'*) report=${report#*$'\n'} ;; *) report="" ;; esac
+    key=${line%%$'\t'*} list=${line#*$'\t'}
+    count=${list%%$'\t'*} list=${list#*$'\t'}
+    case "$key:$count" in
+      left:1) LINKS_NOTE="$LINKS_NOTE; note: left out 1 symbolic link that resolves outside the working directory: $list" ;;
+      left:*) LINKS_NOTE="$LINKS_NOTE; note: left out $count symbolic links that resolve outside the working directory: $list" ;;
+      through:1) LINKS_NOTE="$LINKS_NOTE; note: left out 1 symbolic link to a folder that leads to such a link: $list" ;;
+      through:*) LINKS_NOTE="$LINKS_NOTE; note: left out $count symbolic links to folders that lead to such links: $list" ;;
+      whole:1) LINKS_NOTE="$LINKS_NOTE; note: left out whole 1 folder that holds such a link: $list" ;;
+      whole:*) LINKS_NOTE="$LINKS_NOTE; note: left out whole $count folders that hold such links: $list" ;;
+      unread:1) LINKS_NOTE="$LINKS_NOTE; note: left out 1 folder or entry the link check could not read: $list" ;;
+      unread:*) LINKS_NOTE="$LINKS_NOTE; note: left out $count folders or entries the link check could not read: $list" ;;
+      stopped:*) LINKS_NOTE="$LINKS_NOTE; note: the link check stopped at $count entries" ;;
+      calls:*) CALLS=$count PATHS=$list ;;
+    esac
+  done
+  [ "$rc" != 1 ] || targets_of 1
+fi
 
 # semgrep's project, found as semgrep finds it (Semgrepignore v2): the nearest folder at or above the scan root
 # (a file's folder, for a file) holding a .git, or a .hg, _darcs or .svn folder, else that folder itself.
@@ -270,13 +506,35 @@ for s in "${SETS[@]}"; do CONFIGS+=(--config "$s"); done
 confine_disclose "$R" "$TOOL" semgrep.dev "ruleset ids (the semgrep registry, for the rules)" "${SETS[@]}" ||
   blocker "cannot add a row to $R/disclosures.tsv, so nothing was sent"
 : > "$S/out.log" || blocker "cannot write in $S"
-printf '>> semgrep scan %s --metrics=off --disable-version-check --sarif --output <scratch> --error -- %s\n' \
-  "${CONFIGS[*]}" "$PATH_REL" > "$S/out.log"
-rc=0
-iso_watch "$LIMIT" "$S/watch" "$S" ${ISO_NET[@]+"${ISO_NET[@]}"} semgrep scan "${CONFIGS[@]}" --metrics=off \
-  --disable-version-check --sarif --output "$S/out.sarif" --error -- "$TARGET" >> "$S/out.log" 2>&1 || rc=$?
-END=$(cat "$S/watch" 2>/dev/null) || END=""
-[ -n "$END" ] || END="exit $rc"
+# One semgrep call, or one for each list of the link check (CALLS), all of them within LIMIT. END says how
+# the last one ended, and FOUND that one of them found something.
+FOUND=0 START=$SECONDS i=1
+while [ "$i" -le "$CALLS" ]; do
+  sarif=$S/out.sarif watch=$S/watch scanned=$PATH_REL
+  if [ "$CALLS" -gt 1 ]; then
+    targets_of "$i"
+    sarif=$S/out.$i.sarif watch=$S/watch.$i
+    scanned="$PATH_REL, call $i of $CALLS: ${#TARGETS[@]} of the $PATHS paths under it that leave out its symbolic links out of the working directory"
+  elif [ "${#TARGETS[@]}" != 1 ] || [ "${TARGETS[0]}" != "$TARGET" ]; then
+    scanned="$PATH_REL, as ${#TARGETS[@]} paths under it that leave out its symbolic links out of the working directory"
+  fi
+  left=$((LIMIT - (SECONDS - START)))
+  [ "$left" -ge 1 ] || left=1
+  printf '>> semgrep scan %s --metrics=off --disable-version-check --sarif --output <scratch> --error -- %s\n' \
+    "${CONFIGS[*]}" "$scanned" >> "$S/out.log"
+  rc=0
+  iso_watch "$left" "$watch" "$S" ${ISO_NET[@]+"${ISO_NET[@]}"} semgrep scan "${CONFIGS[@]}" --metrics=off \
+    --disable-version-check --sarif --output "$sarif" --error -- "${TARGETS[@]}" >> "$S/out.log" 2>&1 || rc=$?
+  END=$(cat "$watch" 2>/dev/null) || END=""
+  [ -n "$END" ] || END="exit $rc"
+  case "$END" in
+    'exit 0') ;;
+    'exit 1') FOUND=1 ;;
+    *) break ;;
+  esac
+  i=$((i + 1))
+done
+[ "$END" != 'exit 0' ] || [ "$FOUND" = 0 ] || END='exit 1'
 
 # keep: the SARIF (when there is one) and the log as R/sast/semgrep-<n>.{sarif,log}; sets N.
 SAST=$WT/$R/sast
@@ -294,11 +552,20 @@ done
 LOG=$R/sast/semgrep-$N.log
 note=$walked
 [ -z "$ignores" ] || note="$note; note: .semgrepignore files narrow the scan: $ignores"
+note=$note$LINKS_NOTE
 case "$END" in
   'exit 0'|'exit 1') ;;
   timeout) blocker "semgrep passed the $LIMIT-second limit (AUDITOR_RUN_TIMEOUT) and was killed; log $LOG" ;;
   *) blocker "semgrep failed ($(confine_text "$END")): no rules fetched, a target it cannot read, or another error; log $LOG" ;;
 esac
+if [ "$CALLS" -gt 1 ]; then
+  parts=()
+  i=1
+  while [ "$i" -le "$CALLS" ]; do parts+=("$S/out.$i.sarif"); i=$((i + 1)); done
+  (cd / && exec python3 -I -c "$MERGE_PY" "$S/out.sarif" "${parts[@]}") 2>/dev/null ||
+    blocker "one of the $CALLS semgrep calls wrote no SARIF, or one that cannot be read; log $LOG"
+  note="$note; note: the $PATHS paths were too many for one semgrep call, so it ran $CALLS times, on at most 5000 each, and the SARIF holds one run for each"
+fi
 [ -f "$S/out.sarif" ] && [ ! -L "$S/out.sarif" ] && [ -s "$S/out.sarif" ] || blocker "semgrep wrote no SARIF; log $LOG"
 iso_copy_new "$S/out.sarif" "$SAST/semgrep-$N.sarif" || blocker "cannot write $R/sast/semgrep-$N.sarif; log $LOG"
 results=$( (cd / && exec python3 -I -c 'import json, sys
