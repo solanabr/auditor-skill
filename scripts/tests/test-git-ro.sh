@@ -725,7 +725,7 @@ for v in 2.39.3 2.43.0 2.34.1 'garbage'; do
   PATH="$T/oldgit:$PATH" run_once "$WT" copy . audit_1
   c=$(cat "$T/out")
   check "in default mode copy with git $v makes a copy, with one note" \
-    test "$RC|$(cat "$T/err")" = "0|git-ro: note: this git ($v) has none of the May-2024 clone fixes for its release line ($FIXES), so cloning a repository you do not trust could run code from it: copy made $c with git's plumbing instead (pack-objects and index-pack, no clone); strict mode refuses this (Rule 11f)"
+    test "$RC|$(cat "$T/err")" = "0|git-ro: note: this git ($v) has none of the May-2024 clone fixes for its release line ($FIXES), so copy made $c from git's plumbing instead of cloning (pack-objects in the source, index-pack in the copy); strict mode refuses this (Rule 11f)"
   check "... which holds every branch and tag of the repository, and its HEAD" \
     test "$(git --git-dir="$WT/$c" for-each-ref --format='%(objectname) %(refname)' | tr '\n' ' ')|$(git --git-dir="$WT/$c" symbolic-ref HEAD)" = \
       "$(git -C "$WT" for-each-ref --format='%(objectname) %(refname)' refs/heads refs/tags | tr '\n' ' ')|$(git -C "$WT" symbolic-ref HEAD)"
@@ -737,7 +737,7 @@ check "... nor did a hook, a filter or a helper" nomarks
 printf 'git version 2.34.1\n' > "$T/oldgit/version"
 PATH="$T/oldgit:$PATH" run "$WT" rev-parse HEAD
 check "a read with such a git gets a note in default mode" \
-  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|$SIGNED|git-ro: note: this git (2.34.1) has none of the May-2024 clone fixes for its release line ($FIXES); git-ro's reads clone nothing, and its copy is made without git clone (Rule 11f)"
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|$SIGNED|git-ro: note: this git (2.34.1) has none of the May-2024 clone fixes for its release line ($FIXES); git-ro's reads clone nothing, and copy makes its copy from git's plumbing instead of cloning (Rule 11f)"
 AUDITOR_STRICT=1 PATH="$T/oldgit:$PATH" run "$WT" rev-parse HEAD
 check "... and none in strict mode" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|$SIGNED|"
 for v in 2.39.4 2.40.2 2.41.1 2.42.2 2.43.4 2.44.1 2.45.1 2.46.0 3.0.0 '2.39.5 (Apple Git-154)' 2.47.0.windows.1 2.48.0-rc1; do

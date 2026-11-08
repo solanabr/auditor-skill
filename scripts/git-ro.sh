@@ -376,7 +376,7 @@ run_copy() { # run_copy <dir> <R>
   confine_new_file "$WT/$r/$dest/auditor-copy" "auditor-copy: made by git-ro.sh copy from $rel"$'\n' ||
     refuse "cannot write $r/$dest/auditor-copy"
   [ "$fixed" -eq 1 ] ||
-    confine_note "this git ($GIT_VERSION) has none of the May-2024 clone fixes for its release line ($FIXES), so cloning a repository you do not trust could run code from it: copy made $r/$dest with git's plumbing instead (pack-objects and index-pack, no clone); strict mode refuses this (Rule 11f)"
+    confine_note "this git ($GIT_VERSION) has none of the May-2024 clone fixes for its release line ($FIXES), so copy made $r/$dest from git's plumbing instead of cloning (pack-objects in the source, index-pack in the copy); strict mode refuses this (Rule 11f)"
   printf '%s\n' "$r/$dest"
   exit 0
 }
@@ -925,7 +925,7 @@ main() {
   if [ -n "$gitdir" ]; then open_copy "$gitdir"; else confine_repo "$repo" "$what" 0; fi
   REPO=$CONFINE_REPO
   [ "$CONFINE_STRICT" = 1 ] || copy_git_ok ||
-    confine_note "this git ($GIT_VERSION) has none of the May-2024 clone fixes for its release line ($FIXES); git-ro's reads clone nothing, and its copy is made without git clone (Rule 11f)"
+    confine_note "this git ($GIT_VERSION) has none of the May-2024 clone fixes for its release line ($FIXES); git-ro's reads clone nothing, and copy makes its copy from git's plumbing instead of cloning (Rule 11f)"
   case "$sub" in
     partial) run_partial ;;
     config) run_config "$@" ;;
