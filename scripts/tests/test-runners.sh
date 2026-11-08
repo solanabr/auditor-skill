@@ -1303,27 +1303,53 @@ r1=$(rows)
 check "cargo-audit --no-fetch: --no-fetch --no-yanked, and nothing disclosed" \
   sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-fetch --no-yanked' '$T/calls' && [ '$r1' = '$r0' ]"
 # cargo-audit reads the lockfile itself, so it gets the lockfile check too: when it asks a registry which
-# releases were yanked, a lockfile naming a registry other than crates.io stops the run before anything is
-# sent; offline (--no-fetch) such a lockfile is audited. Git sources pass either way, and an escape never does.
+# releases were yanked, a lockfile naming a registry other than crates.io stops the run in strict mode before
+# anything is sent; otherwise cargo audit runs without that check (--no-yanked), with a note, and crates.io gets
+# no row. Offline (--no-fetch) such a lockfile is audited. Git sources pass either way. An escape, or text that
+# is not UTF-8, stops the run in strict mode; otherwise it is audited without the yanked check, with a note.
 mkdir -p "$WT/la"
 for lock in 'sparse+https://evil.invalid/' 'registry+https://evil.invalid/index'; do
   printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\nsource = "%s"\nchecksum = "00"\n' "$lock" > "$WT/la/Cargo.lock"
   r0=$(rows)
-  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock
-  check "cargo-audit of a lockfile naming the registry $lock: exit 3 before cargo audit runs, nothing disclosed" \
+  run "$DEPS" "$WT" AUDITOR_STRICT=1 -- cargo-audit --run audit_1 --manifest la/Cargo.lock
+  check "strict mode, cargo-audit of a lockfile naming the registry $lock: exit 3 before cargo audit runs, nothing disclosed" \
     sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: the lockfile names a registry other than crates.io, $lock, which a check for yanked releases could ask; --no-fetch audits it offline' '$T/err' &&
       ! grep -q '^== cargo audit' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
-  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock --no-fetch
-  check "... and with --no-fetch it is audited offline, exit 0" sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-fetch --no-yanked' '$T/calls'"
+  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock
+  r1=$(rows)
+  check "cargo-audit of that lockfile: exit 0, cargo audit runs with --no-yanked, a note says why, and only github.com is disclosed" \
+    sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-yanked' '$T/calls' && grep -qxF '>> note: the lockfile names a registry other than crates.io ($lock), so cargo audit ran without its yanked check, which would ask that registry; strict mode stops here (Rule 11f)' '$T/out' && [ \$(( $r1 - $r0 )) = 1 ] && sed -n '\$p' '$DT' | grep -q '	github.com	'"
+  check "... and the note is in its output too" \
+    sh -c "grep -qxF '>> note: the lockfile names a registry other than crates.io ($lock), so cargo audit ran without its yanked check, which would ask that registry; strict mode stops here (Rule 11f)' \"$WT/\$(sed -n 's/^>> cargo-audit: .*: \\(audit_1\\/deps\\/cargo-audit-[0-9]*[.]txt\\)\$/\\1/p' '$T/out')\""
+  for strict in "" 1; do
+    run "$DEPS" "$WT" ${strict:+AUDITOR_STRICT=1} -- cargo-audit --run audit_1 --manifest la/Cargo.lock --no-fetch
+    check "... and with --no-fetch it is audited offline${strict:+ in strict mode too}, exit 0, with no note" \
+      sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-fetch --no-yanked' '$T/calls' && ! grep -q 'note:' '$T/out'"
+  done
 done
 printf 'version = 3\n\n[[package]]\nname = "anchor-lang"\nversion = "0.30.1"\nsource = "git+https://github.com/coral-xyz/anchor?rev=0123#0123"\n\n[[patch.unused]]\nname = "x"\nversion = "1.0.0"\nsource = "git+https://evil.invalid/x#0123"\n' > "$WT/la/Cargo.lock"
 run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock
 check "cargo-audit of a lockfile with git sources and [[patch.unused]] runs, exit 0" sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never' '$T/calls'"
-printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\n"\\u0073ource" = "sparse+https://evil.invalid/"\n' > "$WT/la/Cargo.lock"
-for flag in "" --no-fetch; do
-  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock $flag
-  check "cargo-audit ${flag:-with fetching} of a lockfile with a unicode escape: exit 3, cargo audit never runs" \
-    sh -c "[ '$RC' = 3 ] && grep -q 'the lockfile has a .u, .U or .x escape' '$T/err' && ! grep -q '^== cargo audit' '$T/calls'"
+ESC='the lockfile has a \u, \U or \x escape, which cargo never writes; deps.sh does not read one'
+for shape in escape latin1; do
+  if [ "$shape" = escape ]; then
+    printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\n"\\u0073ource" = "sparse+https://evil.invalid/"\n' > "$WT/la/Cargo.lock"
+    why=$ESC
+  else
+    printf 'version = 3\n# caf\351\n' > "$WT/la/Cargo.lock"
+    why='la/Cargo.lock is not UTF-8 text'
+  fi
+  for flag in "" --no-fetch; do
+    run "$DEPS" "$WT" AUDITOR_STRICT=1 -- cargo-audit --run audit_1 --manifest la/Cargo.lock $flag
+    check "strict mode, cargo-audit ${flag:-with fetching} of a lockfile with $shape text: exit 3, cargo audit never runs" \
+      sh -c "[ '$RC' = 3 ] && grep -qF 'deps: blocker: $why; output ' '$T/err' && ! grep -q '^== cargo audit' '$T/calls'"
+  done
+  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock
+  check "cargo-audit of that lockfile, fetching: exit 0, with --no-yanked and a note" \
+    sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-yanked' '$T/calls' && grep -qxF '>> note: $why, so cargo audit ran without its yanked check, which could ask a registry the lockfile names; strict mode stops here (Rule 11f)' '$T/out'"
+  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock --no-fetch
+  check "... and with --no-fetch: exit 0, audited offline, and a note" \
+    sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-fetch --no-yanked' '$T/calls' && grep -qxF '>> note: $why; cargo audit ran offline (--no-fetch), so it asks no registry; strict mode stops here (Rule 11f)' '$T/out'"
 done
 settings FAKE_AUDIT_OUT="$T/audit-vuln.txt" FAKE_AUDIT_RC=1
 run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest Cargo.lock

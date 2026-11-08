@@ -12,9 +12,12 @@
 # The actions:
 #   cargo-audit     --manifest <dir>/Cargo.lock [--no-fetch]: cargo audit --color never. The advisory
 #                   database comes from GitHub (RustSec) into CARGO_HOME, and cargo audit asks the crates.io
-#                   index which releases were yanked; a lockfile that names a registry other than crates.io
-#                   stops that run, since a check for yanked releases could ask it. With --no-fetch it adds
-#                   --no-fetch --no-yanked: the database already in CARGO_HOME, and nothing leaves the machine.
+#                   index which releases were yanked. A lockfile that names a registry other than crates.io,
+#                   which a check for yanked releases could ask, or that deps.sh cannot read (an escape cargo
+#                   never writes, text that is not UTF-8), stops the run in strict mode (OUTPUT-RULES.md Rule
+#                   11f); otherwise cargo audit runs with --no-yanked, and a note says so. With --no-fetch it
+#                   adds --no-fetch --no-yanked: the database already in CARGO_HOME, and nothing leaves the
+#                   machine.
 #   cargo-outdated  --manifest <dir>/Cargo.toml, more Cargo.toml files of the workspace, and at most one
 #                   Cargo.lock beside the first: cargo outdated --workspace --exit-code 1 --color never
 #   cargo-tree      the same manifests: cargo tree --workspace --color never
@@ -1136,18 +1139,38 @@ registry_watched() {
 npm_path() { case "$1" in @*/*) printf '%s%%2F%s' "${1%%/*}" "${1#*/}" ;; *) printf '%s' "$1" ;; esac; }
 
 # ---- the actions --------------------------------------------------------------------------------------
+# lock_note <why>: the lockfile check of cargo-audit stopped on <why>. Strict mode stops the run there
+# (OUTPUT-RULES.md Rule 11f); otherwise cargo audit runs without its check for yanked releases, the one
+# request a lockfile's registry could get, and a note, on stdout and in the output, says so.
+lock_note() {
+  local note
+  [ "$CONFINE_STRICT" = 0 ] || done_with 3 "${1:-cannot read the lockfile}"
+  case "$1" in
+    'the lockfile names a registry other than crates.io, '*)
+      note=${1#the lockfile names a registry other than crates.io, }
+      note="the lockfile names a registry other than crates.io (${note%%, which a check for yanked releases could ask*}), so cargo audit ran without its yanked check, which would ask that registry" ;;
+    *) note="${1:-deps.sh cannot read the lockfile}, so cargo audit ran without its yanked check, which could ask a registry the lockfile names" ;;
+  esac
+  [ "$NO_FETCH" = 0 ] || note="${1:-deps.sh cannot read the lockfile}; cargo audit ran offline (--no-fetch), so it asks no registry"
+  printf '>> note: %s; strict mode stops here (Rule 11f)\n' "$note"
+  printf '>> note: %s; strict mode stops here (Rule 11f)\n' "$note" >&9
+  YANKED=0
+}
 case "$ACTION" in
   cargo-audit)
     pin_rust
     copy_manifests
     AUD=(cargo audit --color never)
+    YANKED=1
     if [ "$NO_FETCH" = 1 ]; then
-      why=$(cargo_py locksource "$S/w" "$LOCK") || done_with 3 "${why:-cannot read the lockfile}"
+      why=$(cargo_py locksource "$S/w" "$LOCK") || lock_note "$why"
       AUD+=(--no-fetch --no-yanked)
     else
-      why=$(cargo_py locksource "$S/w" "$LOCK" registries) || done_with 3 "${why:-cannot read the lockfile}"
+      why=$(cargo_py locksource "$S/w" "$LOCK" registries) || lock_note "$why"
+      [ "$YANKED" = 1 ] || AUD+=(--no-yanked)
       disclose github.com "advisory database (git fetch of the RustSec database)" https://github.com/RustSec/advisory-db
-      disclose crates.io "every crates.io package name in this lockfile (cargo audit's check for yanked releases, the crates.io index)" "$LOCK"
+      [ "$YANKED" = 0 ] ||
+        disclose crates.io "every crates.io package name in this lockfile (cargo audit's check for yanked releases, the crates.io index)" "$LOCK"
     fi
     step "$S/w/$(dir_of "$LOCK")" ${NET[@]+"${NET[@]}"} "${AUD[@]}"
     why=$(stopped)
