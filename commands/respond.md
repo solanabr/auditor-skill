@@ -274,14 +274,17 @@ Code asks about a shell read outside the working directory.
    Rule 11a mode in force, and nothing asks Q46 for it: the runners take the
    stricter of `incident_<n>/exec-mode`, `AUDITOR_EXEC_MODE` and strict mode,
    native when none of them says anything, so a `native` there loosens nothing.
-   When `incident_<n>` has no `exec-mode` but its ledger header records a mode (a
-   run directory made before 7.7.0), first write that mode as one word to
+   When `incident_<n>` has no `exec-mode` but its ledger header records a mode in
+   the older form, one word with no `recorded:` part (a run directory made before
+   7.7.0), first write that mode as one word to
    `incident_<n>/exec-mode` with the Write tool, where
    `"${CLAUDE_PLUGIN_ROOT}/templates/poc/run.sh" --crate` reads it. Hand
    `auditor:poc-engineer` `isolated` or `none` when that file says so, and
    `native` otherwise, as `/auditor:poc` step 5 does, and have the agent record in
-   the ledger header the mode the runners' `>> execution mode:` line shows; the
-   report says which mode ran. Before `auditor:poc-engineer` runs, `INCIDENTS.json` must record the incident
+   the ledger header's Execution mode line what `incident_<n>/exec-mode` holds
+   (`recorded:`, or `none recorded`) and the mode the runners' `>> execution mode:`
+   line shows (`in force:`), which is never written back; the report says which
+   mode ran. Before `auditor:poc-engineer` runs, `INCIDENTS.json` must record the incident
    with its `id` and `root_cause_class` (`unknown` until it is known):
    `run.sh --crate` reads it, stops when it cannot, and holds a
    `supply_chain_or_ci` incident to isolated mode on its dumped bytes (Rule 11a).

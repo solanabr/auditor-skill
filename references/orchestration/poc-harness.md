@@ -51,7 +51,8 @@ line, which the report records as it stands. Every cargo call and test binary th
 runs in a cleaned environment with a throwaway `HOME` and Solana keypair, and every
 build and test runs offline, after the downloads. Nothing asks for the mode after
 intake: the command reads `<R>/exec-mode`, writes there a mode only an older run
-directory's `intake.md` §8 or ledger header records, and hands the mode on;
+directory's `intake.md` §8 or one-word ledger header records (never a ledger's
+`in force:` part), and hands the mode on;
 `poc-engineer` and `patch-engineer` use the mode the command hands them and never ask. Build and test the crate only through `run.sh`. As a second layer, `run.sh`
 never builds inside the target tree: cargo reads `.cargo/config*` and rustup reads `rust-toolchain*` from every
 parent directory, so a crate built under `audit_<n>/poc/` or `incident_<n>/poc/`

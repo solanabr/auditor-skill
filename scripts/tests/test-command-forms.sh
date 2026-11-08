@@ -1203,7 +1203,9 @@ commands/hunt.md	directory's `exec-mode` stands as it is, and nothing asks for t
 commands/respond.md	`ok incident_<n>`. A reused incident directory's `exec-mode` stands as it is,
 commands/poc.md	Read that file, and hand `auditor:poc-engineer` `isolated` or `none` when it says so, and `native` otherwise.
 commands/poc.md	so a `native` there, from any session, loosens nothing, and nothing asks `QUESTIONS.md` Q46 again
-commands/poc.md	When `<R>` has no `exec-mode` but its `intake.md` §8 or ledger header records a mode (a run directory made before 7.7.0), first write that mode to `<R>/exec-mode` with the Write tool, as one word
+commands/poc.md	When `<R>` has no `exec-mode` but its `intake.md` §8, or a ledger header in the older form (one word, with no `recorded:` part), records a mode (a run directory made before 7.7.0), first write that mode to `<R>/exec-mode` with the Write tool, as one word
+commands/poc.md	a ledger header's `in force:` part is never written back.
+commands/patch.md	a ledger header's `in force:` part is never written back.
 commands/patch.md	Settle it as `/auditor:poc` step 5 does: Read `<R>/exec-mode`, and hand `isolated` or `none` when it says so, and `native` otherwise
 commands/patch.md	so a `native` there, from any session, loosens nothing, and nothing asks `QUESTIONS.md` Q46 again
 commands/patch.md	First settle the execution mode that the rebuild and every PoC re-run in step 3 use
@@ -1287,7 +1289,8 @@ GONE
 # exec-mode, AUDITOR_EXEC_MODE and strict mode, and a mode only its ledger header records (a directory older than
 # that file) is written to the exec-mode file run.sh and target.sh read. The ask, and the wording that let a
 # non-interactive run fall back to native over a recorded mode, stay gone.
-INC_MODE='runs in the Rule 11a mode in force, and nothing asks Q46 for it: the runners take the stricter of `incident_<n>/exec-mode`, `AUDITOR_EXEC_MODE` and strict mode, native when none of them says anything, so a `native` there loosens nothing. When `incident_<n>` has no `exec-mode` but its ledger header records a mode (a run directory made before 7.7.0), first write that mode as one word to `incident_<n>/exec-mode` with the Write tool,'
+INC_MODE='runs in the Rule 11a mode in force, and nothing asks Q46 for it: the runners take the stricter of `incident_<n>/exec-mode`, `AUDITOR_EXEC_MODE` and strict mode, native when none of them says anything, so a `native` there loosens nothing. When `incident_<n>` has no `exec-mode` but its ledger header records a mode in the older form, one word with no `recorded:` part (a run directory made before 7.7.0), first write that mode as one word to `incident_<n>/exec-mode` with the Write tool,'
+INC_REC='(`recorded:`, or `none recorded`) and the mode the runners'"'"' `>> execution mode:` line shows (`in force:`), which is never written back'
 for fs in 'commands/respond.md|5' 'commands/hunt.md|6'; do
   f=${fs%|*}; s=${fs#*|}
   step=$(awk -v s="$s. **" 'index($0, s) == 1 { on = 1 } on && /^[0-9]+[a-z]?\. \*\*/ && index($0, s) != 1 { exit } on' "$f" |
@@ -1295,6 +1298,10 @@ for fs in 'commands/respond.md|5' 'commands/hunt.md|6'; do
   case "$step" in
     *"$INC_MODE"*) ok "$f step $s: the incident directory's mode is used as recorded, and nothing asks for it" ;;
     *) bad "P $f step $s lost: $INC_MODE" ;;
+  esac
+  case "$step" in
+    *"$INC_REC"*) ok "$f step $s: the ledger keeps the recorded mode apart from the mode in force" ;;
+    *) bad "P $f step $s lost: $INC_REC" ;;
   esac
   for gone in 'ask once (a non-interactive run is native' 'writes `native` only when no mode is recorded' \
               'mode: ask Q46 once' 'that Q46 was not asked again'; do
