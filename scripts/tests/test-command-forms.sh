@@ -1269,6 +1269,9 @@ commands/deep-review.md	Run no `cd` in this session, not even before a plain `gr
 commands/diff-audit.md	If you start an agent, set no model for it
 commands/deep-review.md	If you start an agent, set no model for it
 commands/quick-scan.md	Judge no vector by its index row alone
+commands/quick-scan.md	Read every kept file before you give any vector verdict, several in one message where you can
+commands/quick-scan.md	Skip no kept file by choice; Coverage & Limitations names only a file the Read tool could not open.
+commands/diff-audit.md	Skip no selected file by choice; name there only one the Read tool could not open.
 commands/diff-audit.md	first, with the Read tool, before any verdict of this step, whatever the size of the change
 commands/diff-audit.md	Each verdict names the checklist item id or the vector step it rests on
 commands/deep-review.md	Each verdict names the checklist item id or the vector step it rests on
