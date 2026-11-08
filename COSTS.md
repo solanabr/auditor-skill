@@ -34,7 +34,7 @@ In short:
 - **Quick** costs about $1 to $3 and takes 2 to 11 minutes.
 - **Standard** costs about $13 to $19 and takes 35 to 60 minutes.
 - **Full** cost $19.52 and took an hour on the 3K-line program. It ran once, on that program only, without `--with-poc`.
-- **CI** runs Quick on each pull request. Its review job cost $1.72 in its dry run, and `diff-audit` on a pull-request-sized range cost about $1, so a `--max-budget-usd` cap of $3 to $5 covers it.
+- **CI** runs Quick on each pull request, for about $1 to $2. Its review job cost $1.72 in its dry run, and `diff-audit` on a pull-request-sized range cost about $1, so a `--max-budget-usd` cap of $3 to $5 covers it.
 
 No run reached its cap: $3 for diff-audit, $5 for quick-scan and for the CI review, $25 for Standard and $60 for Full.
 
