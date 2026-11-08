@@ -1300,23 +1300,17 @@ fn named_dir(file: &Path, prefix: &[u8]) -> Named {
 /// What `confine_git_dir_files` finds in one directory, already resolved, in its
 /// order: a directory that cannot be read, a named pipe or device, a name holding
 /// a line end (git makes none), then a symbolic link to a named pipe or device.
+/// The walk is `confine_walk`'s (`walked`): one that meets only entries that
+/// vanished while it ran stands.
 fn scan_git_dir(d: &Path) -> Result<(), String> {
     let at = shown(d.as_os_str().as_bytes());
-    let (mut odd, mut line_end, mut links) = (false, false, Vec::new());
-    for entry in WalkDir::new(d).follow_links(false) {
-        let entry = entry.map_err(|_| {
+    let (odd, line_end, links) =
+        walked(|| walk_git_dir(d), WALK_TRIES, WALK_PAUSE).ok_or_else(|| {
             format!(
                 "the git directory holds a directory that cannot be read, so a named pipe or \
-                 device in it cannot be ruled out: {at}"
+             device in it cannot be ruled out: {at}"
             )
         })?;
-        let t = entry.file_type();
-        odd |= t.is_fifo() || t.is_block_device() || t.is_char_device();
-        line_end |= entry.file_name().as_bytes().contains(&b'\n');
-        if t.is_symlink() {
-            links.push(entry.into_path());
-        }
-    }
     if odd {
         return Err(waits_on(
             "is in the git directory",
@@ -1335,6 +1329,56 @@ fn scan_git_dir(d: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// What one walk of `d`, never following a link, finds for `scan_git_dir`: a named
+/// pipe or device, a name holding a line end, and the links; and the kind of each
+/// error it met, the walk going on past it.
+fn walk_git_dir(d: &Path) -> ((bool, bool, Vec<PathBuf>), Vec<io::ErrorKind>) {
+    let (mut odd, mut line_end, mut links, mut errors) = (false, false, Vec::new(), Vec::new());
+    for entry in WalkDir::new(d).follow_links(false) {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                errors.push(e.io_error().map_or(io::ErrorKind::Other, io::Error::kind));
+                continue;
+            }
+        };
+        let t = entry.file_type();
+        odd |= t.is_fifo() || t.is_block_device() || t.is_char_device();
+        line_end |= entry.file_name().as_bytes().contains(&b'\n');
+        if t.is_symlink() {
+            links.push(entry.into_path());
+        }
+    }
+    ((odd, line_end, links), errors)
+}
+
+/// How many times a walk of a git directory is made before one that failed is
+/// refused, and the pause between, as `confine_walk` makes them.
+const WALK_TRIES: usize = 3;
+const WALK_PAUSE: Duration = Duration::from_millis(200);
+
+/// `confine_walk`: what `walk` found, once a walk meets no error, or only entries
+/// that vanished while it ran (`NotFound`), as when git's gc prunes loose
+/// objects: an entry that is gone cannot be waited on, and the walk went on past
+/// it. A walk that meets any other error is made again, `pause` later, up to
+/// `tries` walks in all; `None` when each one did.
+fn walked<T>(
+    mut walk: impl FnMut() -> (T, Vec<io::ErrorKind>),
+    tries: usize,
+    pause: Duration,
+) -> Option<T> {
+    for n in 1..=tries {
+        let (found, errors) = walk();
+        if errors.iter().all(|&k| k == io::ErrorKind::NotFound) {
+            return Some(found);
+        }
+        if n < tries {
+            std::thread::sleep(pause);
+        }
+    }
+    None
 }
 
 /// Whether `path`, a link followed, is a named pipe or a device
@@ -2184,6 +2228,69 @@ mod tests {
             Some(v.join("src").as_path())
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_walk_that_meets_only_vanished_entries_stands_and_another_failure_is_tried_again() {
+        use io::ErrorKind::{NotFound, PermissionDenied};
+        let zero = Duration::ZERO;
+        // No error, or entries that vanished while it ran (git's gc pruning loose
+        // objects): the first walk stands.
+        for errors in [vec![], vec![NotFound], vec![NotFound, NotFound]] {
+            let mut calls = 0;
+            let got = walked(
+                || {
+                    calls += 1;
+                    ("found", errors.clone())
+                },
+                3,
+                zero,
+            );
+            assert_eq!((got, calls), (Some("found"), 1), "{errors:?}");
+        }
+        // Another error, alone or beside a vanished entry: three walks, then none.
+        for errors in [vec![PermissionDenied], vec![NotFound, PermissionDenied]] {
+            let mut calls = 0;
+            let got = walked(
+                || {
+                    calls += 1;
+                    ((), errors.clone())
+                },
+                3,
+                zero,
+            );
+            assert_eq!((got, calls), (None, 3), "{errors:?}");
+        }
+        // A walk that passes on a later try stands, with what that walk found.
+        let mut calls = 0;
+        let got = walked(
+            || {
+                calls += 1;
+                let errors = if calls < 3 {
+                    vec![PermissionDenied]
+                } else {
+                    vec![]
+                };
+                (calls, errors)
+            },
+            3,
+            zero,
+        );
+        assert_eq!(got, Some(3));
+        // The pause comes between walks, not after the last.
+        let start = Instant::now();
+        let got = walked(
+            || ((), vec![PermissionDenied]),
+            3,
+            Duration::from_millis(50),
+        );
+        let took = start.elapsed();
+        assert_eq!(got, None);
+        assert!(
+            took >= Duration::from_millis(100) && took < Duration::from_secs(1),
+            "{took:?}"
+        );
+        assert_eq!((WALK_TRIES, WALK_PAUSE), (3, Duration::from_millis(200)));
     }
 
     fn ok(s: &str) -> bool {

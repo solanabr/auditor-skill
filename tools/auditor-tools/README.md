@@ -303,7 +303,10 @@ so it must be safe whatever arguments follow. Its rules are those of
   config cannot widen); and with the repository's config pinned off. git does not
   start on a repository holding a named pipe or device it would open on its way (as
   HEAD, in its git directory, or included by its config), which confine.sh's
-  `confine_git_check` finds; `--out` is then refused for that reason. It asks for
+  `confine_git_check` finds; `--out` is then refused for that reason. That walk of the
+  git directory stands when the only entries it cannot read are ones that vanished
+  while it ran, as when git's gc prunes loose objects; any other failure is tried
+  twice more, 0.2 s apart, before the refusal, as `confine_walk` tries it. It asks for
   `--out`, and, in a scan of `.` that has time left, for a run directory or
   `.audit-memory/` that holds a `.gitignore` of exactly `*`. When git cannot
   answer, or has not answered within 10 s (it is then killed), strict mode refuses
@@ -639,7 +642,9 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   repository holding a named pipe or device it would open on its way, as
   confine.sh's `confine_git_check` finds one: `--db <R>/audit-mem.db` is refused for
   that reason, as `rundir.sh check` refuses it, and the in-tree store because git
-  cannot tell, as `rundir.sh store` refuses it. When git cannot answer, or has not
+  cannot tell, as `rundir.sh store` refuses it. That walk stands when the only entries
+  it cannot read vanished while it ran, as when git's gc prunes loose objects, and any
+  other failure is tried twice more, 0.2 s apart, before the refusal. When git cannot answer, or has not
   answered within 10 s (it is then killed), or is not on `PATH`, it refuses the
   in-tree store; for `--db <R>/audit-mem.db` strict mode refuses too, and default
   mode takes `<R>` on its `.gitignore` of `*`, as `confine_rundir` does there.
