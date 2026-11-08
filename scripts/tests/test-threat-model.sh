@@ -1483,12 +1483,29 @@ if [ "$VXU" != "$VX" ] && [ "$VXU" -ef "$VX" ]; then
   check "T-x: ... and so is that path spelled in other letters, where the volume folds case" \
     sh -c "! grep -rq 'VX-SECRET-DIR' '$OUT/inputs/' && grep -F 'reports/report.md' '$OUT/inputs.tsv' | grep -q 'skipped: symbolic link'"
 fi
-# A --repo whose work tree holds a named pipe where git reads its own files is refused before git starts,
-# and the refusal names the pipe.
+# A --repo whose work tree holds a named pipe where git reads its own files: strict mode refuses it
+# before git starts, naming the pipe. Default mode skips that walk (Rule 11f) and reads past the pipe at
+# once, since its git reads take an empty work tree (hgit_text_tree) and open no file of the target's.
 FW="$W/fifo-wt"; mkrepo "$FW"; put "$FW" a.txt 'a'; commit "$FW" -m "initial"; mkfifo "$FW/.gitattributes"
-check "T-x: a --repo with a named pipe as its .gitattributes is refused (exit 3)" \
-  test "$(rc --network --repo fifo-wt --out "$(newrun)/bootstrap")" = 3
-check "T-x: ... naming the pipe" grep -qF "collect.sh: a named pipe or device is where git reads its own files in the work tree, and git would wait on it for good: " "$T/rc.err"
+check "T-x (strict): a --repo with a named pipe as its .gitattributes is refused (exit 3)" \
+  test "$(AUDITOR_STRICT=1 rc --network --repo fifo-wt --out "$(newrun)/bootstrap")" = 3
+check "T-x (strict): ... naming the pipe" grep -qF "collect.sh: a named pipe or device is where git reads its own files in the work tree, and git would wait on it for good: " "$T/rc.err"
+if api "$W" "confine_repo_top \"$FW\""; then
+  FWR=$(newrun)
+  (cd "$W" && exec "$COLLECT" --network --repo fifo-wt --out "$FWR/bootstrap") >/dev/null 2>"$T/rc.err" &
+  fpid=$!; n=0
+  while kill -0 "$fpid" 2>/dev/null && [ "$n" -lt 600 ]; do sleep 0.1; n=$((n + 1)); done
+  if kill -0 "$fpid" 2>/dev/null; then
+    kill -KILL "$fpid" 2>/dev/null; wait "$fpid" 2>/dev/null; FRC=hung
+    ( : > "$FW/.gitattributes" ) & sleep 1; kill -KILL $! 2>/dev/null
+  else
+    wait "$fpid"; FRC=$?
+  fi
+  check "T-x: in default mode the collector reads past that pipe at once (exit 0)" test "$FRC" = 0
+  check "T-x: ... and writes history.md" test -s "$W/$FWR/bootstrap/history.md"
+else
+  skp "T-x: a named pipe in the work tree, in default mode: waits for Lane 1's CONF-11 commit"
+fi
 rm -rf "$FW"
 
 # =================================================================================================
