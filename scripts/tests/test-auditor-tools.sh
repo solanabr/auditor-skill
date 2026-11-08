@@ -418,8 +418,16 @@ mkdir "$W/audit_17/poc"
 ln -s ../.gitignore "$W/audit_17/poc/ignore"
 printf '*\n' > "$W/audit_18/.gitignore"
 ln -s nowhere "$W/audit_18/gone"
+# A folder the disk spells in other letters, and one git tracks in other letters: where the volume ignores letter
+# case, audit_19 opens AUDIT_19, refused for its spelling, and audit_20 opens Audit_20, refused as tracked; where
+# it tells case apart, neither exists.
+mkdir "$W/AUDIT_19" "$W/Audit_20"
+printf '*\n' > "$W/AUDIT_19/.gitignore"
+printf '*\n' > "$W/Audit_20/.gitignore"
+printf 'the repository'"'"'s own\n' > "$W/Audit_20/notes.md"
+fgit -C "$W" add -f Audit_20/notes.md
 dirs="audit_1 audit_2 audit_3 audit_4 audit_5 audit_6 audit_7 audit_8 audit_9 audit_10 audit_11 audit_12 audit_13 audit_14 audit_15 \
-  audit_17 audit_18 incident_1"
+  audit_17 audit_18 audit_19 audit_20 incident_1"
 if [ "$(id -u)" -ne 0 ]; then
   mkdir "$W/audit_16/locked"
   chmod 000 "$W/audit_16/locked"
@@ -438,6 +446,11 @@ for mode in strict default; do
   ( cd "$W" && in_mode "$mode" "$SCAN" --contract=1 . --out audit_17/prescan.json ) > /dev/null 2> "$T/b.err" < /dev/null
   eq "audit-scan --out into a run directory holding a link inside it, $mode mode" "$(said "$T/b.err" 'audit-scan: refused: ')" \
     "$(if [ "$mode" = strict ]; then printf -- '--out holds a symbolic link: audit_17'; else printf ok; fi)"
+  if [ -d "$W/audit_19" ]; then
+    ( cd "$W" && in_mode "$mode" "$SCAN" --contract=1 . --out audit_19/prescan.json ) > /dev/null 2> "$T/b.err" < /dev/null
+    eq "audit-scan --out into a run directory the disk spells AUDIT_19, $mode mode" "$(said "$T/b.err" 'audit-scan: refused: ')" \
+      "--out is spelled AUDIT_19 on disk, and a run directory's name is lowercase: audit_19"
+  fi
 done
 [ "$(id -u)" -ne 0 ] && chmod 700 "$W/audit_16/locked"
 for c in absent ok no-gitignore nul-gitignore link holds-link holds-inside-link holds-dangling-link not-a-directory tracked \

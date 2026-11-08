@@ -282,8 +282,10 @@ so it must be safe whatever arguments follow. Its rules are those of
 - `--out` is `prescan.json`, or `prescan-<slug>.json` with a slug of 1 to 32 of
   `a-z`, `0-9` and `-`, directly in a run directory, `audit_<n>/` or `incident_<n>/`,
   that passes `scripts/rundir.sh check`: a real directory in the working directory,
-  holding no symbolic link, tracked by no repository in any letter case, with a
-  `.gitignore` of exactly `*`. In default mode a link under it that resolves to it or
+  holding no symbolic link, tracked by no repository in any letter case, named as the
+  disk spells it, with a `.gitignore` of exactly `*`. On a volume that ignores letter
+  case, `audit_1` is refused in both modes for a folder the disk spells `AUDIT_1`,
+  which neither `rundir.sh new` makes nor the `strict` markers are read from. In default mode a link under it that resolves to it or
   below it, as a PoC crate may hold, is taken; one that leads out of it, or cannot be
   resolved, is refused in both modes. The file is made new (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode
   0600) through the run directory, opened once without following a link; a file
@@ -615,7 +617,8 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
 - `--db` is `.audit-memory/audit.db` or `<R>/audit-mem.db`, relative to the working
   directory (one leading `./` allowed), where `<R>` passes `scripts/rundir.sh check`:
   a real directory in the working directory, holding no symbolic link, tracked by no
-  repository in any letter case, with a `.gitignore` of exactly `*`.
+  repository in any letter case, named as the disk spells it, with a `.gitignore` of
+  exactly `*`.
 - Before it uses `.audit-memory/`, it checks it as `scripts/rundir.sh store` does:
   the repository tracks no `.audit-memory` in any letter case, and `.audit-memory/`
   is a real directory holding no symbolic link, with a `.gitignore` of exactly `*`.

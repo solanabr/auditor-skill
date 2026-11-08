@@ -1845,3 +1845,32 @@ fn takes_an_out_with_no_git_on_path_in_default_mode_only() {
         );
     }
 }
+
+#[test]
+fn refuses_a_run_directory_the_disk_spells_in_other_letters() {
+    // On a volume that ignores letter case, --out audit_1/… opens a folder the
+    // disk spells AUDIT_1, which neither rundir.sh new makes nor the markers are
+    // read from: refused in both modes, as rundir.sh check refuses it. A folder
+    // git tracks in other letters is refused as tracked first.
+    let wt = Wt::repo();
+    wt.write("src/lib.rs", b"fn a() {}\n");
+    wt.run_dir("AUDIT_1");
+    if !wt.exists("audit_1") {
+        return; // a volume that tells letter case apart: nothing to check
+    }
+    wt.run_dir("Audit_2");
+    wt.write("Audit_2/notes.md", b"the repository's own\n");
+    wt.git(&["add", "-f", "Audit_2/notes.md"]);
+    for (out, why) in [
+        (
+            "audit_1/prescan.json",
+            "--out is spelled AUDIT_1 on disk, and a run directory's name is lowercase: audit_1",
+        ),
+        ("audit_2/prescan.json", "--out is tracked by git: audit_2"),
+    ] {
+        let args = ["src", "--out", out];
+        refused(&run(BIN, &wt.dir, &args), "audit-scan", why);
+        refused(&common::run_strict(BIN, &wt.dir, &args), "audit-scan", why);
+    }
+    assert!(!wt.exists("AUDIT_1/prescan.json"));
+}

@@ -3307,3 +3307,23 @@ fn takes_the_tables_analyze_makes_in_default_mode_only() {
     );
     refused(&mem(&wt, &warm), "audit-mem", &why);
 }
+
+#[test]
+fn refuses_a_store_s_run_directory_the_disk_spells_in_other_letters() {
+    // As rundir.sh check refuses it, in both modes, readers too.
+    let wt = Wt::repo();
+    wt.run_dir("INCIDENT_3");
+    if !wt.exists("incident_3") {
+        return; // a volume that tells letter case apart: nothing to check
+    }
+    let why =
+        "--db is spelled INCIDENT_3 on disk, and a run directory's name is lowercase: incident_3";
+    for args in [
+        vec!["init", "--db", "incident_3/audit-mem.db"],
+        vec!["warm", "--db", "incident_3/audit-mem.db", "--program-id", P],
+    ] {
+        refused(&mem(&wt, &args), "audit-mem", why);
+        refused(&common::run_strict(BIN, &wt.dir, &args), "audit-mem", why);
+    }
+    assert!(!wt.exists("INCIDENT_3/audit-mem.db"));
+}

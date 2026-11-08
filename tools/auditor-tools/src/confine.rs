@@ -10,9 +10,9 @@
 //! characters; it does not start with `-` or `~`, has no empty, `.` or `..`
 //! component once one leading `./` is dropped, passes through no symbolic link and
 //! resolves inside WT. A run directory is `audit_<n>` or `incident_<n>` (n of 1 to
-//! 6 digits) directly in WT: a real directory, holding no symbolic link (in default
-//! mode, none that leads out of it), tracked by no repository in any letter case,
-//! whose `.gitignore` holds exactly `*`, as
+//! 6 digits), as the disk spells it, directly in WT: a real directory, holding no
+//! symbolic link (in default mode, none that leads out of it), tracked by no
+//! repository in any letter case, whose `.gitignore` holds exactly `*`, as
 //! `scripts/rundir.sh check` checks it. git runs only as `hgit` runs it: found on
 //! a PATH with every entry inside WT, or inside the tree WT lies in, removed
 //! (by identity, not spelling), with an environment of its own that allows no
@@ -460,6 +460,24 @@ pub fn is_run_dir_name(part: &[u8]) -> bool {
     }
 }
 
+/// The name WT's listing gives the entry that holds the run directory `name`, when
+/// it spells it otherwise, as `confine_spelled` finds it: on a volume that ignores
+/// letter case, `audit_1` also opens a folder `AUDIT_1`. The first such name in
+/// byte order; `None` when the listing holds `name` itself, or no spelling of it.
+fn spelled_otherwise(wt: &Path, name: &[u8]) -> Option<Vec<u8>> {
+    let mut others = Vec::new();
+    for entry in fs::read_dir(wt).ok()?.filter_map(Result::ok) {
+        let n = entry.file_name().into_vec();
+        if n == name {
+            return None;
+        }
+        if n.eq_ignore_ascii_case(name) {
+            others.push(n);
+        }
+    }
+    others.into_iter().min()
+}
+
 /// Whether nothing is at `path`: lstat finds no entry there.
 pub fn absent(path: &Path) -> bool {
     fs::symlink_metadata(path).is_err_and(|e| e.kind() == io::ErrorKind::NotFound)
@@ -506,7 +524,8 @@ pub fn holds_link(dir: &Path) -> io::Result<bool> {
 /// naming the argument it came from: the name, then a real directory, holding no
 /// symbolic link (`holds_link`: in default mode none that leads out of it), in a
 /// repository holding no file git would wait on (`Git::files`), tracked by no
-/// repository in any letter case, with a `.gitignore` of exactly `*`. In default
+/// repository in any letter case, named as the disk spells it
+/// (`spelled_otherwise`), with a `.gitignore` of exactly `*`. In default
 /// mode, when git cannot tell whether it is tracked, or is not on PATH, the
 /// `.gitignore` alone decides, as `confine_rundir` takes it there; and for a call
 /// that only reads (`reading`), a run directory with no `.gitignore` is taken
@@ -556,6 +575,15 @@ pub fn run_dir(
             }
             None => {}
         }
+    }
+    // Named as the disk spells it, as `rundir.sh new` makes it and as the markers
+    // are read; after the tracked check, which looks in any letter case, so a
+    // folder git tracks is refused for that.
+    if let Some(disk) = spelled_otherwise(wt, name) {
+        return Err(refuse(format!(
+            "{what} is spelled {} on disk, and a run directory's name is lowercase: {s}",
+            shown(&disk)
+        )));
     }
     let ignore = dir.join(".gitignore");
     if !ignores_all(&ignore) && !(reading && !strict && untracked && absent(&ignore)) {
