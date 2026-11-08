@@ -48,13 +48,17 @@
 # The copy, in a scratch directory outside the working directory. A --src that is the top level of a git
 # repository (its git directory inside the working directory, holding no symbolic link, borrowing no objects
 # and rewriting no parents, and not a partial clone), or a copy git-ro.sh copy made in <R>, is cloned with
-# --no-local, no hooks and no submodules, system and global git config dropped. --rev (HEAD when absent)
-# must name a commit, which is checked out; --patch, a file in <R>/patches/ of at most 16 MiB, is applied
-# with git apply --index. A revision that has submodules stops the run: target.sh never fetches them. Any
-# other directory --src names is copied file by file, symbolic links kept as links, without audit_*,
-# incident_* and .audit-memory at its top, and without target/ or node_modules/ directories, each name in any
-# letter case; --rev and --patch need a repository. --dir is a path inside the copy with no symbolic link on
-# the way.
+# --no-local, no hooks and no submodules, system and global git config dropped. --rev (HEAD when absent) must
+# name a commit, which is checked out; --patch, a file in <R>/patches/ of at most 16 MiB, is applied with git
+# apply --index. With a git that lacks the May-2024 clone fixes, target.sh never clones: outside strict mode
+# it writes the tracked files of that commit itself, from git ls-tree and git cat-file --batch through
+# hgit_tree (no path with an empty, . or .. component or a .git, none written through a symbolic link), into a
+# new repository that holds no commit, and applies --patch with git apply, and a note says so; strict mode
+# stops (exit 3). A revision that has submodules stops the run in strict mode, since target.sh never fetches
+# them; outside it, a note says so and the build sees them as empty directories. Any other directory --src
+# names is copied file by file, symbolic links kept as links, without audit_*, incident_* and .audit-memory at
+# its top, and without target/ or node_modules/ directories, each name in any letter case; --rev and --patch
+# need a repository. --dir is a path inside the copy with no symbolic link on the way.
 #
 # The environment of every step is the cleaned one of scripts/lib/isolation.sh: env -i, a throwaway HOME
 # holding a fresh Solana keypair, TMPDIR in the scratch directory, the cleaned PATH, the user's CARGO_HOME,
@@ -95,9 +99,9 @@
 #
 # Exit: 0 the action succeeded · 1 it ran and failed · 3 blocker (mode none, the self-check, a tool missing
 # or, in native mode, a cargo build-sbf without --install-only whose platform tools are not installed, a
-# revision or package not found, a patch that does not apply, submodules, a download that failed, the
-# watchdog, an incident whose root cause an INCIDENTS.json does not give or that keeps the build from native
-# mode) · 64 refused. Needs bash >= 3.2,
+# revision or package not found, a patch that does not apply, in strict mode a git without the May-2024
+# clone fixes or submodules, a download that failed, the watchdog, an incident whose root cause an
+# INCIDENTS.json does not give or that keeps the build from native mode) · 64 refused. Needs bash >= 3.2,
 # git, python3, env, find, grep, mkdir, mktemp, rm, chmod, cp, ln, cat, wc, tail and date; cargo,
 # cargo-build-sbf, anchor or npm as the action needs.
 
@@ -431,11 +435,15 @@ case "$ACTION" in
   npm-ci) need npm; need node ;;
 esac
 GIT=$(command -v git)
+CLONE=1
 if [ "$SRC_KIND" = repo ]; then
-  # The May-2024 clone fixes (CVE-2024-32004, CVE-2024-32465), as git-ro.sh copy requires them.
+  # The May-2024 clone fixes (CVE-2024-32004, CVE-2024-32465), as git-ro.sh copy requires them. Without them
+  # target.sh never clones: strict mode stops, and otherwise the copy is written from git's read-only
+  # plumbing (export_tree, below).
   gv=$(env -i PATH="$PATH" git --version 2>/dev/null) || gv=""
   gv=${gv#git version }
   gv=${gv%% *}
+  gvs=$(confine_text "${gv:-version unknown}")
   maj=${gv%%.*}; gv=${gv#"$maj"}; gv=${gv#.}
   min=${gv%%.*}; gv=${gv#"$min"}; gv=${gv#.}
   pat=${gv%%.*}
@@ -453,7 +461,12 @@ if [ "$SRC_KIND" = repo ]; then
       esac
     fi
   fi
-  [ "$ok" = 1 ] || blocker "cloning --src needs git with the May-2024 clone fixes: 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, or 2.46 or later — nothing was copied or built."
+  if [ "$ok" != 1 ]; then
+    [ "$CONFINE_STRICT" = 0 ] ||
+      blocker "cloning --src needs git with the May-2024 clone fixes: 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, or 2.46 or later — nothing was copied or built."
+    CLONE=0
+    echo ">> note: this git ($gvs) has none of the May-2024 clone fixes for its release line (2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, 2.46 and later), so target.sh copies the tracked files of the commit with git's read-only plumbing instead of cloning; strict mode stops here (Rule 11f)"
+  fi
   confine_partial_clone "$SRC_ABS" >/dev/null
   case $? in
     0) blocker "$SRC_SHOWN is a partial clone: a copy would lack the objects it never fetched, and nothing is fetched (Rule 11c) — nothing was copied or built." ;;
@@ -649,31 +662,172 @@ printf '>> target.sh %s, execution mode %s; HOME %s (throwaway, with a fresh Sol
   "$ACTION" "$MODE" "$ISO_HOME" "$ISO_TMP" >&9
 
 # ---- the copy ------------------------------------------------------------------------------------------
+# What export_tree runs with python3 -I, from /. "plan <ls-tree -r -z> <oids>": writes the object of each blob
+# entry to <oids>, one a line, for git cat-file --batch, and prints the path of each submodule (a gitlink),
+# one a line; exit 3 with the reason for an entry git checkout would not write (a path with an empty, . or
+# .. component, or a .git component in any letter case, also with the characters HFS+ leaves out of a name or
+# trailing dots and spaces) or that is no file, link or gitlink. "write <ls-tree -r -z> <dest>": reads
+# git cat-file --batch's answer for those objects on stdin and writes each entry under <dest>, a new file
+# (O_EXCL), a symbolic link, or for a gitlink an empty directory, as git checkout does, through descriptors of
+# its directories opened with O_NOFOLLOW, so nothing is written through a link; exit 3 with the reason when
+# an entry cannot be written there (two names of one file on a volume that ignores letter case, say).
+EXPORT_PY='import os, re, sys
+
+IGNORED = re.compile("[‌-‏‪-‮⁪-⁯﻿]")
+DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
+
+def fail(text):
+    print(text)
+    sys.exit(3)
+
+
+def shown(path):
+    return re.sub(r"[\x00-\x1f\x7f]", "?", path.decode("utf-8", "replace"))[:200]
+
+
+def entries(listing):
+    with open(listing, "rb") as f:
+        for rec in f.read().split(b"\0"):
+            if rec:
+                head, _, path = rec.partition(b"\t")
+                mode, kind, oid = head.decode("ascii").split(" ")
+                yield mode, kind, oid, path
+
+
+def plan(listing, oids):
+    subs = []
+    with open(oids, "w") as out:
+        for mode, kind, oid, path in entries(listing):
+            for part in path.split(b"/"):
+                name = IGNORED.sub("", part.decode("utf-8", "replace")).rstrip(". ").lower()
+                if part in (b"", b".", b"..") or name == ".git":
+                    fail("holds a path git checkout does not write: %s" % shown(path))
+            if mode == "160000" and kind == "commit":
+                subs.append(shown(path))
+            elif mode in ("100644", "100664", "100755", "120000") and kind == "blob":
+                out.write(oid + "\n")
+            else:
+                fail("holds an entry of mode %s, which target.sh does not copy: %s" % (mode, shown(path)))
+    for name in subs:
+        print(name)
+
+
+def write(listing, dest):
+    batch = sys.stdin.buffer
+    chain = [(None, os.open(dest, os.O_RDONLY | DIRECTORY))]
+    for mode, kind, oid, path in entries(listing):
+        parts = path.split(b"/")
+        keep = 1
+        while keep < len(chain) and keep <= len(parts) - 1 and chain[keep][0] == parts[keep - 1]:
+            keep += 1
+        while len(chain) > keep:
+            os.close(chain.pop()[1])
+        try:
+            for part in parts[len(chain) - 1:-1]:
+                try:
+                    os.mkdir(part, 0o755, dir_fd=chain[-1][1])
+                except FileExistsError:
+                    pass
+                chain.append((part, os.open(part, os.O_RDONLY | DIRECTORY | NOFOLLOW, dir_fd=chain[-1][1])))
+            at, name = chain[-1][1], parts[-1]
+            if mode == "160000":
+                os.mkdir(name, 0o755, dir_fd=at)
+                continue
+            head = batch.readline().split()
+            if len(head) != 3 or head[0] != oid.encode() or head[1] != b"blob":
+                fail("git cat-file did not give the object of %s" % shown(path))
+            left = int(head[2])
+            if mode == "120000":
+                os.symlink(batch.read(left), name, dir_fd=at)
+            else:
+                fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o755 if mode == "100755" else 0o644,
+                             dir_fd=at)
+                with os.fdopen(fd, "wb") as f:
+                    while left > 0:
+                        data = batch.read(min(left, 1048576))
+                        if not data:
+                            fail("git cat-file stopped in the object of %s" % shown(path))
+                        f.write(data)
+                        left -= len(data)
+            if batch.read(1) != b"\n":
+                fail("git cat-file did not give the object of %s" % shown(path))
+        except FileExistsError:
+            fail("%s names a file another path took already, as on a volume that ignores letter case" % shown(path))
+        except OSError as why:
+            fail("%s cannot be written there (%s), as when a directory on its way is a symbolic link" % (shown(path), why.strerror or why))
+
+
+try:
+    if sys.argv[1] == "plan":
+        plan(sys.argv[2], sys.argv[3])
+    else:
+        write(sys.argv[2], sys.argv[3])
+except SystemExit:
+    raise
+except BaseException as why:
+    fail("%s: %s" % ("cannot be read from git" if sys.argv[1] == "plan" else "git gave an answer that cannot be read",
+                     str(why) or type(why).__name__))
+'
+# submodules <names>: the revision has gitlinks, which target.sh never fetches. Strict mode stops; otherwise a
+# note says so, and the build sees each as the empty directory a checkout leaves.
+submodules() {
+  [ "$CONFINE_STRICT" = 0 ] || finish 3 "$SHA has submodules ($(confine_text "$1")), and target.sh never fetches them"
+  echo ">> note: $SHA has submodules ($(confine_text "$1")), which target.sh never fetches: the build sees them as empty directories; strict mode stops here (Rule 11f)"
+  printf '>> submodules, not fetched: %s\n' "$(confine_text "$1")" >&9
+}
+# export_tree: the copy for a git without the May-2024 clone fixes, outside strict mode: the tracked files of
+# SHA, read through hgit_tree and written by EXPORT_PY into S/src, which becomes a repository with no commit,
+# so that git stops there and finds no other above it.
+export_tree() {
+  local why
+  hgit_tree "$SRC_ABS" ls-tree -r -z --full-tree "$SHA" > "$S/tree.z" 2>&9 || finish 3 "git could not list the files of $SHA"
+  names=$( (cd / && exec python3 -I -c "$EXPORT_PY" plan "$S/tree.z" "$S/oids") 2>&9) ||
+    finish 3 "$SHA ${names:-cannot be read from git}"
+  [ -z "$names" ] || submodules "${names//$'\n'/, }"
+  mkdir "$S/src" || finish 3 "cannot create the copy in $S"
+  why=$(hgit_tree "$SRC_ABS" cat-file --batch < "$S/oids" 2>&9 | (cd / && exec python3 -I -c "$EXPORT_PY" write "$S/tree.z" "$S/src") 2>&9) ||
+    finish 3 "could not copy the tracked files of $SHA: ${why:-git cat-file failed}"
+  CONFINE_CEILING=${S%/*} hgit "$S" init --quiet --template= -- "$S/src" </dev/null >&9 2>&9 ||
+    finish 3 "git could not make a repository of the copy"
+}
 if [ "$SRC_KIND" = repo ]; then
-  printf '>> git clone --no-local --no-checkout --no-recurse-submodules --template= %s\n' "$SRC_SHOWN" >&9
-  CONFINE_ALLOW_PROTOCOL=file CONFINE_CEILING=${S%/*} hgit "$S" -c protocol.file.allow=always \
-    clone --no-local --no-checkout --no-recurse-submodules --template= -- "$SRC_ABS" "$S/src" </dev/null >&9 2>&9 ||
-    finish 3 "git could not clone $SRC_SHOWN"
-  SHA=$(hgit "$S/src" rev-parse --verify --quiet --end-of-options "${REV:-HEAD}^{commit}" 2>&9) && [ -n "$SHA" ] ||
-    finish 3 "$(confine_text "${REV:-HEAD}") is not a commit in $SRC_SHOWN"
-  printf '>> git checkout --detach %s\n' "$SHA" >&9
-  hgit "$S/src" -c advice.detachedHead=false checkout --quiet --detach "$SHA" </dev/null >&9 2>&9 ||
-    finish 3 "git could not check out $SHA"
-  hgit "$S/src" ls-tree -r "$SHA" > "$S/tree" 2>&9 || finish 3 "git could not list the files of $SHA"
-  subs=$(grep -c '^160000 ' "$S/tree")
-  if [ "${subs:-0}" -gt 0 ]; then
-    names=""
-    grep '^160000 ' "$S/tree" > "$S/gitlinks"
-    while IFS= read -r line; do names=${names:+$names, }$(confine_text "${line#*$'\t'}"); done < "$S/gitlinks"
-    finish 3 "$SHA has submodules ($(confine_text "$names")), and target.sh never fetches them"
+  if [ "$CLONE" = 1 ]; then
+    printf '>> git clone --no-local --no-checkout --no-recurse-submodules --template= %s\n' "$SRC_SHOWN" >&9
+    CONFINE_ALLOW_PROTOCOL=file CONFINE_CEILING=${S%/*} hgit "$S" -c protocol.file.allow=always \
+      clone --no-local --no-checkout --no-recurse-submodules --template= -- "$SRC_ABS" "$S/src" </dev/null >&9 2>&9 ||
+      finish 3 "git could not clone $SRC_SHOWN"
+    SHA=$(hgit "$S/src" rev-parse --verify --quiet --end-of-options "${REV:-HEAD}^{commit}" 2>&9) && [ -n "$SHA" ] ||
+      finish 3 "$(confine_text "${REV:-HEAD}") is not a commit in $SRC_SHOWN"
+    printf '>> git checkout --detach %s\n' "$SHA" >&9
+    hgit "$S/src" -c advice.detachedHead=false checkout --quiet --detach "$SHA" </dev/null >&9 2>&9 ||
+      finish 3 "git could not check out $SHA"
+    hgit "$S/src" ls-tree -r "$SHA" > "$S/tree" 2>&9 || finish 3 "git could not list the files of $SHA"
+    subs=$(grep -c '^160000 ' "$S/tree")
+    if [ "${subs:-0}" -gt 0 ]; then
+      names=""
+      grep '^160000 ' "$S/tree" > "$S/gitlinks"
+      while IFS= read -r line; do names=${names:+$names, }$(confine_text "${line#*$'\t'}"); done < "$S/gitlinks"
+      submodules "$names"
+    fi
+    APPLY=(apply --index)
+    how=""
+  else
+    printf '>> git ls-tree -r and git cat-file --batch of %s, not git clone: this git has none of the May-2024 clone fixes\n' "$SRC_SHOWN" >&9
+    SHA=$(hgit_tree "$SRC_ABS" rev-parse --verify --quiet --end-of-options "${REV:-HEAD}^{commit}" 2>&9) && [ -n "$SHA" ] ||
+      finish 3 "$(confine_text "${REV:-HEAD}") is not a commit in $SRC_SHOWN"
+    export_tree
+    APPLY=(apply)
+    how=", its tracked files written from git ls-tree and git cat-file --batch"
   fi
   if [ -n "$PATCH_REL" ]; then
     iso_copy_new "$WT/$PATCH_REL" "$S/patch" || finish 3 "$PATCH_REL cannot be read"
-    printf '>> git apply --index %s\n' "$PATCH_REL" >&9
-    hgit "$S/src" apply --index --whitespace=nowarn -- "$S/patch" </dev/null >&9 2>&9 ||
+    printf '>> git %s %s\n' "${APPLY[*]}" "$PATCH_REL" >&9
+    hgit "$S/src" "${APPLY[@]}" --whitespace=nowarn -- "$S/patch" </dev/null >&9 2>&9 ||
       finish 3 "$PATCH_REL does not apply to $SHA"
   fi
-  printf '>> the copy: %s at %s\n' "$SRC_SHOWN" "$SHA" >&9
+  printf '>> the copy: %s at %s%s\n' "$SRC_SHOWN" "$SHA" "$how" >&9
 else
   printf '>> the copy: the files of %s, links as links, without run directories, the store, target/ and node_modules/\n' "$SRC_SHOWN" >&9
   # Each name in any letter case: a volume that ignores case finds audit_1 under the name AUDIT_1.

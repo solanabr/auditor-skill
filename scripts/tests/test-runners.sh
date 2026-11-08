@@ -864,17 +864,27 @@ run "$TARGET" "$WT" -- cargo-test --run audit_1 --src programs
 check "a directory inside a repository, not its top, is copied as files" \
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: no Cargo.toml at the top of the copy' '$T/err'"
 settings
-# A repository whose commit has a submodule.
+# A repository whose commit has a submodule, which target.sh never fetches: strict mode stops there; otherwise
+# a note says so, and the build sees the empty directory a checkout leaves.
 SM=$T/subwt
 tgit init -q "$SM" && tgit -C "$SM" symbolic-ref HEAD refs/heads/main
 printf '[package]\nname = "sm"\nversion = "0.1.0"\n' > "$SM/Cargo.toml"
 tgit -C "$SM" add Cargo.toml
 tgit -C "$SM" update-index --add --cacheinfo "160000,$V1,vendor/sub"
 tgit -C "$SM" commit -qm 'with a submodule'
+SMSHA=$(tgit -C "$SM" rev-parse HEAD)
 ( cd "$SM" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$SM/audit_1/exec-mode"
+SUBNOTE=">> note: $SMSHA has submodules (vendor/sub), which target.sh never fetches: the build sees them as empty directories; strict mode stops here (Rule 11f)"
+settings FAKE_LIST=1
 run "$TARGET" "$SM" -- cargo-test --run audit_1 --src .
-check "a revision with a submodule: exit 3, nothing fetched or built" \
-  sh -c "[ '$RC' = 3 ] && grep -q 'has submodules (vendor/sub), and target.sh never fetches them' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
+check "a revision with a submodule: exit 0, a note names it, and the build sees it as an empty directory" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '$SUBNOTE' '$T/out' && grep -q '^listing: .* ./vendor/sub \$' '$T/calls'"
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$SM" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+  check "strict mode, the same revision: exit 3, nothing fetched or built" \
+    sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: $SMSHA has submodules (vendor/sub), and target.sh never fetches them; log ' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
+fi
+settings
 # A partial clone.
 PC=$T/partwt
 tgit clone -q --no-local "$WT" "$PC" 2>/dev/null
@@ -882,14 +892,62 @@ tgit -C "$PC" config extensions.partialClone origin
 ( cd "$PC" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$PC/audit_1/exec-mode"
 run "$TARGET" "$PC" -- cargo-test --run audit_1 --src .
 check "a partial clone: exit 3 before anything is copied" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: . is a partial clone' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
-# git without the May-2024 clone fixes.
+# git without the May-2024 clone fixes never clones the source: strict mode stops; otherwise target.sh writes the
+# tracked files of the commit itself, from git ls-tree and git cat-file --batch, and a note says so. The
+# stand-in names its version and logs every git command it runs.
 mkdir -p "$T/oldgit"
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo "git version 2.39.3"; exit 0; }\nexec %s "$@"\n' "$(command -v git)" > "$T/oldgit/git"
+cat > "$T/oldgit/git" <<SH
+#!/bin/sh
+printf '%s\n' "\$*" >> "$T/oldgit.log"
+[ "\$1" = --version ] && { echo "git version 2.39.3"; exit 0; }
+exec $(command -v git) "\$@"
+SH
 chmod +x "$T/oldgit/git"
+OLDGIT=">> note: this git (2.39.3) has none of the May-2024 clone fixes for its release line (2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, 2.46 and later), so target.sh copies the tracked files of the commit with git's read-only plumbing instead of cloning; strict mode stops here (Rule 11f)"
+: > "$T/oldgit.log"
+settings FAKE_SHOW=programs/demo/src/lib.rs FAKE_LIST=1
 run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src .
-check "git 2.39.3 cannot clone the source: exit 3" sh -c "[ '$RC' = 3 ] && grep -q 'cloning --src needs git with the May-2024 clone fixes' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+check "git 2.39.3: exit 0, the note, and the build sees the committed HEAD (v2)" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF \"$OLDGIT\" '$T/out' && grep -qxF 'show: // v2' '$T/calls'"
+check "... git ran ls-tree and cat-file --batch, and never clone" \
+  sh -c "grep -q ' ls-tree -r -z --full-tree ' '$T/oldgit.log' && grep -q ' cat-file --batch\$' '$T/oldgit.log' && ! grep -qw clone '$T/oldgit.log'"
+check "... the copy holds the tracked files, no untracked one or run directory, in a repository git init made" \
+  sh -c "grep -q '^listing: .* ./Cargo.toml .* ./app/yarn.lock .* ./programs/demo/src/lib.rs ./rust-toolchain.toml ./src ./src/lib.rs \$' '$T/calls' && ! grep -qE '^listing: .* [.]/(audit_1|incident_1|linkdir|Cargo[.]lock|sub|big|[.]npmrc)[ /]' '$T/calls' && grep -q '^listing: .* ./.git/HEAD ' '$T/calls' && ! grep -q '^listing: .* ./.git/hooks' '$T/calls'"
+check "... and no program or hook the repository's config names ran" test -z "$(ls -A "$T/marks")"
+run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src . --rev "$V1"
+check "... --rev checks that commit out" sh -c "[ '$RC' = 0 ] && grep -qxF 'show: // v1' '$T/calls'"
+run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src . --patch audit_1/patches/F-1.patch
+check "... --patch is applied with git apply" sh -c "[ '$RC' = 0 ] && grep -qxF 'show: // patched' '$T/calls'"
+run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src . --patch audit_1/patches/F-3.patch
+check "... a patch that does not apply: exit 3, nothing built" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: audit_1/patches/F-3.patch does not apply to $V2; log ' '$T/err' && ! grep -q '^== cargo test' '$T/calls'"
+run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src audit_1/src.git
+check "... and --src may be the copy git-ro.sh copy made" sh -c "[ '$RC' = 0 ] && grep -qxF 'show: // v2' '$T/calls'"
+run "$TARGET" "$SM" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src .
+check "... a revision with a submodule gets the note, and the empty directory" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '$SUBNOTE' '$T/out' && grep -q '^listing: .* ./vendor/sub \$' '$T/calls'"
+# A commit whose tree holds a path git checkout never writes, sub/.GIT/config here (git mktree takes it).
+CR=$T/craftwt
+tgit init -q "$CR" && tgit -C "$CR" symbolic-ref HEAD refs/heads/main
+printf '[package]\nname = "cr"\nversion = "0.1.0"\n' > "$CR/Cargo.toml"
+tgit -C "$CR" add Cargo.toml && tgit -C "$CR" commit -qm plain
+b=$(printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n' "$T" | tgit -C "$CR" hash-object -w --stdin)
+t=$(printf '100644 blob %s\tconfig\n' "$b" | tgit -C "$CR" mktree)
+t=$(printf '040000 tree %s\t.GIT\n' "$t" | tgit -C "$CR" mktree)
+t=$( { tgit -C "$CR" ls-tree HEAD; printf '040000 tree %s\tsub\n' "$t"; } | tgit -C "$CR" mktree)
+c=$(tgit -C "$CR" commit-tree "$t" -p HEAD -m crafted) && tgit -C "$CR" update-ref refs/heads/main "$c"
+( cd "$CR" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$CR/audit_1/exec-mode"
+run "$TARGET" "$CR" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src .
+check "... a commit whose tree holds sub/.GIT/config: exit 3, nothing written or built" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: $c holds a path git checkout does not write: sub/.GIT/config; log ' '$T/err' && ! grep -q '^== cargo' '$T/calls' && [ -z \"\$(ls -A '$T/marks')\" ]"
+settings
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+  check "strict mode, git 2.39.3: the source is not cloned, exit 3, nothing copied" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: cloning --src needs git with the May-2024 clone fixes: 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, or 2.46 or later — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+fi
 run "$TARGET" "$P" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src .
-check "... while a source that is copied file by file needs no clone" test "$RC" = 0
+check "... while a source that is copied file by file needs no clone" sh -c "[ '$RC' = 0 ] && ! grep -q 'May-2024' '$T/out'"
 # Tools.
 for pair in "cargo-test:cargo" "build-sbf:cargo" "anchor-build:anchor" "npm-ci:npm"; do
   run "$TARGET" "$WT" PATH="$SPATH" -- "${pair%%:*}" --run audit_1 --src .
