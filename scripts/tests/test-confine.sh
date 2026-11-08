@@ -483,6 +483,19 @@ LIB_PATH="$T/cantell:$PATH" lib "$WT" 'confine_rundir audit_2 R'
 check "... which it still needs" refused 'R has no .gitignore holding exactly *: audit_2'
 AUDITOR_STRICT=1 LIB_PATH="$T/cantell:$PATH" lib "$WT" 'confine_rundir audit_1 R'
 check "... and strict mode refuses it" refused 'git cannot tell whether R is tracked: audit_1'
+# The same where git finds the repository and only its ls-files fails (a broken index, say).
+mkdir -p "$T/lsfail" "$T/lswt"
+printf '#!/bin/sh
+for a in "$@"; do [ "$a" = ls-files ] && { echo "fatal: index file corrupt" >&2; exit 128; }; done
+exec "%s" "$@"
+' "$REAL_GIT" > "$T/lsfail/git"
+chmod +x "$T/lsfail/git"
+mkrepo "$T/lswt"; put "$T/lswt" f x; commit "$T/lswt" -m x
+mkdir -p "$T/lswt/audit_1"; printf '*\n' > "$T/lswt/audit_1/.gitignore"
+LIB_PATH="$T/lsfail:$PATH" lib "$T/lswt" 'confine_rundir audit_1 R; printf "%s" "$CONFINE_RUN"'
+check "... and so does one in a repository whose ls-files fails, in default mode" out_is audit_1
+AUDITOR_STRICT=1 LIB_PATH="$T/lsfail:$PATH" lib "$T/lswt" 'confine_rundir audit_1 R'
+check "... which strict mode refuses" refused 'git cannot tell whether R is tracked: audit_1'
 lib "$WT" 'confine_rundir audit_4 R'
 check "a .gitignore that lets a file through is refused" refused 'R has no .gitignore holding exactly *: audit_4'
 lib "$WT" 'confine_rundir audit_5 R'
