@@ -76,12 +76,12 @@
 #       not read. diff-audit and quick-scan keep their --ci and --fail-on, the findings file that starts as a
 #       failing record, the Rule 5b statuses that count, a reply without finding text, and the closing line;
 #       each of the three Quick commands names the report it writes from templates/pr-report.md, writes it in
-#       its own session (quick-scan starts no agent at all, so its cost holds still, and the others leave an
-#       agent's model to its definition), runs no cd, which would lose the run directory's write rule, and
-#       reads the corpus from the root: known-vectors/INDEX.md and each vector file it keeps, and the
-#       checklists SKILL.md's scope table names, each verdict naming what it rests on; diff-audit's PR-number
-#       form, quick-scan's "fail the job" without a private channel, its vector step that named no file, and
-#       its Task grant stay gone (docs/ci.md).
+#       its own session (quick-scan and diff-audit start no agent at all, so their cost holds still, and
+#       deep-review leaves an agent's model to its definition), runs no cd, which would lose the run
+#       directory's write rule, and reads the corpus from the root: known-vectors/INDEX.md and each vector file
+#       it keeps, and the checklists SKILL.md's scope table names, each verdict naming what it rests on;
+#       diff-audit's PR-number form, quick-scan's "fail the job" without a private channel, its vector step
+#       that named no file, and the Task grant of both stays gone (docs/ci.md).
 #   G   The lines agents/poc-engineer.md gives a runner it writes, run as the first lines of such a runner in a
 #       crate, from the working directory and from the crate, find <R> from the runner's path and take the
 #       stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT, or a strict entry in their
@@ -1266,7 +1266,6 @@ commands/quick-scan.md	Write it yourself, in this session.
 commands/quick-scan.md	Run no `cd` in this session, not even before a plain `grep`
 commands/diff-audit.md	Run no `cd` in this session, not even before a plain `grep`
 commands/deep-review.md	Run no `cd` in this session, not even before a plain `grep`
-commands/diff-audit.md	If you start an agent, set no model for it
 commands/deep-review.md	If you start an agent, set no model for it
 commands/quick-scan.md	Judge no vector by its index row alone
 commands/quick-scan.md	list the kept files in a message of your own; read every one whole, with no line limit, about ten in each message, before you give any vector verdict
@@ -1279,7 +1278,8 @@ commands/diff-audit.md	Never give a budget, turn or time limit as the reason a f
 commands/diff-audit.md	first, with the Read tool, before any verdict of this step, whatever the size of the change
 commands/diff-audit.md	Each verdict names the checklist item id or the vector step it rests on
 commands/deep-review.md	Each verdict names the checklist item id or the vector step it rests on
-commands/diff-audit.md	Write it yourself, in this session, from what any agent you started returned
+commands/diff-audit.md	Write it yourself, in this session.
+commands/diff-audit.md	Steps 2 to 6 run in this session: start no agent, so a review of the same range costs the same from one run to the next.
 commands/deep-review.md	Write it yourself, in this session, from what any agent you started returned
 commands/quick-scan.md	but the job never fails only because none exists, and never falls back to printing findings in the log
 commands/re-audit.md	only into `grep`, `head`, `tail` or `wc`
@@ -1348,6 +1348,9 @@ commands/quick-scan.md	Evaluate only CRITICAL / HIGH known-vectors for the detec
 commands/quick-scan.md	run the `discovery/grep-commands.md` scanners
 commands/quick-scan.md	  - Task
 commands/quick-scan.md	spawn every agent in the foreground
+commands/diff-audit.md	  - Task
+commands/diff-audit.md	spawn every agent in the foreground
+commands/diff-audit.md	If you start an agent
 GONE
 
 # respond's step 5 and hunt's step 6 settle the mode as poc's step 5 does, each step read as one line so wording
