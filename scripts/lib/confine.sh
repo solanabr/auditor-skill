@@ -31,9 +31,9 @@
 # A tool that contacts an outside service records it in <R>/disclosures.tsv (OUTPUT-RULES.md Rule 11b;
 # the format is at confine_disclose).
 # Needs bash >= 3.2 and, on the cleaned PATH, env, git, find, wc and cat (grep, when there, saves a git
-# call; sleep, when there, gives a failed walk a pause before it is tried again); confine_scratch needs mktemp, hgit_tree mktemp and rmdir (and /bin/sh after a Ctrl-C; rm for a
-# file CONFINE_TREE_COPY places), confine_service sed, confine_disclose date, and confine_b58_bytes and
-# confine_links_inside python3.
+# call; sleep, when there, pauses before a failed walk is tried again); confine_scratch needs mktemp,
+# hgit_tree mktemp and rmdir (and /bin/sh after a Ctrl-C; rm for a file CONFINE_TREE_COPY places),
+# confine_service sed, confine_disclose date, and confine_b58_bytes and confine_links_inside python3.
 
 # confine_refuse <reason>: the refusal line, then exit 64 (or the status confine_init was given). A tool
 # may set CONFINE_HINT around a check; the line then ends with "; <hint>". confine_init clears one the
@@ -364,28 +364,31 @@ confine_git_includes() {
   done
 }
 
-# confine_git_dir_files <git directory> <common directory>: status 1 (CONFINE_GIT_WHY says why) when
-# something in either, or a file their config includes, could stop git: a named pipe or device, a
-# symbolic link to one, a name holding a line end (git makes none), a directory find cannot read (what
-# it holds cannot be told), or a file an include names (confine_git_includes). Each is resolved first,
-# since git opens what a link to it names; then find lists the pipes and devices of each, then its
-# links, one to a line, and the shell tests where each leads, with no program per link.
 # confine_walk <find arguments>...: find with those arguments, what it prints on stdout. Status 0 when find
 # succeeds, or when each error it reports is an entry that vanished while it walked ("No such file or
 # directory"), as when git's gc prunes loose objects: an entry that is gone cannot be waited on, and find
 # walked the rest. Any other failure is tried twice more, after a short pause when sleep is on PATH, and is
-# status 1 when it persists. BSD find has no -ignore_readdir_race; a second walk keeps only the errors.
+# status 1 when it persists. BSD find has no -ignore_readdir_race. The errors are read from the walk whose
+# output is kept: find's stderr goes ahead through descriptor 3, then its output, its output's length and
+# its status, so the shell splits them by count (LC_ALL=C: bytes), never by what either holds.
 confine_walk() {
-  local out err try=1
+  local res tail len rc body out err try=1
   while :; do
-    out=$(find "$@" 2>/dev/null) && { printf '%s' "$out"; return 0; }
-    if err=$(find "$@" 2>&1 >/dev/null) || confine_vanished "$err"; then
+    res=$( { out=$(find "$@" 2>&3 3>&-); rc=$?; printf '%s\n%s %s' "$out" "${#out}" "$rc"; } 3>&1 )
+    tail=${res##*$'\n'}
+    len=${tail%% *}
+    rc=${tail#* }
+    body=${res%$'\n'*}
+    out=${body:${#body}-len}
+    err=${body:0:${#body}-len}
+    if [ "$rc" = 0 ] || confine_vanished "$err"; then
       printf '%s' "$out"
       return 0
     fi
     [ "$try" -lt 3 ] || return 1
     try=$((try + 1))
-    if command -v sleep >/dev/null 2>&1; then sleep 0.2; fi
+    # A sleep that takes whole seconds only refuses 0.2, quietly: the next walk comes at once.
+    if command -v sleep >/dev/null 2>&1; then sleep 0.2 2>/dev/null; fi
   done
 }
 
@@ -402,6 +405,12 @@ confine_vanished() { # confine_vanished <find's errors>: status 0 when there is 
   return "$rc"
 }
 
+# confine_git_dir_files <git directory> <common directory>: status 1 (CONFINE_GIT_WHY says why) when
+# something in either, or a file their config includes, could stop git: a named pipe or device, a
+# symbolic link to one, a name holding a line end (git makes none), a directory find cannot read (what
+# it holds cannot be told), or a file an include names (confine_git_includes). Each is resolved first,
+# since git opens what a link to it names; then find lists the pipes and devices of each, then its
+# links, one to a line, and the shell tests where each leads, with no program per link.
 confine_git_dir_files() {
   local g c d odd
   # Resolved in a subshell, so the caller's working directory stays as it is (target.sh runs from /).

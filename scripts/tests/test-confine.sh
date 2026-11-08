@@ -1223,7 +1223,7 @@ for st in 0 1; do
   AUDITOR_STRICT=$st LIB_PATH="$T/deny-always:$PATH" lib_once "$T/walkrepo" 'confine_repo . R'
   check "... but one that keeps failing for another reason is refused, after three tries (strict $st)" \
     refused "the git directory holds a directory that cannot be read, so a named pipe or device in it cannot be ruled out: $(shown "$T/walkrepo/.git")"
-  check "... whose walks were tried three times (strict $st)" test "$(cat "$T/deny-always/calls")" = 6
+  check "... whose walks were tried three times (strict $st)" test "$(cat "$T/deny-always/calls")" = 3
   if mkfifo "$T/walkrepo/.git/pipe" 2>/dev/null; then
     AUDITOR_STRICT=$st LIB_PATH="$T/vanish-always:$PATH" lib_bounded "$T/walkrepo/.git/pipe" "$T/walkrepo" 'confine_repo . R'
     check "... and a named pipe that is still there is refused, whatever vanished beside it (strict $st)" \
