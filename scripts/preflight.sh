@@ -74,8 +74,10 @@
 #     checkout's top level as it reads a parent;
 #   - a tree of more entries outside .git than the limit: in strict mode a refusal past AUDITOR_PREFLIGHT_MAX_ENTRIES
 #     (default 200000); in default mode the walk stops there (default 500000), with a note;
-#   - a tree find cannot read in full.
-# It refuses in both modes a repository git cannot place, and the shapes of scripts/lib/confine.sh's checks.
+#   - a tree find cannot read in full;
+#   - a working directory git cannot place in a repository (a .git file it cannot read, a repository it rejects):
+#     default mode reads no parent of it.
+# It refuses in both modes the shapes of scripts/lib/confine.sh's checks, such as a file git would wait on.
 #
 # A CLAUDE.md, a CLAUDE.local.md, an AGENTS.md or a .claude/rules directory is not refused. Claude Code reads them as
 # project instructions (an AGENTS.md or .claude/AGENTS.md from v2.1.277, by default where no CLAUDE.md is in or above the
@@ -561,6 +563,14 @@ skip() {
   [ "$STRICT" = 0 ] || refuse "$1"
   note "$1, so its parents were not read; strict mode refuses this (Rule 11f)"
 }
+# untold: git cannot tell which repository holds the working directory (a .git file it cannot read, a repository it
+# rejects): refused in strict mode; in default mode a note, and no parent is read.
+untold() {
+  top=$WT gtop='' main=''
+  [ "$STRICT" = 0 ] || refuse "git cannot tell which repository holds the working directory, so its parents cannot be checked"
+  note "git cannot tell which repository holds the working directory, so its parents were not read; strict mode refuses this" \
+    "(Rule 11f)"
+}
 place() {
   local err d h common
   CONFINE_CEILING='' confine_git_files "$WT"
@@ -575,8 +585,7 @@ place() {
       fi
       return 0
     fi
-    top=$(CONFINE_CEILING='' hgit "$WT" rev-parse --show-toplevel 2>/dev/null) && [ -n "$top" ] ||
-      refuse "git cannot tell which repository holds the working directory, so its parents cannot be checked"
+    top=$(CONFINE_CEILING='' hgit "$WT" rev-parse --show-toplevel 2>/dev/null) && [ -n "$top" ] || { untold; return 0; }
     # The top level is the working directory or the directory above it that is the same directory (device and inode),
     # spelled as the working directory's path spells it: a core.worktree can spell it in other letters, where the
     # filesystem folds them.
@@ -596,10 +605,9 @@ place() {
     # directory without its /.git.
     gd=$(CONFINE_CEILING='' hgit "$WT" rev-parse --absolute-git-dir 2>/dev/null) &&
       common=$(CONFINE_CEILING='' hgit "$WT" rev-parse --git-common-dir 2>/dev/null) && [ -n "$gd" ] && [ -n "$common" ] ||
-      refuse "git cannot tell which repository holds the working directory, so its parents cannot be checked"
+      { untold; return 0; }
     case "$common" in /*) ;; *) common=$WT/$common ;; esac
-    confine_phys "$gd" && gd=$CONFINE_PHYS && confine_phys "$common" ||
-      refuse "git cannot tell which repository holds the working directory, so its parents cannot be checked"
+    confine_phys "$gd" && gd=$CONFINE_PHYS && confine_phys "$common" || { untold; return 0; }
     if [ "$CONFINE_PHYS" != "$gd" ]; then
       [ "$STRICT" = 0 ] ||
         refuse "the working directory is in a linked worktree, and Claude Code also loads the project config of its" \
@@ -644,7 +652,7 @@ place() {
       [ -n "$d" ] || d=/
     done
   else
-    refuse "git cannot tell which repository holds the working directory, so its parents cannot be checked"
+    untold
   fi
 }
 place

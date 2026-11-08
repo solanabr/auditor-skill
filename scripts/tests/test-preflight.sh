@@ -1203,13 +1203,22 @@ both "... in any letter case" "$D/y/.CLAUDE/z/inc" refused \
 git init -q "$D/g"
 both "a working directory inside a git directory is refused" "$D/g/.git" refused 'the working directory lies inside a git directory' \
   "preflight: note: the working directory lies inside a git directory, so its parents were not read; strict mode refuses this (Rule 11f)"
+# Where git cannot tell which repository holds the working directory, strict mode refuses; default mode notes it, reads
+# no parent, and still checks the tree.
+UNTOLD="preflight: note: git cannot tell which repository holds the working directory, so its parents were not read; strict mode refuses this (Rule 11f)"
 V=$(newdir)
 build "$V" f:.git d:.claude/skills
-for st in 1 0; do
-  run "$V" "AUDITOR_STRICT=$st"
-  check "a .git file git cannot read stops the check of the parents, in either mode (strict $st)" \
-    refused 'git cannot tell which repository holds the working directory, so its parents cannot be checked'
-done
+both "a .git file git cannot read stops the check of the parents" "$V" \
+  refused 'git cannot tell which repository holds the working directory, so its parents cannot be checked' "$UNTOLD"
+check "default: ... and the tree is still checked" noted "$(n_ships .claude/skills)"
+# A repository git rejects (here, an extension it does not know), with config in a parent of the working directory.
+VB=$(newdir)
+build "$VB" d:sub d:.claude/agents
+git init -q "$VB" && git -C "$VB" config core.repositoryformatversion 1 && git -C "$VB" config extensions.preflightTestUnknown true
+both "a repository git rejects stops the check of the parents" "$VB/sub" \
+  refused 'git cannot tell which repository holds the working directory, so its parents cannot be checked' "$UNTOLD"
+check "default: ... and no parent is read" body_is "$UNTOLD
+$OK_O"
 for st in 1 0; do
   run "$ROOT" "AUDITOR_STRICT=$st"
   check "an installation inside the working directory is refused, in either mode (strict $st)" \
