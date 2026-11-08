@@ -979,8 +979,8 @@ tgit -C "$PC" config extensions.partialClone origin
 settings FAKE_SHOW=programs/demo/src/lib.rs
 run "$TARGET" "$PC" -- cargo-test --run audit_1 --src .
 PCSHA=$(tgit -C "$PC" rev-parse HEAD)
-check "a partial clone whose revision has every blob: exit 0, the note, and the build sees HEAD (v2)" \
-  sh -c "[ '$RC' = 0 ] && grep -qxF \">> note: --src . is a partial clone, and every blob of $PCSHA is present, so target.sh copies the tracked files of the commit with git's read-only plumbing, with nothing fetched; strict mode stops here (Rule 11f)\" '$T/out' && grep -qxF 'show: // v2' '$T/calls'"
+check "a partial clone whose revision has every file: exit 0, the note, and the build sees HEAD (v2)" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF \">> note: --src . is a partial clone, and every file of $PCSHA is in it, so target.sh copies the tracked files of the commit with git's read-only plumbing, fetching nothing; strict mode stops here (Rule 11f)\" '$T/out' && grep -qxF 'show: // v2' '$T/calls'"
 settings
 if [ "$ISOLATED_OK" = 1 ]; then
   run "$TARGET" "$PC" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
@@ -992,8 +992,8 @@ tgit clone -q --no-local --bare "$WT" "$T/blobless-src.git" 2>/dev/null && tgit 
 tgit clone -q --no-checkout --filter=blob:none "file://$T/blobless-src.git" "$PB" 2>/dev/null
 ( cd "$PB" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$PB/audit_1/exec-mode"
 run "$TARGET" "$PB" -- cargo-test --run audit_1 --src .
-check "a partial clone whose revision names an object it never fetched: exit 3, nothing fetched or copied" \
-  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: . is a partial clone, and [0-9a-f]* names an object it never fetched: a copy would lack it, and nothing is fetched (Rule 11c) — nothing was copied or built.\$' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+check "a partial clone that lacks files of its revision: exit 3, nothing fetched or copied" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: . is a partial clone that lacks files of [0-9a-f]* it never fetched, and nothing is fetched (Rule 11c) — nothing was copied or built.\$' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 # git without the May-2024 clone fixes never clones the source: strict mode stops; otherwise target.sh writes the
 # tracked files of the commit itself, from git ls-tree and git cat-file --batch, and a note says so. The
 # stand-in names its version and logs every git command it runs.

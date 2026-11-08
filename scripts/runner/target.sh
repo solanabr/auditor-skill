@@ -518,10 +518,8 @@ if [ "$SRC_KIND" = repo ]; then
       2.39) fix=2.39.4 ;; 2.40) fix=2.40.2 ;; 2.41) fix=2.41.1 ;; 2.42) fix=2.42.2 ;; 2.43) fix=2.43.4 ;;
       2.44) fix=2.44.1 ;; 2.45) fix=2.45.1 ;; *) fix="" ;;
     esac
-    if [ -z "$gvs" ]; then
-      EXPORT_WHY="this git reports no version these checks can read"
-    elif [ -z "$maj" ] || [ -z "$min" ]; then
-      EXPORT_WHY="this git reports '$gvs', which is no version these checks can read"
+    if [ -z "$maj" ] || [ -z "$min" ]; then
+      EXPORT_WHY="this git reports no version number"
     elif [ -n "$fix" ]; then
       EXPORT_WHY="this git reports $gvs, older than $fix, that line's May-2024 fixed release"
     else
@@ -550,12 +548,12 @@ if [ "$SRC_KIND" = repo ]; then
       PSHA=$(hgit_tree "$SRC_ABS" rev-parse --verify --quiet --end-of-options "${REV:-HEAD}^{commit}" 2>/dev/null </dev/null) &&
         [ -n "$PSHA" ] || blocker "$(confine_text "${REV:-HEAD}") is not a commit in $SRC_SHOWN — nothing was copied or built."
       partial_complete "$PSHA" ||
-        blocker "$SRC_SHOWN is a partial clone, and $PSHA names an object it never fetched: a copy would lack it, and nothing is fetched (Rule 11c) — nothing was copied or built."
+        blocker "$SRC_SHOWN is a partial clone that lacks files of $PSHA it never fetched, and nothing is fetched (Rule 11c) — nothing was copied or built."
       if [ "$CLONE" = 1 ]; then
         CLONE=0
-        EXPORT_WHY="it is a partial clone, and every blob of $PSHA is present"
+        EXPORT_WHY="it is a partial clone, and every file of $PSHA is in it"
       fi
-      echo ">> note: --src $SRC_SHOWN is a partial clone, and every blob of $PSHA is present, so target.sh copies the tracked files of the commit with git's read-only plumbing, with nothing fetched; strict mode stops here (Rule 11f)" ;;
+      echo ">> note: --src $SRC_SHOWN is a partial clone, and every file of $PSHA is in it, so target.sh copies the tracked files of the commit with git's read-only plumbing, fetching nothing; strict mode stops here (Rule 11f)" ;;
     2) blocker "git cannot read the config of $SRC_SHOWN, so a partial clone cannot be ruled out — nothing was copied or built." ;;
   esac
 fi
