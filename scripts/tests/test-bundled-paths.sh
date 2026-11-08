@@ -23,8 +23,8 @@
 #      INCIDENT_REPORT.md) are not corpus files;
 #   8. templates/strict-settings.json parses, its sandbox block and permissions are the ones
 #      docs/permissions-and-isolation.md shows, its allow list is the resume rules shown there and in the
-#      README's and getting-started's "once, after installing" blocks, and its env turns strict mode on and holds
-#      the runners to isolated mode (spec §5.7).
+#      README's and getting-started's "once, after installing" blocks, and its env turns strict mode on, holds
+#      the runners to isolated mode (spec §5.7) and keeps a command's agents in the foreground.
 # Each detector is first run against known-good and known-bad lines and a file of 1 MiB, so a broken pattern
 # fails the test.
 # Usage (from the repo root): bash scripts/tests/test-bundled-paths.sh   (VERBOSE=1 lists every check)
@@ -379,7 +379,7 @@ assert len(sandbox) == 1 and len(rules) == 1, "the docs show one sandbox block a
 assert t["sandbox"] == sandbox[0]["sandbox"], "its sandbox block differs from the docs"
 assert all(t["permissions"].get(k) == v for k, v in sandbox[0]["permissions"].items()), "its permissions differ from the docs"
 assert t["permissions"]["allow"] == rules[0]["permissions"]["allow"], "its resume rules differ from the docs"
-assert t["env"] == {"AUDITOR_STRICT": "1", "AUDITOR_EXEC_MODE": "isolated"}, "its env differs"
+assert t["env"] == {"AUDITOR_STRICT": "1", "AUDITOR_EXEC_MODE": "isolated", "CLAUDE_CODE_FORK_SUBAGENT": "0"}, "its env differs"
 for p in sys.argv[3:]:
     once = [b for b in blocks(p) if "allow" in b.get("permissions", {})]
     assert len(once) == 1 and once[0]["permissions"]["allow"] == t["permissions"]["allow"], p + ": its rules block differs from the template"

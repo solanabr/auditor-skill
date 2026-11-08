@@ -1,7 +1,8 @@
 {
   "env": {
     "AUDITOR_STRICT": "1",
-    "AUDITOR_EXEC_MODE": "isolated"
+    "AUDITOR_EXEC_MODE": "isolated",
+    "CLAUDE_CODE_FORK_SUBAGENT": "0"
   },
   "permissions": {
     "blockReadsOutsideWorkingDirectories": true,
