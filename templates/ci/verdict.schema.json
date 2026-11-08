@@ -1,0 +1,56 @@
+{
+  "description": "The result of /auditor:diff-audit --ci or /auditor:quick-scan --ci, for claude -p --output-format json --json-schema: Claude Code checks the reply against it and returns it as the result's structured_output, which templates/ci/verdict.jq reads. Every field is a fixed word or a number, so a log that prints them shows no finding, count or path (OUTPUT-RULES.md Rule 11d). Only keywords Claude's structured outputs take are used: types, enums, required, items and additionalProperties false.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "command", "mode", "verdict", "threshold", "run", "stopped", "analyzers_run", "analyzers_not_run"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [1]
+    },
+    "command": {
+      "type": "string",
+      "enum": ["diff-audit", "quick-scan"]
+    },
+    "mode": {
+      "description": "The mode preflight's first line names.",
+      "type": "string",
+      "enum": ["strict", "default"]
+    },
+    "verdict": {
+      "description": "The verdict audit_<n>/findings.json holds: pass or fail.",
+      "type": "string",
+      "enum": ["pass", "fail"]
+    },
+    "threshold": {
+      "description": "--fail-on <N>, 7 when not given.",
+      "type": "integer",
+      "enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    },
+    "run": {
+      "description": "The <n> of the run directory audit_<n>; 0 when the run stopped before step 1 made one.",
+      "type": "integer"
+    },
+    "stopped": {
+      "description": "none, or the step the run stopped at: preflight (a refusal), run-directory (rundir.sh refused), arguments, changed-set, denied.",
+      "type": "string",
+      "enum": ["none", "preflight", "run-directory", "arguments", "changed-set", "denied"]
+    },
+    "analyzers_run": {
+      "description": "The analyzers that ran, as findings.json names them.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["audit-scan", "lock-delta", "deps-artifacts", "web3js-history", "semgrep", "static-analysis", "grep-scanners", "cargo-audit", "npm-audit"]
+      }
+    },
+    "analyzers_not_run": {
+      "description": "The analyzers the run called for that did not run.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["audit-scan", "lock-delta", "deps-artifacts", "web3js-history", "semgrep", "static-analysis", "grep-scanners", "cargo-audit", "npm-audit"]
+      }
+    }
+  }
+}
