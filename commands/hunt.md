@@ -157,7 +157,10 @@ Code asks about a shell read outside the working directory.
      `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check incident_<n>` prints
      `ok incident_<n>` (`--fresh` always creates a new one). A reused incident
      directory's `exec-mode` stands as it is, and nothing asks for the mode again
-     (step 6).
+     (step 6). When the arguments hold `--strict` and the run reuses a directory,
+     write `incident_<n>/strict`, holding the word `strict`, with the Write tool
+     before step 1's snapshot: the bundled tools take strict mode only from the
+     environment and from such files (Rule 11f).
    - From here on, every path this command passes on and every phase brief names
      that one directory, spelled exactly as `rundir.sh` printed it. Never write into
      another `incident_*`, one in another letter case, or one git tracks. Every

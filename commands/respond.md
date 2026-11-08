@@ -148,7 +148,11 @@ Code asks about a shell read outside the working directory.
      `incident_*` only after the human confirms which one, and only when
      `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check incident_<n>` prints
      `ok incident_<n>`. A reused incident directory's `exec-mode` stands as it is,
-     and nothing asks for the mode again (step 5).
+     and nothing asks for the mode again (step 5). When the arguments hold
+     `--strict` and the run reuses or adopts a directory, write
+     `incident_<n>/strict`, holding the word `strict`, with the Write tool before
+     step 1's snapshot: the bundled tools take strict mode only from the
+     environment and from such files (Rule 11f).
    - For an `INC-<n>.<k>` lead, the lead names the `incident_<n>/` to reuse (naming
      it is the confirmation): adopt it under that rule; the agent works into its
      `INCIDENTS.json`, since minting a fresh directory would orphan the incident.
