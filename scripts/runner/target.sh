@@ -491,7 +491,7 @@ if [ "$SRC_KIND" = repo ]; then
   gv=$(env -i PATH="$PATH" git --version 2>/dev/null) || gv=""
   gv=${gv#git version }
   gv=${gv%% *}
-  gvs=$(confine_text "${gv:-version unknown}")
+  gvs=$(confine_text "$gv")
   maj=${gv%%.*}; gv=${gv#"$maj"}; gv=${gv#.}
   min=${gv%%.*}; gv=${gv#"$min"}; gv=${gv#.}
   pat=${gv%%.*}
@@ -512,9 +512,23 @@ if [ "$SRC_KIND" = repo ]; then
   if [ "$ok" != 1 ]; then
     [ "$CONFINE_STRICT" = 0 ] ||
       blocker "cloning --src needs git with the May-2024 clone fixes: 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, or 2.46 or later — nothing was copied or built."
+    # Decided from git --version alone, which a distribution's build with the fixes backported can still
+    # report: the note says what the version shows.
+    case "$maj.$min" in
+      2.39) fix=2.39.4 ;; 2.40) fix=2.40.2 ;; 2.41) fix=2.41.1 ;; 2.42) fix=2.42.2 ;; 2.43) fix=2.43.4 ;;
+      2.44) fix=2.44.1 ;; 2.45) fix=2.45.1 ;; *) fix="" ;;
+    esac
+    if [ -z "$gvs" ]; then
+      EXPORT_WHY="this git reports no version these checks can read"
+    elif [ -z "$maj" ] || [ -z "$min" ]; then
+      EXPORT_WHY="this git reports '$gvs', which is no version these checks can read"
+    elif [ -n "$fix" ]; then
+      EXPORT_WHY="this git reports $gvs, older than $fix, that line's May-2024 fixed release"
+    else
+      EXPORT_WHY="this git reports $gvs, older than 2.39.4, the oldest May-2024 fixed release"
+    fi
     CLONE=0
-    EXPORT_WHY="this git has none of the May-2024 clone fixes"
-    echo ">> note: this git ($gvs) has none of the May-2024 clone fixes for its release line (2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, 2.46 and later), so target.sh copies the tracked files of the commit with git's read-only plumbing instead of cloning; strict mode stops here (Rule 11f)"
+    echo ">> note: $EXPORT_WHY, so target.sh copies the tracked files of the commit with git's read-only plumbing instead of cloning; strict mode stops here (Rule 11f)"
   fi
   # The clone runs upload-pack in the source with none of hgit's -c pins (git's local transport clears
   # GIT_CONFIG_PARAMETERS for it), so it keeps git's ownership check on: no global config. A source git

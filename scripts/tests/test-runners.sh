@@ -1005,7 +1005,7 @@ printf '%s\n' "\$*" >> "$T/oldgit.log"
 exec $(command -v git) "\$@"
 SH
 chmod +x "$T/oldgit/git"
-OLDGIT=">> note: this git (2.39.3) has none of the May-2024 clone fixes for its release line (2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, 2.46 and later), so target.sh copies the tracked files of the commit with git's read-only plumbing instead of cloning; strict mode stops here (Rule 11f)"
+OLDGIT=">> note: this git reports 2.39.3, older than 2.39.4, that line's May-2024 fixed release, so target.sh copies the tracked files of the commit with git's read-only plumbing instead of cloning; strict mode stops here (Rule 11f)"
 : > "$T/oldgit.log"
 settings FAKE_SHOW=programs/demo/src/lib.rs FAKE_LIST=1
 run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src .
@@ -1016,6 +1016,11 @@ check "... git ran ls-tree and cat-file --batch, and never clone" \
 check "... the copy holds the tracked files, no untracked one or run directory, in a repository git init made" \
   sh -c "grep -q '^listing: .* ./Cargo.toml .* ./app/yarn.lock .* ./programs/demo/src/lib.rs ./rust-toolchain.toml ./src ./src/lib.rs \$' '$T/calls' && ! grep -qE '^listing: .* [.]/(audit_1|incident_1|linkdir|Cargo[.]lock|sub|big|[.]npmrc)[ /]' '$T/calls' && grep -q '^listing: .* ./.git/HEAD ' '$T/calls' && ! grep -q '^listing: .* ./.git/hooks' '$T/calls'"
 check "... and no program or hook the repository's config names ran" test -z "$(ls -A "$T/marks")"
+mkdir -p "$T/oldgit230"
+sed 's/git version 2[.]39[.]3/git version 2.30.1/' "$T/oldgit/git" > "$T/oldgit230/git" && chmod +x "$T/oldgit230/git"
+run "$TARGET" "$WT" PATH="$T/oldgit230:$FPATH" -- cargo-test --run audit_1 --src .
+check "... git 2.30.1, a line before 2.39: the note says older than 2.39.4, the oldest fixed release" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^>> note: this git reports 2.30.1, older than 2.39.4, the oldest May-2024 fixed release, so target.sh copies ' '$T/out'"
 run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src . --rev "$V1"
 check "... --rev checks that commit out" sh -c "[ '$RC' = 0 ] && grep -qxF 'show: // v1' '$T/calls'"
 run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src . --patch audit_1/patches/F-1.patch
