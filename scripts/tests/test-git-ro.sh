@@ -691,6 +691,9 @@ else
       check "in default mode copy of a partial clone ($f, no checkout) that lacks an object of HEAD: exit 3, saying so" \
         test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "3||git-ro: . is a partial clone, and HEAD names an object it never fetched: a copy would lack it, and nothing is fetched; make a full copy from a source you trust (Rule 11c)"
       check "... and nothing copied or fetched" sh -c "[ ! -e '$PCN/audit_1/src.git' ] && [ -z \"\$(ls -A '$T/marks')\" ]"
+      AUDITOR_STRICT=1 run_once "$PCN" copy . audit_1
+      check "... while strict mode stops there with its own line" \
+        test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "3||git-ro: . is a partial clone: a copy would lack the objects it never fetched, and nothing is fetched; make a full copy from a source you trust (Rule 11c)"
     else
       skp "this git could not make a partial clone ($f) with no checkout"
     fi
