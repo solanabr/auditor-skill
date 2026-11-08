@@ -471,8 +471,8 @@ What the auditor itself may do is limited in both modes: git only reads and runs
 **Strict mode** is for a source you do not trust. It keeps the checks that refuse, minus a few false refusals, and makes the execution mode isolated at least. It is on when any of these holds:
 
 1. `AUDITOR_STRICT` is set to `1`, `true`, `yes` or `on`, in any letter case, in the environment Claude Code runs in. `0`, `false`, `no`, `off`, an empty value and no value leave it off; any other value turns it on, with a note that names the value.
-2. The user's arguments to a command hold `--strict`: the command passes it to `preflight.sh` and to `rundir.sh new`.
-3. A run directory directly in the working directory, `audit_<n>/` or `incident_<n>/`, holds an entry named `strict`, unless the repository tracks something under that directory. `rundir.sh new` writes one whenever strict mode is on, and intake writes one when the human answers Q46 with "Untrusted source".
+2. The user's arguments to a command hold `--strict`: the command passes it to `preflight.sh` and to `rundir.sh new`, and when it reuses a run directory instead, it writes `<R>/strict` there with the Write tool, holding the word `strict`, before any later step. A resumed invocation (`--resume`) keeps `--strict` when the invocation it resumes held it.
+3. A run directory directly in the working directory, `audit_<n>/` or `incident_<n>/`, holds an entry named `strict`, unless the repository tracks something under that directory. Where the volume folds case, as macOS's does by default, `STRICT` or any other casing of that name counts too; on a case-sensitive volume, as on Linux, only `strict` does. `rundir.sh new` writes one whenever strict mode is on, and intake writes one when the human answers Q46 with "Untrusted source".
 
 It only turns on. A `strict` file keeps strict mode on for this and every later audit in this directory, until you delete the `strict` files: preflight's first line lists each one, with the `rm` command that removes them. No pre-approved call removes one, and an emptied or rewritten one still counts. To leave strict mode, delete them by hand and unset `AUDITOR_STRICT`.
 

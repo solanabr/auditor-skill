@@ -13,10 +13,10 @@ What the auditor itself may do is limited in both modes: git only reads, writes 
 **Strict mode** is for a repository you do not trust. It refuses what default mode only notes, and runs builds only in isolated mode. Any of these turns it on:
 
 - `AUDITOR_STRICT=1` in the environment Claude Code runs in, best set through the launch line below;
-- `--strict` in a command's arguments, such as `/auditor:audit --strict`;
+- `--strict` in a command's arguments, such as `/auditor:audit --strict`, which the flow keeps when it resumes after your reply;
 - the answer "Untrusted source" to intake's Q46.
 
-It only turns on. A run directory made in strict mode holds a `strict` file, which keeps strict mode on for this and every later audit in this directory, until you delete the `strict` files. Preflight's first line lists them, with the `rm` command that removes them. To leave strict mode, delete them and unset `AUDITOR_STRICT`.
+It only turns on. A run directory made in strict mode holds a `strict` file, and a command given `--strict` writes one into a run directory it reuses. That file keeps strict mode on for this and every later audit in this directory, until you delete the `strict` files; where the volume folds case, as macOS's does by default, a `STRICT` file counts too. Preflight's first line lists them, with the `rm` command that removes them. To leave strict mode, delete them and unset `AUDITOR_STRICT`.
 
 Nothing in the repository can turn strict mode off when Claude Code starts with the strict launch line, or with `AUDITOR_STRICT=1` in managed settings. Started any other way, the repository's own settings (hooks, `env`, `CLAUDE_ENV_FILE`) apply first and can switch it off. `--strict` and the intake answer travel through the agent, so text the repository loads can talk the agent out of them; only `AUDITOR_STRICT=1` set through the launch line holds.
 
