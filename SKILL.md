@@ -150,11 +150,22 @@ Target-controlled code runs only in the execution mode in force (native by defau
 
 ## Audit Modes
 
-- **Mode 1 — FULL Repository Audit.** Complete security review of the entire codebase. → Read [OUTPUT-RULES.md](OUTPUT-RULES.md), then follow [FULL-AUDIT.md](FULL-AUDIT.md) top to bottom (discovery, per-instruction review, report via [templates/report-template.md](templates/report-template.md)).
+Pick the depth from what the user wants checked, then run its mode. A request in plain words ("quickly check this", "audit this module", "audit this before the release") picks its depth the same way.
+
+| Depth | When | Mode |
+|-------|------|------|
+| **Quick** | a branch or pull request, a first look at a repository, one function | Mode 4, Mode 6 or Mode 3 |
+| **Standard** | one module or program before it merges | Mode 1 on that path, with a scope (Step 2) |
+| **Full** | a release, or a report for someone outside the team | the [Audit Flows](#audit-flows-full-engagement-lifecycle) below, then `/auditor:re-audit` after fixes |
+
+CI is Quick run unattended: `--ci` on `/auditor:diff-audit` and `/auditor:quick-scan`. Mode 2, Mode 5, the per-finding commands (`/auditor:poc`, `/auditor:patch`, `/auditor:economic-sim`, `/auditor:triage`) and the post-incident track sit outside the depths.
+
+- **Mode 1 — Item-by-Item Audit.** A whole repository, or one path in it, with a verdict for every in-scope item. → Read [OUTPUT-RULES.md](OUTPUT-RULES.md), then follow [FULL-AUDIT.md](FULL-AUDIT.md) top to bottom (discovery, per-instruction review, report via [templates/report-template.md](templates/report-template.md)). Command `/auditor:audit [path] [--scope …]`.
 - **Mode 2 — Targeted Checklist Audit.** Review a specific domain or subset of files. → Read [OUTPUT-RULES.md](OUTPUT-RULES.md) + the relevant `checklists/` file, walk target files one at a time, record every verdict inline.
-- **Mode 3 — Single Instruction / Function Review.** Deep-dive into one handler, endpoint, or function. → Read the source completely, fill [templates/instruction-worksheet.md](templates/instruction-worksheet.md), cross-reference shared-state code.
+- **Mode 3 — Single Instruction / Function Review.** Deep-dive into one handler, endpoint, or function. → Read the source completely, fill [templates/instruction-worksheet.md](templates/instruction-worksheet.md), cross-reference shared-state code. Command `/auditor:deep-review <file> [fn]`.
 - **Mode 4 — Differential / PR-Scoped Audit.** A PR, commit range, or branch — not the whole tree. → Command `/auditor:diff-audit` (changed-set → Phase 0.5 on changed fns + 1-hop → risk-classify + git-blame removed guards → in-scope items through Rule 5b → dependency lane (checklist 11 §11.11) when a manifest or lockfile changed → `audit_<n>/PR-REPORT.md`).
 - **Mode 5 — Spec-Compliance Audit.** A spec / whitepaper / RFC is supplied and you need code-vs-spec conformance. → Command `/auditor:spec-audit` (Spec-IR requirement list → map each instruction/state field → Compliance Matrix through the Rule 5b gate).
+- **Mode 6 — Quick Triage.** A first look at a whole repository, with no checklist walk. → Command `/auditor:quick-scan` (discovery → static analysis and dependency advisories → only the CRITICAL/HIGH known vectors for the detected domains → findings with severity + `file:line`, stated as a triage pass that points to Mode 1 for full coverage).
 
 ---
 
@@ -241,14 +252,35 @@ Authoritative mapping → **Scope-Gated Loading, Step 2** (scope table) above. D
 
 ## How to Use
 
-### Full repository audit
+Pick the depth first ([Audit Modes](#audit-modes)). With the plugin, run the command; with another agent, ask in plain words.
+
+### Quick — a branch, a first look, one function
+```
+/auditor:diff-audit main..HEAD
+/auditor:quick-scan
+/auditor:deep-review programs/<your_program>/src/instructions/<file>.rs <instruction>
+```
+```
+Review what this branch changes against main using the auditor-skill
+```
+
+### Standard — one program or module, every in-scope item
+```
+/auditor:audit programs/<your_program> --scope program
+```
+```
+Audit the Solana program in programs/<your_program>/ using the auditor-skill with PROGRAM scope
+```
 ```
 Audit the entire repository using the auditor-skill with FULL scope
 ```
 
-### Program-only audit
+### Full — before a release, with a client report
 ```
-Audit the Solana program in programs/<your_program>/ using the auditor-skill with PROGRAM scope
+/auditor:audit-cycle --scope full
+```
+```
+Run the auditor-skill audit cycle on this repository and write the client report
 ```
 
 ### Specific checklist
