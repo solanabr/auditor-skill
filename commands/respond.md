@@ -147,8 +147,8 @@ Code asks about a shell read outside the working directory.
      64, one `rundir: refused: …` line), stop and show the line. Reuse an existing
      `incident_*` only after the human confirms which one, and only when
      `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check incident_<n>` prints
-     `ok incident_<n>`. A reused incident directory's `exec-mode` is an earlier
-     run's answer: ask for the mode again, as step 5 does, before a runner uses it.
+     `ok incident_<n>`. A reused incident directory's `exec-mode` stands as it is,
+     and nothing asks for the mode again (step 5).
    - For an `INC-<n>.<k>` lead, the lead names the `incident_<n>/` to reuse (naming
      it is the confirmation): adopt it under that rule; the agent works into its
      `INCIDENTS.json`, since minting a fresh directory would orphan the incident.
@@ -265,18 +265,18 @@ Code asks about a shell read outside the working directory.
    met only when `run.sh` ends with `OK: reproduced on prebuilt bytes — vulnerable
    sha256=<the step-1 hash> → [PoC-REPRODUCED]`; no usable bytes → the ceiling is
    `suspected`. Every PoC run and any build of target code (through
-   `"${CLAUDE_PLUGIN_ROOT}/scripts/runner/target.sh"`) needs the Rule 11a
-   mode: ask Q46 once. A non-interactive run cannot ask, so an earlier answer
-   can only make it stricter: it uses the stricter of the recorded mode
-   (`incident_<n>/exec-mode`, or the mode in its ledger header without it) and
-   `native`, writes that mode to `incident_<n>/exec-mode` when the file is
-   missing, `native` when no mode is recorded at all, and the report says
-   which mode ran and that Q46 was not asked again. Pass the mode to the agent
-   for the ledger header, and write the answer as one word to
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/runner/target.sh"`) runs in the
+   Rule 11a mode in force, and nothing asks Q46 for it: the runners take the
+   stricter of `incident_<n>/exec-mode`, `AUDITOR_EXEC_MODE` and strict mode,
+   native when none of them says anything, so a `native` there loosens nothing.
+   When `incident_<n>` has no `exec-mode` but its ledger header records a mode (a
+   run directory made before 7.7.0), first write that mode as one word to
    `incident_<n>/exec-mode` with the Write tool, where
-   `"${CLAUDE_PLUGIN_ROOT}/templates/poc/run.sh" --crate` reads it; the answer is
-   the human's reply, so first invoke `auditor:respond --resume 5 incident_<n>`
-   with it. Before `auditor:poc-engineer` runs, `INCIDENTS.json` must record the incident
+   `"${CLAUDE_PLUGIN_ROOT}/templates/poc/run.sh" --crate` reads it. Hand
+   `auditor:poc-engineer` `isolated` or `none` when that file says so, and
+   `native` otherwise, as `/auditor:poc` step 5 does, and have the agent record in
+   the ledger header the mode the runners' `>> execution mode:` line shows; the
+   report says which mode ran. Before `auditor:poc-engineer` runs, `INCIDENTS.json` must record the incident
    with its `id` and `root_cause_class` (`unknown` until it is known):
    `run.sh --crate` reads it, stops when it cannot, and holds a
    `supply_chain_or_ci` incident to isolated mode on its dumped bytes (Rule 11a).

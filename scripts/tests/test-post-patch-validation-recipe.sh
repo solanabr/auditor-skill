@@ -489,7 +489,7 @@ for f in references/orchestration/boundary-map.md docs/power-tools.md; do
 done
 
 # ---- the gate's input: intake writes <R>/exec-mode -----------------------------------------------------------------
-if grep -qF 'Also write the answer with the Write tool, as one word, `isolated` or `native`, to `audit_<n>/exec-mode`' "$ROOT/commands/intake.md" \
+if grep -qF 'Also write the answer with the Write tool, as one word, `native`, `isolated` or `none`, to `audit_<n>/exec-mode`' "$ROOT/commands/intake.md" \
    && grep -qF 'and `audit_<n>/exec-mode` holds `native`' "$ROOT/commands/intake.md" \
    && grep -qF 'the answer is also written as one word to audit_<n>/exec-mode, where' "$ROOT/templates/intake.md" \
    && grep -qF 'templates/poc/run.sh --crate reads it (the stricter of it, AUDITOR_EXEC_MODE and strict mode)' "$ROOT/templates/intake.md"
