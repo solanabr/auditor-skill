@@ -531,6 +531,7 @@ Under `claude -p` and in CI, export `AUDITOR_STRICT=1` in the job's environment 
 | `git-ro.sh blame`: a `blame.ignoreRevsFile` in the repository | honoured, from a copy of that file | refused |
 | `git-ro.sh`, `target.sh`: a git without the May-2024 clone fixes | a note on every read; `copy` makes the same bare copy through read-only plumbing, and `target.sh` copies the commit's tracked files that way, never with `git clone` | `copy` refused (exit 69); `target.sh` stops (exit 3) |
 | `git-ro.sh copy`: a partial clone | copied through plumbing when every file of `HEAD` is in it, with a note, and marked a partial clone itself; stops (exit 3) when it lacks files of `HEAD` | stops (exit 3) |
+| `target.sh`: a partial clone | when every file of the revision is in it, the commit's tracked files are copied through git's read-only plumbing, fetching nothing, with a note; a blocker (exit 3) when it lacks files of the revision | blocker (exit 3) |
 | `rundir.sh new`: tracked paths under `audit_*` or `incident_*` | the next free name, and a note per path | refused |
 | `rundir.sh new`: the next name held by a file, a link or a folder spelled in other letters | passed over, with a note that names it as the disk spells it | refused |
 | `rundir.sh`, the tools that write in a run directory: a link inside it that resolves inside it; git cannot tell whether it is tracked | both accepted, the second when its `.gitignore` holds `*` | refused |
