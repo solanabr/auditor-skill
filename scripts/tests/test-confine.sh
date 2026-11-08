@@ -450,7 +450,39 @@ check "... written ./audit_1" out_is audit_1
 lib "$WT" 'confine_rundir audit_2 R'
 check "a run directory without a .gitignore is refused" refused 'R has no .gitignore holding exactly *: audit_2'
 lib "$WT" 'confine_rundir audit_3 R'
-check "a run directory holding a symbolic link is refused" refused 'R holds a symbolic link: audit_3'
+check "a run directory holding a symbolic link out of it is refused" refused 'R holds a symbolic link: audit_3'
+AUDITOR_STRICT=1 lib "$WT" 'confine_rundir audit_3 R'
+check "... in strict mode too" refused 'R holds a symbolic link: audit_3'
+# In default mode a link that resolves inside the run directory, every link on the way followed, passes
+# (CONF-15); strict mode refuses any link. One that leads nowhere, in a loop, or out through another
+# link inside still counts as out.
+mkdir -p "$WT/audit_8/poc/a/b"
+printf '*\n' > "$WT/audit_8/.gitignore"
+ln -s a "$WT/audit_8/poc/latest"
+ln -s ../../.gitignore "$WT/audit_8/poc/a/gi"
+ln -s latest/b "$WT/audit_8/poc/chain"
+ln -s .. "$WT/audit_8/poc/up"
+lib "$WT" 'confine_rundir audit_8 R; printf "%s" "$CONFINE_RUN"'
+check "a run directory whose links all resolve inside it passes in default mode" out_is audit_8
+AUDITOR_STRICT=1 lib "$WT" 'confine_rundir audit_8 R'
+check "... and is refused in strict mode" refused 'R holds a symbolic link: audit_8'
+for bad in dangling:nowhere loop:loop out-through:up/.. out-abs:"$T/outside"; do
+  ln -s "${bad#*:}" "$WT/audit_8/poc/${bad%%:*}"
+  lib "$WT" 'confine_rundir audit_8 R'
+  check "... but one holding a link that leads ${bad%%:*} is refused in default mode too" refused 'R holds a symbolic link: audit_8'
+  rm "$WT/audit_8/poc/${bad%%:*}"
+done
+# When git cannot tell whether the run directory is tracked, its .gitignore of * is enough in default
+# mode (CONF-16); strict mode refuses. A git that fails with no answer stands for that.
+mkdir -p "$T/cantell"
+printf '#!/bin/sh\necho "fatal: something else" >&2\nexit 1\n' > "$T/cantell/git"
+chmod +x "$T/cantell/git"
+LIB_PATH="$T/cantell:$PATH" lib "$WT" 'confine_rundir audit_1 R; printf "%s" "$CONFINE_RUN"'
+check "a run directory git cannot tell about passes in default mode on its .gitignore of *" out_is audit_1
+LIB_PATH="$T/cantell:$PATH" lib "$WT" 'confine_rundir audit_2 R'
+check "... which it still needs" refused 'R has no .gitignore holding exactly *: audit_2'
+AUDITOR_STRICT=1 LIB_PATH="$T/cantell:$PATH" lib "$WT" 'confine_rundir audit_1 R'
+check "... and strict mode refuses it" refused 'git cannot tell whether R is tracked: audit_1'
 lib "$WT" 'confine_rundir audit_4 R'
 check "a .gitignore that lets a file through is refused" refused 'R has no .gitignore holding exactly *: audit_4'
 lib "$WT" 'confine_rundir audit_5 R'

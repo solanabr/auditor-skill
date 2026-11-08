@@ -11,8 +11,8 @@
 #     dropped, passes through no symbolic link and resolves inside WT. An existing final object is a
 #     regular file or a directory.
 #   - A run directory is audit_<n> or incident_<n> (n of 1 to 6 digits): a real directory directly in
-#     WT, holding no symbolic link, tracked by no repository in any letter case, whose .gitignore holds
-#     exactly "*".
+#     WT, holding no symbolic link (in default mode, none that resolves outside it), tracked by no
+#     repository in any letter case, whose .gitignore holds exactly "*".
 #   - A new file is created with noclobber and written through the descriptor opened at creation; a
 #     new directory is created with plain mkdir, never -p.
 # confine_init also sets LC_ALL=C and umask 077 and unsets CDPATH, BASH_ENV and ENV, and the variables a
@@ -31,8 +31,9 @@
 # A tool that contacts an outside service records it in <R>/disclosures.tsv (OUTPUT-RULES.md Rule 11b;
 # the format is at confine_disclose).
 # Needs bash >= 3.2 and, on the cleaned PATH, env, git, find, wc and cat (grep, when there, saves a git
-# call); confine_scratch needs mktemp, hgit_tree mktemp and rmdir (and /bin/sh after a Ctrl-C),
-# confine_service sed, confine_disclose date, and confine_b58_bytes python3.
+# call); confine_scratch needs mktemp, hgit_tree mktemp and rmdir (and /bin/sh after a Ctrl-C; rm for a
+# file CONFINE_TREE_COPY places), confine_service sed, confine_disclose date, and confine_b58_bytes and
+# confine_links_inside python3.
 
 # confine_refuse <reason>: the refusal line, then exit 64 (or the status confine_init was given). A tool
 # may set CONFINE_HINT around a check; the line then ends with "; <hint>". confine_init clears one the
@@ -1111,7 +1112,9 @@ confine_ignore_all() { # confine_ignore_all <file>: status 0 when <file> is a re
 }
 
 # confine_rundir <R> <what>: refuse <R> unless it is a run directory (see the top). Sets CONFINE_RUN to
-# its name without a leading ./.
+# its name without a leading ./. In default mode (Rule 11f) a symbolic link in it passes when it resolves
+# to a path inside it (confine_links_inside), and when git cannot tell whether it is tracked, its
+# .gitignore of * is enough. Strict mode refuses both.
 confine_rundir() {
   local r=${1#./} what=$2 shown links listed
   confine_shown "$1"
@@ -1121,13 +1124,48 @@ confine_rundir() {
   [ ! -L "$CONFINE_WT/$r" ] || confine_refuse "$what is a symbolic link: $shown"
   [ -d "$CONFINE_WT/$r" ] || confine_refuse "$what is not an existing directory: $shown"
   links=$(find "$CONFINE_WT/$r" -type l -print 2>/dev/null) || confine_refuse "$what cannot be fully read: $shown"
-  [ -z "$links" ] || confine_refuse "$what holds a symbolic link: $shown"
+  if [ -n "$links" ]; then
+    [ "$CONFINE_STRICT" != 1 ] && confine_links_inside "$CONFINE_WT/$r" || confine_refuse "$what holds a symbolic link: $shown"
+  fi
   # In this shell, so a file git would wait on is refused for what it is, and confine_tracked finds it checked.
   CONFINE_CEILING='' confine_git_files "$CONFINE_WT"
-  listed=$(confine_tracked "$r") || confine_refuse "git cannot tell whether $what is tracked: $shown"
-  [ -z "$listed" ] || confine_refuse "$what is tracked by git: $shown"
+  if listed=$(confine_tracked "$r"); then
+    [ -z "$listed" ] || confine_refuse "$what is tracked by git: $shown"
+  else
+    [ "$CONFINE_STRICT" != 1 ] || confine_refuse "git cannot tell whether $what is tracked: $shown"
+  fi
   confine_ignore_all "$CONFINE_WT/$r/.gitignore" || confine_refuse "$what has no .gitignore holding exactly *: $shown"
   CONFINE_RUN=$r
+}
+
+# confine_links_inside <directory>: status 0 when every symbolic link below <directory> resolves, every
+# link on its way followed, to a path that exists and lies inside <directory>, judged by identity along
+# its ancestors as confine_inside judges; status 1 for a link that resolves outside, to nothing, or in a
+# loop, and when python3 -I cannot run (from /, so nothing in the working directory picks it).
+confine_links_inside() {
+  (cd / && exec python3 -I -c 'import os, sys
+top = os.stat(sys.argv[1])
+def inside(p):
+    while True:
+        try:
+            s = os.stat(p)
+        except OSError:
+            return False
+        if (s.st_dev, s.st_ino) == (top.st_dev, top.st_ino):
+            return True
+        q = os.path.dirname(p)
+        if q == p:
+            return False
+        p = q
+def stop(e):
+    sys.exit(1)
+for d, dirs, files in os.walk(sys.argv[1], onerror=stop):
+    for n in dirs + files:
+        p = os.path.join(d, n)
+        if os.path.islink(p):
+            r = os.path.realpath(p)
+            if not os.path.exists(r) or not inside(r):
+                sys.exit(1)' "$1") 2>/dev/null
 }
 
 # ---- writes --------------------------------------------------------------------------------------------

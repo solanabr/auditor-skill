@@ -11,8 +11,9 @@
 #
 # A run directory <R> is audit_<n> or incident_<n> (n of 1 to 6 digits), directly in the working
 # directory: a real directory, holding no symbolic link, tracked by no repository in any letter case,
-# whose .gitignore holds exactly "*". check verifies exactly that; reuse a directory only after the
-# human confirms which one.
+# whose .gitignore holds exactly "*". check verifies exactly that (scripts/lib/confine.sh confine_rundir:
+# in default mode a link that resolves inside it passes, and so does one git cannot tell about); reuse a
+# directory only after the human confirms which one.
 #
 # new takes the highest n over real directories named <kind>_<n>, plus one. It refuses when the
 # repository tracks a path under a top-level directory named audit_* or incident_* (or a submodule of
@@ -27,8 +28,8 @@
 # or INC-<1-6 digits>.<1-4 digits> and <k> is 1 to 4 digits.
 #
 # store prints .audit-memory/audit.db when the store is usable: a real directory holding no symbolic
-# link, tracked in no letter case, whose .gitignore holds exactly "*", and whose audit.db, if present, is
-# a regular file. It prints "absent" when .audit-memory does not exist and nothing is tracked there
+# link (in default mode, none that resolves outside it, as for a run directory), tracked in no letter
+# case, whose .gitignore holds exactly "*", and whose audit.db, if present, is a regular file. It prints "absent" when .audit-memory does not exist and nothing is tracked there
 # (audit-mem init creates it). Otherwise it refuses, and the flow uses <R>/audit-mem.db instead. Whether
 # you created the store yourself stays your judgement.
 #
@@ -156,7 +157,9 @@ cmd_store() {
   [ ! -L "$WT/$d" ] || refuse "$d is a symbolic link; use <R>/audit-mem.db"
   [ -d "$WT/$d" ] || refuse "$d is not a directory; use <R>/audit-mem.db"
   links=$(find "$WT/$d" -type l -print 2>/dev/null) || refuse "$d cannot be fully read; use <R>/audit-mem.db"
-  [ -z "$links" ] || refuse "$d holds a symbolic link; use <R>/audit-mem.db"
+  if [ -n "$links" ]; then
+    [ "$CONFINE_STRICT" != 1 ] && confine_links_inside "$WT/$d" || refuse "$d holds a symbolic link; use <R>/audit-mem.db"
+  fi
   confine_ignore_all "$WT/$d/.gitignore" || refuse "$d has no .gitignore holding exactly *; use <R>/audit-mem.db"
   if [ -e "$WT/$d/audit.db" ] && [ ! -f "$WT/$d/audit.db" ]; then
     refuse "$d/audit.db is not a regular file; use <R>/audit-mem.db"

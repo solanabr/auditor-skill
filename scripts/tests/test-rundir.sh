@@ -173,7 +173,15 @@ mkdir -p "$W/audit_2/poc" "$W/audit_3" "$W/audit_4" "$W/audit_5" "$W/audit_6"
 printf '*\n' > "$W/audit_2/.gitignore"
 ln -s "$T" "$W/audit_2/poc/out"
 run "$W" check audit_2
-check "check refuses a run directory that holds a symbolic link" refused 'the run directory holds a symbolic link: audit_2'
+check "check refuses a run directory that holds a symbolic link out of it" refused 'the run directory holds a symbolic link: audit_2'
+AUDITOR_STRICT=1 run "$W" check audit_2
+check "... in strict mode too" refused 'the run directory holds a symbolic link: audit_2'
+mkdir -p "$W/audit_9/poc/a"; printf '*\n' > "$W/audit_9/.gitignore"; ln -s a "$W/audit_9/poc/latest"
+run "$W" check audit_9
+check "check takes a run directory whose link resolves inside it in default mode (CONF-15)" out_is 'ok audit_9'
+AUDITOR_STRICT=1 run "$W" check audit_9
+check "... and strict mode refuses it" refused 'the run directory holds a symbolic link: audit_9'
+rm -r "$W/audit_9"
 run "$W" check audit_3
 check "check refuses a run directory without a .gitignore" refused 'the run directory has no .gitignore holding exactly *: audit_3'
 printf '*\n!REPORT.md\n' > "$W/audit_4/.gitignore"
@@ -288,8 +296,14 @@ run "$S" store
 check "... with the database present" out_is .audit-memory/audit.db
 ln -s "$T" "$S/.audit-memory/link"
 run "$S" store
-check "store refuses a store that holds a symbolic link" refused '.audit-memory holds a symbolic link; use <R>/audit-mem.db'
+check "store refuses a store that holds a symbolic link out of it" refused '.audit-memory holds a symbolic link; use <R>/audit-mem.db'
 rm "$S/.audit-memory/link"
+ln -s audit.db "$S/.audit-memory/latest"
+run "$S" store
+check "in default mode store takes a store whose link resolves inside it" out_is .audit-memory/audit.db
+AUDITOR_STRICT=1 run "$S" store
+check "... and strict mode refuses it" refused '.audit-memory holds a symbolic link; use <R>/audit-mem.db'
+rm "$S/.audit-memory/latest"
 printf '*\n!audit.db\n' > "$S/.audit-memory/.gitignore"
 run "$S" store
 check "store refuses a store whose .gitignore lets a file through" refused '.audit-memory has no .gitignore holding exactly *; use <R>/audit-mem.db'
