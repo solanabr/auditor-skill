@@ -919,7 +919,9 @@ confine_repo_above() {
   confine_phys "$t" && [ ! "$CONFINE_PHYS" -ef "$CONFINE_WT" ] && confine_inside "$CONFINE_WT" "$CONFINE_PHYS" &&
     [ "$CONFINE_PHYS/${p%/}" -ef "$CONFINE_WT" ] || return 1
   t=$CONFINE_PHYS
-  CONFINE_CEILING='' hgit "$CONFINE_WT" ls-files --error-unmatch -- . >/dev/null 2>&1 || return 1
+  # One tracked path is enough: the reader stops after the first line, and git with it.
+  v=$(CONFINE_CEILING='' hgit "$CONFINE_WT" ls-files -- . 2>/dev/null </dev/null | { IFS= read -r v && printf x; })
+  [ "$v" = x ] || return 1
   if [ "$CONFINE_STRICT" = 1 ]; then
     v=${p%/}
     while :; do case "$v" in */*) v=${v#*/}; up=$up/.. ;; *) break ;; esac; done
