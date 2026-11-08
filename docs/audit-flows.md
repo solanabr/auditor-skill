@@ -136,7 +136,7 @@ Verification-verb discipline: a client's "we fixed it" is never silently promote
 CI runs Quick on every pull request, with nobody at the keyboard. Copy `templates/ci/auditor-pr.yml` to `.github/workflows/` and follow [ci.md](ci.md). It runs two jobs:
 
 - **tools**, on every pull request, forks included: the bundled analyzers (semgrep, `cargo audit`, `npm audit`), with no model and no secrets.
-- **review**, on pull requests from your repository's own branches: `/auditor:diff-audit --ci` on the pull request's changes, in strict mode, with nothing from the pull request built or run.
+- **review**, on pull requests from your repository's own branches, other than Dependabot's: `/auditor:diff-audit --ci` on the pull request's changes, in strict mode, with nothing from the pull request built or run.
 
 `--ci` on `/auditor:diff-audit` and `/auditor:quick-scan` asks nothing, writes `audit_<n>/findings.json`, and ends with one line, `auditor: verdict: pass|fail (threshold N, analyzers run: …)`. The verdict is fail when a finding of severity N or more counts (`--fail-on <N>`, 7 when not given; `[UNCONFIRMED]` and `[PARTIAL]` findings do not count), when an analyzer the run called for did not run, or when the run stopped early ([What the verdict means](ci.md#what-the-verdict-means)). On a public repository the job publishes that line only: the details stay on the runner, you read them by running the same command in a clone of your own, and the job never fails only because no private channel exists (`OUTPUT-RULES.md` Rule 11d; [Public repositories](ci.md#public-repositories)). For a scheduled scan of the default branch, run `/auditor:quick-scan --ci`.
 
