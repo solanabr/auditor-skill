@@ -1,0 +1,291 @@
+# auditor-skill on every pull request. Copy this file to .github/workflows/auditor-pr.yml and set it up as
+# docs/ci.md (Setup) says: AUDITOR_SKILL_COMMIT below, and an ANTHROPIC_API_KEY repository secret.
+#
+# Two jobs:
+#   tools   every pull request, forks included. It holds no secret: the bundled scripts run semgrep and the
+#           dependency audits, without Claude.
+#   review  pull requests from branches of this repository only, the ones this trigger gives secrets to.
+#           Claude Code runs /auditor:diff-audit --ci on the pull request's changes, in strict mode, and
+#           builds and runs nothing from them.
+#
+# The job logs and summaries show pass or fail only (OUTPUT-RULES.md Rule 11d): no finding, count or path. To
+# read the details, run the same check in your own clone; each job's summary says how. What the analyzers and
+# the review wrote stays on the runner, which GitHub discards after the job.
+#
+# Keep the trigger as it is. Its privileged variants (the target form of pull_request, and the run-completion
+# trigger) would hand a fork's pull request this repository's secrets.
+name: auditor
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # A pull request's content is an untrusted source: strict mode (Rule 11f), and no build or test of it.
+  AUDITOR_STRICT: "1"
+  AUDITOR_EXEC_MODE: none
+  # auditor-skill at one commit: the full commit id of the release tag you install (docs/ci.md, Setup).
+  AUDITOR_SKILL_COMMIT: "0000000000000000000000000000000000000000"
+  # The review fails on a finding of this severity or more, 1 to 10.
+  AUDITOR_FAIL_ON: "7"
+  # The most one review may spend, in US dollars. A review that reaches it fails.
+  AUDITOR_MAX_BUDGET_USD: "5"
+  # The tools job: the semgrep rulesets it runs, and the analyzer releases it installs.
+  SEMGREP_RULESETS: "p/rust p/trailofbits"
+  SEMGREP_VERSION: "1.117.0"
+  CARGO_AUDIT_VERSION: "0.22.2"
+
+jobs:
+  tools:
+    name: auditor tools (no secrets)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the pull request (GitHub's merge commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - name: Fetch auditor-skill at the pinned commit
+        run: |
+          set -euo pipefail
+          if [ "$AUDITOR_SKILL_COMMIT" = 0000000000000000000000000000000000000000 ]; then
+            echo "::error::set AUDITOR_SKILL_COMMIT to the commit of the auditor-skill release you use (docs/ci.md)"; exit 1
+          fi
+          [[ $AUDITOR_SKILL_COMMIT =~ ^[0-9a-f]{40}$ ]] || { echo "::error::AUDITOR_SKILL_COMMIT is not a full commit id"; exit 1; }
+          A="$RUNNER_TEMP/auditor-skill"
+          git init -q "$A"
+          git -C "$A" fetch -q --depth 1 https://github.com/solanabr/auditor-skill.git "$AUDITOR_SKILL_COMMIT"
+          git -C "$A" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          [ "$(git -C "$A" rev-parse HEAD)" = "$AUDITOR_SKILL_COMMIT" ] || { echo "::error::auditor-skill is not at AUDITOR_SKILL_COMMIT"; exit 1; }
+
+      # From a directory outside the checkout, so no config the pull request ships (a .cargo/config.toml, say)
+      # applies to the installs.
+      - name: Install semgrep and cargo-audit
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          pipx install "semgrep==$SEMGREP_VERSION"
+          cargo install cargo-audit --locked --version "$CARGO_AUDIT_VERSION"
+
+      - name: Run the bundled analyzers (this log shows which ran, and pass or fail)
+        run: |
+          set +e -u -o pipefail   # each status is read where it matters
+          A="$RUNNER_TEMP/auditor-skill"
+          L="$RUNNER_TEMP/auditor-tools"   # what the analyzers print, kept on the runner
+          mkdir -p "$L"
+          ran="" notrun="" results=0 k=0
+          # analyze NAME COMMAND...: one analyzer call. sast.sh and deps.sh exit 0 with nothing found, 1 with
+          # results, 3 on a blocker and 64 on a refusal; only those last two say why, on one stderr line.
+          analyze() {
+            local name=$1 rc=0 why
+            shift
+            k=$((k + 1))
+            "$@" > "$L/$k.out" 2> "$L/$k.err" || rc=$?
+            case "$rc" in
+              0) ran="$ran $name" ;;
+              1) ran="$ran $name"; results=1 ;;
+              *) notrun="$notrun $name"
+                 why=$(grep -E -m 1 '^(sast|deps): (blocker|refused): ' "$L/$k.err" | cut -c 1-200)
+                 echo "$name did not run (exit $rc): ${why:-no reason given}" ;;
+            esac
+          }
+          # words W...: the words once each, joined by ", ", or none
+          words() {
+            local seen=" " out="" w
+            for w in "$@"; do
+              case "$seen" in *" $w "*) continue ;; esac
+              seen="$seen$w " out="${out:+$out, }$w"
+            done
+            echo "${out:-none}"
+          }
+          summary() { # summary LINE: the closing line, and where the details are
+            echo "$1"
+            { echo "$1"; echo
+              echo "This summary shows pass or fail only. To see what the analyzers found, run them on the same commit in your own clone (docs/ci.md, Fork pull requests)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+          if ! R=$("$A/scripts/rundir.sh" new audit 2> "$L/rundir.err"); then
+            why=$(grep -E -m 1 '^rundir: refused: ' "$L/rundir.err" | cut -c 1-200)
+            echo "the run directory could not be made: ${why:-no reason given}"
+            summary "auditor: tools: fail (analyzers run: none; stopped: run-directory)"
+            exit 1
+          fi
+          sets=()
+          set -f
+          for s in $SEMGREP_RULESETS; do sets+=(--ruleset "$s"); done
+          set +f
+          analyze semgrep "$A/scripts/runner/sast.sh" semgrep --run "$R" --path . "${sets[@]}"
+          # each Cargo.lock, and each package.json beside the lockfile npm audit reads, outside .git, the run
+          # directory and the build and install folders
+          while IFS= read -r -d '' f; do
+            analyze cargo-audit "$A/scripts/runner/deps.sh" cargo-audit --run "$R" --manifest "${f#./}"
+          done < <(find . \( -name .git -o -path "./$R" -o -name target -o -name node_modules \) -prune -o -type f -name Cargo.lock -print0)
+          while IFS= read -r -d '' f; do
+            p=${f#./}
+            d=${p%package.json}
+            if [ -f "${d}package-lock.json" ]; then lock=package-lock.json
+            elif [ -f "${d}npm-shrinkwrap.json" ]; then lock=npm-shrinkwrap.json
+            else echo "npm-audit: no package-lock.json or npm-shrinkwrap.json beside $p, so its dependencies are not audited"; continue
+            fi
+            analyze npm-audit "$A/scripts/runner/deps.sh" npm-audit --run "$R" --manifest "$p" --manifest "$d$lock"
+          done < <(find . \( -name .git -o -path "./$R" -o -name node_modules \) -prune -o -type f -name package.json -print0)
+          if [ -z "$notrun" ] && [ "$results" = 0 ]; then v=pass; else v=fail; fi
+          line="auditor: tools: $v (analyzers run: $(words $ran)"
+          if [ -n "$notrun" ]; then line="$line; not run: $(words $notrun)"; fi
+          summary "$line)"
+          [ "$v" = pass ]
+
+  review:
+    name: auditor review (same-repository pull requests)
+    # A fork's pull request gets no secret on this trigger, so this job runs for this repository's branches only.
+    # GitHub then shows it as skipped, which a required check counts as passed (docs/ci.md, Fork pull requests).
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    needs: tools
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out the pull request (GitHub's merge commit, full history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          submodules: false
+          persist-credentials: false
+
+      - name: Fetch auditor-skill at the pinned commit
+        run: |
+          set -euo pipefail
+          if [ "$AUDITOR_SKILL_COMMIT" = 0000000000000000000000000000000000000000 ]; then
+            echo "::error::set AUDITOR_SKILL_COMMIT to the commit of the auditor-skill release you use (docs/ci.md)"; exit 1
+          fi
+          [[ $AUDITOR_SKILL_COMMIT =~ ^[0-9a-f]{40}$ ]] || { echo "::error::AUDITOR_SKILL_COMMIT is not a full commit id"; exit 1; }
+          A="$RUNNER_TEMP/auditor-skill"
+          git init -q "$A"
+          git -C "$A" fetch -q --depth 1 https://github.com/solanabr/auditor-skill.git "$AUDITOR_SKILL_COMMIT"
+          git -C "$A" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          [ "$(git -C "$A" rev-parse HEAD)" = "$AUDITOR_SKILL_COMMIT" ] || { echo "::error::auditor-skill is not at AUDITOR_SKILL_COMMIT"; exit 1; }
+
+      # Claude Code at the version auditor-skill's own plugin-validate workflow pins, each package checked against
+      # its lockfile's integrity hash and no install script run; then the bundled Rust tools, from their own
+      # lockfile. Both from directories outside the checkout, so no config the pull request ships applies.
+      - name: Install Claude Code and build auditor-skill's Rust tools
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          A="$RUNNER_TEMP/auditor-skill"
+          mkdir -p claude-code
+          cp "$A/.github/plugin-validate/package.json" "$A/.github/plugin-validate/package-lock.json" claude-code/
+          (cd claude-code && npm ci --ignore-scripts --no-audit --no-fund)
+          (cd "$A/tools/auditor-tools" && CARGO_TERM_COLOR=never cargo build --release --locked)
+
+      # Under --setting-sources user and --strict-mcp-config none of this would load, but strict mode's preflight
+      # refuses a tree that ships it (OUTPUT-RULES.md Rule 11f). The diff the review reads still lists changes to
+      # these files.
+      - name: Remove the pull request's Claude Code config from this checkout
+        run: |
+          set -euo pipefail
+          find . -path ./.git -prune -o \( -iname .claude -o -iname .mcp.json -o -iname .claude.json \) -prune -exec rm -rf -- {} +
+
+      - name: Review the pull request with Claude Code (strict mode, nothing built)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DISABLE_AUTOUPDATER: "1"
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+        run: |
+          set +e -u -o pipefail   # each status is read where it matters
+          A="$RUNNER_TEMP/auditor-skill"
+          O="$RUNNER_TEMP/auditor-review"   # what the review returns, kept on the runner
+          mkdir -p "$O" || exit 1
+          case "$AUDITOR_FAIL_ON" in [1-9]|10) ;; *) echo "::error::AUDITOR_FAIL_ON must be a whole number from 1 to 10"; exit 1 ;; esac
+          [[ $AUDITOR_MAX_BUDGET_USD =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "::error::AUDITOR_MAX_BUDGET_USD must be a number of dollars"; exit 1; }
+          # the run directories already here, which the review's result may not name
+          for d in audit_*; do if [ -e "$d" ] || [ -L "$d" ]; then printf '%s\n' "$d"; fi; done > "$O/before.txt"
+          # HEAD is the merge commit; its first parent is the base the pull request merges into
+          git rev-parse --verify -q 'HEAD^2' > /dev/null || { echo "::error::HEAD is not the pull request's merge commit"; exit 1; }
+          base=$(git rev-parse 'HEAD^1') && head=$(git rev-parse HEAD) || exit 1
+          printf '%s\n%s\n' "$base" "$head" > "$O/range.txt"
+          # Rule 11f: preflight's first line must name strict mode. Checked here first, before anything costs money;
+          # a refusal names the path it stopped at, which the pull request holds.
+          "$A/scripts/preflight.sh" > "$O/preflight.out" 2> "$O/preflight.err"
+          prc=$?
+          first=$(sed -n 1p "$O/preflight.out")
+          if [ "$prc" != 0 ] || [ "${first#preflight: mode: strict }" = "$first" ]; then
+            echo "preflight (exit $prc): $(sed -n 1p "$O/preflight.err" | cut -c 1-300)"
+            : > "$O/preflight-stopped"; exit 0
+          fi
+          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then : > "$O/no-key"; exit 0; fi
+          case "$(uname -m)" in
+            x86_64) platform=linux-x64 ;;
+            aarch64|arm64) platform=linux-arm64 ;;
+            *) echo "::error::no Claude Code package for $(uname -m)"; exit 1 ;;
+          esac
+          bin="$RUNNER_TEMP/claude-code/node_modules/@anthropic-ai/claude-code-$platform"
+          [ -x "$bin/claude" ] || { echo "::error::no claude binary in $bin"; exit 1; }
+          PATH="$bin:$PATH"
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/claude-config"
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+          # its exit status is not the verdict: the next step reads what it returned
+          claude -p "/auditor:diff-audit $base..$head --ci --fail-on $AUDITOR_FAIL_ON" \
+            --plugin-dir "$A" --setting-sources user --strict-mcp-config \
+            --max-budget-usd "$AUDITOR_MAX_BUDGET_USD" --output-format json \
+            --json-schema "$(cat "$A/templates/ci/verdict.schema.json")" \
+            < /dev/null > "$O/result.json" 2> "$O/claude.log"
+          exit 0
+
+      # The step that decides: it exits 0 only when templates/ci/verdict.jq finds the checked result and the run's
+      # findings.json agreeing on pass.
+      - name: Verdict (pass or fail only)
+        if: ${{ !cancelled() }}
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e -u -o pipefail   # each status is read where it matters
+          A="$RUNNER_TEMP/auditor-skill"
+          O="$RUNNER_TEMP/auditor-review"
+          T=$AUDITOR_FAIL_ON
+          base=$(sed -n 1p "$O/range.txt" 2> /dev/null) head=$(sed -n 2p "$O/range.txt" 2> /dev/null)
+          [[ $base =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || base=""
+          [[ $head =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || head=""
+          [[ $PR_NUMBER =~ ^[0-9]+$ ]] || PR_NUMBER="<number>"
+          R=/dev/null F=/dev/null problem=""
+          if [ -e "$O/preflight-stopped" ]; then problem="the review did not run: preflight refused this tree, or named no strict mode (the review step's log says which)"
+          elif [ -e "$O/no-key" ]; then problem="the review did not run: this run has no ANTHROPIC_API_KEY (docs/ci.md, Setup)"
+          elif [ ! -s "$O/result.json" ]; then problem="the review returned no result"
+          else
+            R="$O/result.json"
+            run=$(jq -r '.structured_output.run | if type == "number" and . == floor and . >= 1 and . < 1000000 then tostring else empty end' "$R" 2> /dev/null)
+            if [ -n "$run" ]; then
+              d="audit_$run"
+              if grep -qxF -- "$d" "$O/before.txt"; then problem="the run directory its result names was there before the review"
+              elif [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/findings.json" ] && [ ! -L "$d/findings.json" ]; then F="$d/findings.json"
+              fi
+            fi
+          fi
+          line=$(jq -n -r --slurpfile result "$R" --slurpfile findings "$F" --argjson threshold "$T" \
+            --arg command diff-audit --arg mode strict --arg base "$base" --arg head "$head" --arg problem "$problem" \
+            -f "$A/templates/ci/verdict.jq" 2> /dev/null)
+          case "$line" in
+            "auditor: verdict: "*) ;;
+            *) line="auditor: verdict: fail (threshold $T, analyzers run: unknown; the review's result could not be read)" ;;
+          esac
+          # SARIF 2.1.0, for an upload step of your own on a private repository (docs/ci.md); on a public one, add none
+          if [ "$F" != /dev/null ]; then
+            jq -f "$A/templates/ci/findings-to-sarif.jq" "$F" > "$O/findings.sarif" 2> /dev/null \
+              || echo "auditor: note: the findings file could not be turned into SARIF"
+          fi
+          echo "$line"
+          {
+            echo "$line"
+            echo
+            echo "This summary shows pass or fail only. To read the review of pull request #$PR_NUMBER, run"
+            echo "\`/auditor:diff-audit ${base:-<base>}..${head:-<head>}\` in Claude Code, in a clone of your own at its"
+            echo "merge commit ${head:-<head>} (docs/ci.md, Public repositories)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          case "$line" in "auditor: verdict: pass ("*) exit 0 ;; *) exit 1 ;; esac
