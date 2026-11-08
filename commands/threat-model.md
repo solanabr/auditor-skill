@@ -68,7 +68,7 @@ Put `--network` in place of `--offline` only when the user passed an `https://` 
 In default mode the collector reads a partial clone for what it holds; its first stderr line is a `collect.sh: note:` that says so, which goes into Coverage & Limitations as it stands. In strict mode it exits 3 there instead: collect from a full copy you control (`OUTPUT-RULES.md` Rules 11c and 11f).
 
 Collector flags (`references/audit-lifecycle/threat-model-bootstrap.md` §2 has the table and exit statuses):
-- The mode, as the first argument: `--detect`, `--offline` or `--network`. Then `--repo <dir>` (the target, at its repository's top level; in `--detect` and `--offline` a path inside the working directory, `.` when the audit runs in the target) and `--out audit_<n>/bootstrap`: required. Each option once.
+- The mode, as the first argument: `--detect`, `--offline` or `--network`. Then `--repo <dir>` (the target, at its repository's top level; in `--detect` and `--offline` a path inside the working directory, `.` when the audit runs in the target or in a subdirectory of it, which default mode reads as git does from there and strict mode refuses) and `--out audit_<n>/bootstrap`: required. Each option once.
 - `--pin <rev>`: the commit to mine (default `HEAD`); pass the intake pin.
 - `--paths <pathspec>` / `--parent-paths <pathspec>`: target and parent pathspecs, repeatable.
 - `--parent <https-url|dir>`: the fork parent.
