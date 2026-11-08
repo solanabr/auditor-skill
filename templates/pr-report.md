@@ -54,8 +54,8 @@ SC-059..062, and how many changed packages were left without an artifact diff. O
   changed code and its 1-hop neighbours; deep-review, one unit.
 - The corpus this run read: each checklist section and known-vector file, by id, and any selected file the Read
   tool could not open, so a reader can tell what each verdict rests on. For the vectors, also the index rows the
-  command's rule selected and those it left out, by id, so a reader can check the selection against
-  `known-vectors/INDEX.md`.
+  command's rule selected and those it left out, by id, each left-out row with its reason, so a reader can check
+  the selection against `known-vectors/INDEX.md`.
 - Outside services (Rule 11b): each row of `audit_<n>/disclosures.tsv`. A tool adds its row before its first
   request to that service, so a row says what the tool was set to send, not that it went out: write that it was
   sent where the tool's own output shows the request, that nothing went out where the output shows the tool used

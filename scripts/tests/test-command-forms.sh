@@ -1271,13 +1271,12 @@ commands/diff-audit.md	Run no `cd` in this session, not even before a plain `gre
 commands/deep-review.md	Run no `cd` in this session, not even before a plain `grep`
 commands/deep-review.md	If you start an agent, set no model for it
 commands/quick-scan.md	Judge no vector by its index row alone
-commands/quick-scan.md	First, before the first vector Read, write the kept list as text in a message, not only in your thinking: the id of every row you keep.
-commands/quick-scan.md	Then read every kept file whole, with no line limit, about ten in each message, before you give any vector verdict
-commands/quick-scan.md	before you start the report, check that list against the files you read, and read any you missed
-commands/quick-scan.md	Coverage & Limitations gives the same list, and the ids of the rows of severity 7 or more in those sections that you left out
-commands/diff-audit.md	Before the first vector Read, write the selected list as text in a message, not only in your thinking: the id of every row you selected.
+commands/quick-scan.md	read every kept file whole, with no line limit, about ten in each message, before you give any vector verdict
+commands/quick-scan.md	before you start the report, check the files you read against the rows you kept, and read any you missed
+commands/quick-scan.md	Coverage & Limitations lists the id of every row you kept, and of every row of severity 7 or more in those sections that you left out, with its reason
+commands/diff-audit.md	first check what you read against the rows you selected, and read any you missed
 commands/diff-audit.md	the ids of the rows you selected, and the ids of the rows in those sections you left out
-templates/pr-report.md	command's rule selected and those it left out, by id, so a reader can check the selection against
+templates/pr-report.md	command's rule selected and those it left out, by id, each left-out row with its reason, so a reader can check
 templates/pr-report.md	request to that service, so a row says what the tool was set to send, not that it went out
 templates/pr-report.md	a local copy instead, and otherwise that it may have been sent.
 commands/diff-audit.md	(`deps.sh` adds a row to `audit_<n>/disclosures.tsv` before its first request to each service)
@@ -1393,6 +1392,8 @@ commands/diff-audit.md	spawn every agent in the foreground
 commands/diff-audit.md	If you start an agent
 commands/quick-scan.md	no longer matches the write rule for `audit_*/`
 commands/quick-scan.md	list the kept files in a message of your own
+commands/quick-scan.md	write the kept list as text in a message
+commands/diff-audit.md	write the selected list as text in a message
 templates/pr-report.md	Outside services the run contacted
 commands/diff-audit.md	records each service it contacts
 commands/diff-audit.md	no longer matches the write rule for `audit_*/`
