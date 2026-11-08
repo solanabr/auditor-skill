@@ -49,7 +49,7 @@ Fast triage: discovery + scope + static analysis (`sast.sh` semgrep with the rul
 ### `/auditor:deep-review`
 **Arg:** `<file> [function|instruction] [--strict]`
 Deep single-unit review: read the file, run Phase 0.5 context reconstruction on the target (purpose, inputs, ≥3 invariants, ≥5 assumptions, ≥3 external-interaction risks, each cited to `L#`), fill the instruction worksheet, cross-reference shared-state code, adversarially model exploitation.
-**When:** one handler/endpoint/function needs depth (Quick). **Emits:** `audit_<n>/DEEP-REVIEW-<unit>.md`, from `templates/pr-report.md`, and the worksheets: per-item verdicts + findings for that unit only. `<unit>` is the function or instruction name, else the file's name without its extension. N≥6 findings pass Rule 5b.
+**When:** one handler/endpoint/function needs depth (Quick). **Emits:** `audit_<n>/DEEP-REVIEW-<unit>.md`, from `templates/pr-report.md`, and the worksheets: per-item verdicts + findings for that unit only, in the report and in the reply. `<unit>` is the function or instruction name, else the file's name without its extension. N≥6 findings pass Rule 5b.
 
 ### `/auditor:diff-audit`
 **Arg:** `[base..head] [--ci] [--fail-on <N>] [--strict]`
