@@ -75,8 +75,10 @@
 #       no body names the environment form of a PoC run (VULNERABLE_SO and the rest), which run.sh --crate does
 #       not read. diff-audit and quick-scan keep their --ci and --fail-on, the findings file that starts as a
 #       failing record, the Rule 5b statuses that count, a reply without finding text, and the closing line;
-#       each of the three Quick commands names the report it writes from templates/pr-report.md; diff-audit's
-#       PR-number form and quick-scan's "fail the job" without a private channel stay gone (docs/ci.md).
+#       each of the three Quick commands names the report it writes from templates/pr-report.md, writes it in
+#       its own session, and reads the corpus from the root: known-vectors/INDEX.md and each vector file it
+#       keeps, and the checklists SKILL.md's scope table names; diff-audit's PR-number form, quick-scan's "fail
+#       the job" without a private channel, and its vector step that named no file stay gone (docs/ci.md).
 #   G   The lines agents/poc-engineer.md gives a runner it writes, run as the first lines of such a runner in a
 #       crate, from the working directory and from the crate, find <R> from the runner's path and take the
 #       stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT, or a strict entry in their
@@ -1249,6 +1251,16 @@ commands/quick-scan.md	Keep finding text, counts and paths out of the reply (Rul
 commands/diff-audit.md	Write `audit_<n>/PR-REPORT.md` from `${CLAUDE_PLUGIN_ROOT}/templates/pr-report.md`
 commands/quick-scan.md	Write `audit_<n>/QUICK-SCAN.md` from `${CLAUDE_PLUGIN_ROOT}/templates/pr-report.md`
 commands/deep-review.md	`audit_<n>/DEEP-REVIEW-<unit>.md`, from `${CLAUDE_PLUGIN_ROOT}/templates/pr-report.md`
+commands/quick-scan.md	Read `${CLAUDE_PLUGIN_ROOT}/known-vectors/INDEX.md` and take the rows whose Severity is 7 or more
+commands/quick-scan.md	Read the file of each row you keep, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`
+commands/quick-scan.md	otherwise run the scanners of `${CLAUDE_PLUGIN_ROOT}/discovery/grep-commands.md`
+commands/diff-audit.md	The checklists are those the scope table of `${CLAUDE_PLUGIN_ROOT}/SKILL.md` (Scope-Gated Loading, Step 2) gives
+commands/diff-audit.md	read each one's file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, before its verdict
+commands/diff-audit.md	run §11.11 of `${CLAUDE_PLUGIN_ROOT}/checklists/11-supply-chain.md`
+commands/deep-review.md	reading each one's file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, before its verdict
+commands/quick-scan.md	Write it yourself, in this session, from what any agent you started returned
+commands/diff-audit.md	Write it yourself, in this session, from what any agent you started returned
+commands/deep-review.md	Write it yourself, in this session, from what any agent you started returned
 commands/quick-scan.md	but the job never fails only because none exists, and never falls back to printing findings in the log
 commands/re-audit.md	only into `grep`, `head`, `tail` or `wc`
 commands/respond.md	only into `grep`, `head`, `tail` or `wc`
@@ -1303,6 +1315,8 @@ QUESTIONS.md	**Isolated** (recommended)
 commands/diff-audit.md	PR number
 commands/quick-scan.md	If that channel is unavailable, fail the job
 commands/quick-scan.md	As a CI gate, a refusal fails the job
+commands/quick-scan.md	Evaluate only CRITICAL / HIGH known-vectors for the detected domains
+commands/quick-scan.md	run the `discovery/grep-commands.md` scanners
 GONE
 
 # respond's step 5 and hunt's step 6 settle the mode as poc's step 5 does, each step read as one line so wording
