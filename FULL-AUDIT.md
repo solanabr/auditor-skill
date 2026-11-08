@@ -682,7 +682,7 @@ Chunking (chunk sizes per surface: 1 instruction file / 1 route + service / 2-3 
 - Phase 1 must be sequential (instruction review builds context)
 
 ### Scope Control
-Scopes are defined once, in [SKILL.md](SKILL.md) → Scope-Gated Loading, Step 2: `--scope full|program|backend|frontend` picks the part of the repository, the language table picks its checklists, and the any-repo checklists (11–13, 16–18) apply in every scope. Intake's DEVOPS scope is defined there too. Record what applied in the Phase -1 Scope Coverage table.
+Scopes are defined once, in [SKILL.md](SKILL.md) → Scope-Gated Loading, Step 2: `--scope full|program|backend|frontend` picks the part of the repository and its checklists. `full` takes every row that matches, the any-repo checklists (11–13, 16–18) included; `program`, `backend` and `frontend` take the subset listed there. Intake's DEVOPS scope is defined there too. Record what applied in the Phase -1 Scope Coverage table.
 
 ### Language Auto-Detection
 Language → checklist mapping is authoritative in [SKILL.md](SKILL.md) → Scope-Gated Loading, Step 2 (scope table); see also OUTPUT-RULES.md Rule 7. The auditor scans file extensions/markers and applies the correct checklists.

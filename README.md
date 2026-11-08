@@ -76,7 +76,7 @@ What each release added: [What's new](#whats-new).
 | Python | 14 | 82 |
 | Go / Java / Ruby / PHP | 15 | 88 |
 | AI / agent components | 19 | 39 |
-| **Always applied** (any repo) | 11-13, 16-18 | 421 |
+| **Always applied** (any repo, at `--scope full`) | 11-13, 16-18 | 421 |
 | **Total** | **20** | **1,465** |
 
 ---
