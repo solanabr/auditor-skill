@@ -27,7 +27,8 @@
 # it cargo build-sbf uses its own default.
 #
 # The mode is the stricter of <R>/exec-mode (one word, none, isolated or native, written when the human
-# answers Q46) and AUDITOR_EXEC_MODE: none, then isolated, then native. With neither, with none, or with a
+# answers Q46), AUDITOR_EXEC_MODE and strict mode (OUTPUT-RULES.md Rule 11f), which counts as isolated: none,
+# then isolated, then native. With none of them it is native, and a note says so. With none, or with a
 # --mode that names another mode, target.sh stops (exit 3) before it copies anything. In isolated mode the
 # credential self-check of scripts/lib/isolation.sh runs first: something it reads that is readable, or a
 # check that cannot finish, stops the run. In native mode the same check prints, as a warning, what the code
@@ -91,9 +92,9 @@
 # 100 MiB) go to <R>/exec/<action>-<n>/, for templates/poc/run.sh --vulnerable-so and --fixed-so. The last
 # stdout line says how the action ended and where these are. The scratch directory is removed on exit.
 #
-# Exit: 0 the action succeeded · 1 it ran and failed · 3 blocker (no mode or mode none, the self-check, a tool
-# missing or, in native mode, a cargo build-sbf without --install-only whose platform tools are not installed,
-# a revision or package not found, a patch that does not apply, submodules, a download that failed, the
+# Exit: 0 the action succeeded · 1 it ran and failed · 3 blocker (mode none, the self-check, a tool missing
+# or, in native mode, a cargo build-sbf without --install-only whose platform tools are not installed, a
+# revision or package not found, a patch that does not apply, submodules, a download that failed, the
 # watchdog, an incident whose root cause an INCIDENTS.json does not give or that keeps the build from native
 # mode) · 64 refused. Needs bash >= 3.2,
 # git, python3, env, find, grep, mkdir, mktemp, rm, chmod, cp, ln, cat, wc, tail and date; cargo,
@@ -318,11 +319,11 @@ if [ -e "$mf" ] || [ -L "$mf" ]; then
 fi
 
 # ---- the mode and the self-check -----------------------------------------------------------------------
-SOURCES="$R/exec-mode: ${FILE_MODE:-absent}; AUDITOR_EXEC_MODE: ${ENV_MODE:-unset}"
-if [ -z "$FILE_MODE$ENV_MODE" ]; then
-  blocker "no recorded mode: $R/exec-mode is missing and AUDITOR_EXEC_MODE is not set (OUTPUT-RULES.md Rule 11a, QUESTIONS.md Q46). Record the human's answer in $R/exec-mode and run this again — nothing was copied or built."
-fi
-case " $FILE_MODE $ENV_MODE " in
+# Strict mode (OUTPUT-RULES.md Rule 11f) counts as isolated; with nothing recorded the mode is native.
+STRICT_MODE="" STRICT_SAYS=off
+if [ "$CONFINE_STRICT" = 1 ]; then STRICT_MODE=isolated STRICT_SAYS="on ($(confine_text "$CONFINE_MODE_WHY"))"; fi
+SOURCES="$R/exec-mode: ${FILE_MODE:-absent}; AUDITOR_EXEC_MODE: ${ENV_MODE:-unset}; strict mode: $STRICT_SAYS"
+case " $FILE_MODE $ENV_MODE $STRICT_MODE " in
   *" none "*) MODE=none ;;
   *" isolated "*) MODE=isolated ;;
   *) MODE=native ;;
@@ -333,7 +334,9 @@ fi
 if [ -n "$MODE_ARG" ] && [ "$MODE_ARG" != "$MODE" ]; then
   blocker "--mode is $MODE_ARG, but the recorded execution mode is $MODE ($SOURCES); the mode changes only when the human answers again — nothing was copied or built."
 fi
-echo ">> execution mode: $MODE (the stricter of $SOURCES)"
+echo ">> execution mode: $MODE (the stricter of $SOURCES; native when none is recorded)"
+[ -n "$FILE_MODE$ENV_MODE$STRICT_MODE" ] ||
+  echo ">> note: no execution mode is recorded, so target.sh builds natively, on this machine (OUTPUT-RULES.md Rule 11a)"
 
 # incident_class [<INC-n.k>]: sets cls to the root_cause_class $json records for that incident, or, with no
 # id, to supply_chain_or_ci when any incident has it; a blocker when it cannot be read.

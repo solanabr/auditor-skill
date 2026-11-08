@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # test-runners.sh — self-test for scripts/runner/target.sh, deps.sh and sast.sh: each case file under
 # fixtures/{target,deps,sast}/ under each bash on the machine (/bin/bash and the bash running this suite,
-# when they differ), then each runner against stand-in toolchains (fixtures/runners/fake-tool.sh as cargo,
-# cargo-build-sbf, cargo-audit, cargo-outdated, anchor, npm, node, semgrep, curl and rustup) that record
-# their arguments, working directory, HOME, ulimit -t and -f and environment: the fixed command lines, the
-# scratch copy outside the working directory, the mode rule with none, the isolated self-check, the proxy
-# and HOME split, canary variables, the watchdog and the caps, patches, revisions, submodules, artifacts,
-# disclosure rows and large inputs. Then one case with the real tool for each action whose tool is
-# installed: cargo test and cargo clippy, cargo build-sbf (when its platform tools are installed, so that
-# nothing is downloaded), npm ci, cargo audit --no-fetch and cargo tree, all offline. With REQUIRE_TOOLCHAIN=1
-# (CI sets it), a missing cargo or rustup fails the run instead of skipping those. Needs git and python3;
-# no network. Usage (from the repo root): bash scripts/tests/test-runners.sh
+# when they differ), in default and in strict mode (AUDITOR_STRICT=1), then each runner against stand-in
+# toolchains (fixtures/runners/fake-tool.sh as cargo, cargo-build-sbf, cargo-audit, cargo-outdated, anchor,
+# npm, node, semgrep, curl and rustup) that record their arguments, working directory, HOME, ulimit -t and -f
+# and environment: the fixed command lines, the scratch copy outside the working directory, the mode rule with
+# none and strict mode, the isolated self-check, the proxy and HOME split, canary variables, the watchdog and
+# the caps, patches, revisions, submodules, artifacts, disclosure rows and large inputs. A case where strict
+# mode builds, which is isolated, runs only where isolated mode can (ISOLATED_OK). Then one case with the real
+# tool for each action whose tool is installed: cargo test and cargo clippy, cargo build-sbf (when its
+# platform tools are installed, so that nothing is downloaded), npm ci, cargo audit --no-fetch and cargo tree,
+# all offline. With REQUIRE_TOOLCHAIN=1 (CI sets it), a missing cargo or rustup fails the run instead of
+# skipping those. Needs git and python3; no network. Usage (from the repo root):
+# bash scripts/tests/test-runners.sh
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 TARGET=$ROOT/scripts/runner/target.sh
@@ -22,6 +24,10 @@ T=$(cd -P "$T" && pwd -P) || exit 1
 trap 'chmod -R u+rwX "$T" 2>/dev/null; rm -rf "$T"' EXIT
 REAL_HOME=${HOME:-}
 REAL_PATH=$PATH
+# The fixtures' own rundir.sh and git-ro.sh calls take the caller's environment: an AUDITOR_STRICT=1 there
+# would leave strict markers that turn every default-mode case strict. The runners themselves get only what
+# run passes (env -i).
+unset AUDITOR_STRICT
 export GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
@@ -162,9 +168,13 @@ for prog in "$TARGET" "$DEPS" "$SAST"; do
     check "git records $rel as 100755" test "${mode%% *}" = 100755
   fi
 done
-for pair in "target:$TARGET" "deps:$DEPS" "sast:$SAST"; do
+# Each case is refused the same way in default and in strict mode (AUDITOR_STRICT=1): it never gets as far
+# as the mode. test-preapproved-entrypoints.sh replays these files under AUDITOR_STRICT=1.
+for pair in "target:$TARGET" "deps:$DEPS" "sast:$SAST" "target:$TARGET:1" "deps:$DEPS:1" "sast:$SAST:1"; do
   name=${pair%%:*}
   prog=${pair#*:}
+  strict=""
+  case "$prog" in *:1) strict=1; prog=${prog%:1} ;; esac
   before=$(tree_of "$WT")
   ncase=0
   while IFS= read -r line; do
@@ -175,14 +185,14 @@ for pair in "target:$TARGET" "deps:$DEPS" "sast:$SAST"; do
     rest=${rest#*$'\t'}
     IFS=$'\t' read -r -a args <<< "$rest"
     ncase=$((ncase + 1))
-    label="$name ${args[*]}"
+    label="$name${strict:+ (strict)} ${args[*]}"
     label=${label//[[:cntrl:]]/?}
     [ "${#label}" -le 160 ] || label="${label:0:160}..."
     i=0
     for sh in "${SHELLS[@]}"; do
       rm -rf "$NT"
       mkdir -p "$NT"
-      ( cd "$WT" && env -i HOME="$CLEANHOME" PATH="$FPATH" TMPDIR="$NT" "$sh" "$prog" "${args[@]}" ) \
+      ( cd "$WT" && env -i HOME="$CLEANHOME" PATH="$FPATH" TMPDIR="$NT" ${strict:+AUDITOR_STRICT=1} "$sh" "$prog" "${args[@]}" ) \
         >"$T/case.out.$i" 2>"$T/case.err.$i" </dev/null
       echo $? > "$T/case.rc.$i"
       [ -z "$(ls -A "$NT")" ] || echo scratch >> "$T/case.out.$i"
@@ -197,9 +207,9 @@ for pair in "target:$TARGET" "deps:$DEPS" "sast:$SAST"; do
       ko "case: $label prints differently under ${SHELLS[0]} and ${SHELLS[1]}"
     fi
   done < "$FIXT/$name/cases.txt"
-  check "the $name case file has cases ($ncase)" test "$ncase" -gt 20
-  check "no $name case changed anything in the working directory" test "$(tree_of "$WT")" = "$before"
-  check "no $name case ran a configured program or hook of the repository" test -z "$(ls -A "$T/marks")"
+  check "the $name case file has cases ($ncase)${strict:+, in strict mode}" test "$ncase" -gt 20
+  check "no $name case changed anything in the working directory${strict:+, in strict mode}" test "$(tree_of "$WT")" = "$before"
+  check "no $name case ran a configured program or hook of the repository${strict:+, in strict mode}" test -z "$(ls -A "$T/marks")"
 done
 for pair in "target:$TARGET" "deps:$DEPS" "sast:$SAST"; do
   run "${pair#*:}" "$WT" --
@@ -231,36 +241,85 @@ else
   echo "note: this machine is not an isolated runner ($readable); the cases where isolated mode runs are skipped"
 fi
 settings
-while IFS='|' read -r file env want; do
+# The mode is the stricter of exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT=1, as isolated), and
+# native when none of them says anything, with a note that says so. An isolated run where this machine fails
+# the self-check stops there, after the mode line.
+ISO_STOP='^target: blocker: isolated mode, but these are readable here: '
+NOMODE='>> note: no execution mode is recorded, so target.sh builds natively, on this machine (OUTPUT-RULES.md Rule 11a)'
+while IFS='|' read -r file env strict want; do
   [ -n "$want" ] || continue
   if [ -n "$file" ]; then printf '%s\n' "$file" > "$WT/audit_1/exec-mode"; else rm -f "$WT/audit_1/exec-mode"; fi
   set --
   [ -z "$env" ] || set -- "AUDITOR_EXEC_MODE=$env"
+  [ -z "$strict" ] || set -- "$@" AUDITOR_STRICT=1
   run "$TARGET" "$WT" "$@" -- cargo-test --run audit_1 --src .
-  label="exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}'"
+  label="exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}'${strict:+, AUDITOR_STRICT=1}"
+  says="strict mode: off"
+  [ -z "$strict" ] || says="strict mode: on (AUDITOR_STRICT=1)"
+  line=">> execution mode: $want (the stricter of audit_1/exec-mode: ${file:-absent}; AUDITOR_EXEC_MODE: ${env:-unset}; $says; native when none is recorded)"
   case "$want" in
-    native|isolated)
-      if [ "$want" = isolated ] && [ "$ISOLATED_OK" = 0 ]; then continue; fi
-      check "$label: runs in $want mode" sh -c "[ '$RC' = 0 ] && grep -qxF '>> execution mode: $want (the stricter of audit_1/exec-mode: ${file:-absent}; AUDITOR_EXEC_MODE: ${env:-unset})' '$T/out'" ;;
+    native)
+      if [ -z "$file$env$strict" ]; then
+        check "$label: runs in native mode, with a note that no mode is recorded" \
+          sh -c "[ '$RC' = 0 ] && grep -qxF '$line' '$T/out' && grep -qxF '$NOMODE' '$T/out'"
+      else
+        check "$label: runs in native mode" sh -c "[ '$RC' = 0 ] && grep -qxF '$line' '$T/out' && ! grep -q '^>> note: no execution mode' '$T/out'"
+      fi ;;
+    isolated)
+      if [ "$ISOLATED_OK" = 1 ]; then
+        check "$label: runs in isolated mode" sh -c "[ '$RC' = 0 ] && grep -qxF '$line' '$T/out' && ! grep -q '^>> note: no execution mode' '$T/out'"
+      else
+        check "$label: isolated mode, which the self-check stops here, after the mode line" \
+          sh -c "[ '$RC' = 3 ] && grep -qxF '$line' '$T/out' && ! grep -q '^>> note: no execution mode' '$T/out' && grep -q '$ISO_STOP' '$T/err' && [ ! -s '$T/calls' ]"
+      fi ;;
     none)
-      check "$label: none, exit 3 before anything is copied" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: the recorded execution mode is none (' '$T/err' && [ ! -s '$T/out' ] && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]" ;;
-    missing)
-      check "$label: no recorded mode, exit 3 before anything is copied" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: no recorded mode: audit_1/exec-mode is missing and AUDITOR_EXEC_MODE is not set' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]" ;;
+      check "$label: none, exit 3 before anything is copied" sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: the recorded execution mode is none (audit_1/exec-mode: ${file:-absent}; AUDITOR_EXEC_MODE: ${env:-unset}; $says): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ ! -s '$T/out' ] && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]" ;;
   esac
 done <<'CASES'
-native||native
-isolated||isolated
-|native|native
-|isolated|isolated
-native|isolated|isolated
-isolated|native|isolated
-none||none
-|none|none
-native|none|none
-none|native|none
-isolated|none|none
-||missing
+native|||native
+isolated|||isolated
+|native||native
+|isolated||isolated
+native|isolated||isolated
+isolated|native||isolated
+none|||none
+|none||none
+native|none||none
+none|native||none
+isolated|none||none
+|||native
+||1|isolated
+native||1|isolated
+|native|1|isolated
+none||1|none
+|none|1|none
 CASES
+# --mode must name the mode that holds; strict mode's isolated counts. An incident run with no recorded mode is
+# native too, and stops at the INCIDENTS.json it lacks.
+printf 'native\n' > "$WT/audit_1/exec-mode"
+for strict in "" 1; do
+  says="strict mode: off" mode=native
+  [ -z "$strict" ] || { says="strict mode: on (AUDITOR_STRICT=1)"; mode=isolated; }
+  for arg in isolated none native; do
+    [ "$arg" != "$mode" ] || continue
+    run "$TARGET" "$WT" ${strict:+AUDITOR_STRICT=1} -- build-sbf --run audit_1 --src . --mode "$arg"
+    check "--mode $arg where the mode is $mode${strict:+ (strict)}: exit 3 before anything is copied, naming the sources" \
+      sh -c "[ '$RC' = 3 ] && [ \"\$(cat '$T/err')\" = 'target: blocker: --mode is $arg, but the recorded execution mode is $mode (audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset; $says); the mode changes only when the human answers again — nothing was copied or built.' ] && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+  done
+  out=">> execution mode: $mode (the stricter of incident_1/exec-mode: absent; AUDITOR_EXEC_MODE: unset; $says; native when none is recorded)"
+  what=$mode
+  [ -n "$strict" ] || { out="$out
+$NOMODE"; what="$mode, with the note"; }
+  run "$TARGET" "$WT" ${strict:+AUDITOR_STRICT=1} -- cargo-test --run incident_1 --src .
+  check "an incident run with no recorded mode${strict:+ (strict)}: $what, then exit 3 at the INCIDENTS.json it lacks, nothing copied" \
+    sh -c "[ '$RC' = 3 ] && [ \"\$(cat '$T/out')\" = '$out' ] && grep -qxF \"target: blocker: incident_1/INCIDENTS.json is missing: an incident's code is built only once incident_1/INCIDENTS.json records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built.\" '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+done
+# A strict marker in a run directory of the working directory turns strict mode on, as AUDITOR_STRICT=1 does.
+printf 'strict\n' > "$WT/audit_1/strict"
+run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
+check "a strict marker in audit_1: isolated, the marker named as the source" \
+  grep -qxF '>> execution mode: isolated (the stricter of audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset; strict mode: on (audit_1/strict); native when none is recorded)' "$T/out"
+rm -f "$WT/audit_1/strict"
 for bad in 'native extra' Native 'native native' ''; do
   printf '%s\n' "$bad" > "$WT/audit_1/exec-mode"
   run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
@@ -426,6 +485,9 @@ if [ "$ISOLATED_OK" = 1 ]; then
     "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|anchor build --ignore-keys -p demo -- --tools-version v1.54|"
   check "... with the real HOME and the proxy, and the note" \
     sh -c "[ '$RC' = 0 ] && grep -qxF '$OLDSBF' '$T/out' && awk '/^== anchor build/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'home: $CLEANHOME' '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk'"
+  run "$TARGET" "$WT" AUDITOR_STRICT=1 HTTPS_PROXY="$PROXY" -- build-sbf --run audit_1 --src .
+  check "strict mode, which is isolated, builds the same way, with the same note" \
+    sh -c "[ '$RC' = 0 ] && grep -qxF '$OLDSBF' '$T/out' && awk '/^== cargo build-sbf --sbf-out-dir/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'home: $CLEANHOME' '$T/blk'"
 fi
 settings FAKE_INSTALL_RC=1
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
@@ -980,6 +1042,11 @@ printf '{"cases": []}\n' > "$P/Incident_Response/INCIDENTS.json"
 run "$TARGET" "$P" -- cargo-test --run audit_1 --src .
 check "natively, in a tree that is not a repository, a client's Incident_Response/INCIDENTS.json in another schema: exit 0, with the note" \
   sh -c "[ '$RC' = 0 ] && grep -qxF '$PASSED Incident_Response/INCIDENTS.json (Rule 11a)' '$T/out'"
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$P" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+  check "... and strict mode builds it isolated, with no note, as the incident rule applies natively only" \
+    sh -c "[ '$RC' = 0 ] && ! grep -q 'incident rule' '$T/out'"
+fi
 rm -rf "$P/Incident_Response" "$T/elsewhere-run"
 run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
 check "natively without python3, an INCIDENTS.json in the working directory: exit 3 before anything is copied" \
