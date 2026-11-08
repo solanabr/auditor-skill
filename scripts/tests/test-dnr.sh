@@ -749,13 +749,13 @@ if [[ "$c1" == 0 && "$c2" == 0 && -s "$REPO/incident_5/corpus/transactions.jsonl
 else
   bad "run dir: the untracked control dir -> collect exit $c1, snapshot exit $c2"
 fi
-# A check that cannot run refuses instead of passing. Git refusing the repository
-# (owned by another user, as with a checkout mounted into a container; a stand-in
-# git gives git's own error), git missing or failing, and a run directory find
-# cannot read (here hiding a link to the outside) each mean exit 2, nothing written
-# and no RPC call. A repository named in the environment (GIT_DIR, GIT_WORK_TREE)
-# never stands in for the one the run directory is in: the tracked directory is
-# still refused.
+# A check that cannot run refuses instead of passing. In strict mode, git refusing
+# the repository (owned by another user, as with a checkout mounted into a
+# container; a stand-in git gives git's own error) and git missing or failing each
+# mean exit 2, nothing written and no RPC call; in both modes so does a run
+# directory find cannot read (here hiding a link to the outside). A repository
+# named in the environment (GIT_DIR, GIT_WORK_TREE) never stands in for the one the
+# run directory is in: the tracked directory is still refused.
 REALGIT="$(command -v git)"
 mkdir -p "$TT/gitfail" "$TT/gitowner"
 git init -q "$TT/other-repo" >/dev/null 2>&1
@@ -767,8 +767,8 @@ state_before="$(tree_state)"
 chmod 0300 "$REPO/incident_9"
 calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
 for case in \
-  "git does not trust the repository|PATH=$TT/gitowner:$TT/bin:$PATH|incident_5|incident_5/corpus-2" \
-  "git missing or failing|PATH=$TT/gitfail:$TT/bin:$PATH|incident_5|incident_5/corpus-2" \
+  "git does not trust the repository, in strict mode|AUDITOR_STRICT=1 PATH=$TT/gitowner:$TT/bin:$PATH|incident_5|incident_5/corpus-2" \
+  "git missing or failing, in strict mode|AUDITOR_STRICT=1 PATH=$TT/gitfail:$TT/bin:$PATH|incident_5|incident_5/corpus-2" \
   "a repository named in the environment|GIT_DIR=$TT/other-repo/.git GIT_WORK_TREE=$TT/other-repo PATH=$TT/bin:$PATH|incident_4|incident_4/corpus" \
   "a run dir find cannot read|PATH=$TT/bin:$PATH|incident_9|incident_9/corpus"; do
   label="${case%%|*}"; rest="${case#*|}"; envs="${rest%%|*}"; rest="${rest#*|}"; snapdir="${rest%%|*}"; outdir="${rest#*|}"
@@ -791,6 +791,30 @@ else
   bad "run dir: an unverifiable run changed the tree"
 fi
 eq "run dir: unverifiable runs made no RPC call" "$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)" "$calls_before"
+# In default mode a run directory git cannot place counts as the auditor's when its
+# .gitignore holds * (Rule 11f), so the same two runs go on, each into a new --out.
+# The confinement is asked first whether it applies that rule yet.
+if (cd "$REPO" && PATH="$TT/gitowner:$PATH" bash -c '. "$1" && confine_init probe "$2" 2 && confine_rundir incident_5 x' \
+      probe "$HERE/../lib/confine.sh" "$(cd "$HERE/../.." && pwd -P)") >/dev/null 2>&1 </dev/null; then
+  for case in \
+    "git does not trust the repository|PATH=$TT/gitowner:$TT/bin:$PATH|incident_5|incident_5/corpus-3" \
+    "git missing or failing|PATH=$TT/gitfail:$TT/bin:$PATH|incident_5|incident_5/corpus-4"; do
+    label="${case%%|*}"; rest="${case#*|}"; envs="${rest%%|*}"; rest="${rest#*|}"; snapdir="${rest%%|*}"; outdir="${rest#*|}"
+    ( cd "$REPO" && export RPC_URL="https://rpc.example.test/" PATH="${envs##*PATH=}"
+      "$DNR/collect.sh" --out "$outdir" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/rd.out" 2>&1
+    c1=$?
+    ( cd "$REPO" && export RPC_URL="https://rpc.example.test/" PATH="${envs##*PATH=}"
+      "$DNR/snapshot-program.sh" "$PID" "$snapdir" ) >> "$TT/rd.out" 2>&1
+    c2=$?
+    if [[ "$c1" == 0 && "$c2" == 0 && -s "$REPO/$outdir/transactions.jsonl" ]] && ! grep -q 'refused: ' "$TT/rd.out"; then
+      ok "run dir: $label, in default mode -> collect and snapshot go on (exit 0)"
+    else
+      bad "run dir: $label, in default mode -> collect exit $c1, snapshot exit $c2 ($(tr '\n' ' ' < "$TT/rd.out"))"
+    fi
+  done
+else
+  ok "run dir: a run directory git cannot place, in default mode: skipped, it waits for Lane 1's CONF-16 commit"
+fi
 
 # ---------------------------------------------------------------------------
 # 16. A second collection into an incident goes to corpus-2/, next to corpus/, and

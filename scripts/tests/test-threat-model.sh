@@ -1366,8 +1366,8 @@ check "T-u: ... and the parent's fix the fork never applied is listed as absent"
 # T-v: the run-directory and partial-clone checks never take "no answer" from git or find for "not
 # tracked", "no links" or "not partial". A stand-in git reports the error git gives for a repository
 # owned by another user (safe.directory) for the calls under test and runs the real git for everything
-# else. Strict mode refuses each such run; default mode refuses all but a config git cannot read, which
-# it notes and goes on (Rule 11f).
+# else. Strict mode refuses each such run. Default mode refuses a run directory find cannot read, takes
+# one git cannot place when its .gitignore holds *, and notes a config git cannot read (Rule 11f).
 # =================================================================================================
 mkdir -p "$T/gitwrap-tracked" "$T/gitwrap-config"
 printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --is-inside-work-tree|ls-files) echo "fatal: detected dubious ownership in repository at '"'"'$PWD'"'"'" >&2; exit 128 ;; esac; done\nexec "%s" "$@"\n' "$REALGIT" > "$T/gitwrap-tracked/git"
@@ -1377,10 +1377,18 @@ FC="$T/failclosed"; mkrepo "$FC"
 put "$FC" programs/f/src/lib.rs 'pub fn f() {}'
 commit "$FC" -m "initial"
 FR1=$(newrun "$FC"); FR2=$(newrun "$FC"); FR3=$(newrun "$FC")
-check "T-v: when git cannot say whether the run directory is tracked, it is refused (exit 2)" \
-  test "$(cd "$FC" && PATH="$T/gitwrap-tracked:$PATH" "$COLLECT" --offline --repo . --out "$FR1/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 2
-check "T-v: ... saying so" refused_with "git cannot tell whether the run directory is tracked: $FR1"
-check "T-v: ... and nothing is written" test ! -e "$FC/$FR1/bootstrap"
+check "T-v (strict): when git cannot say whether the run directory is tracked, it is refused (exit 2)" \
+  test "$(cd "$FC" && AUDITOR_STRICT=1 PATH="$T/gitwrap-tracked:$PATH" "$COLLECT" --offline --repo . --out "$FR1/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 2
+check "T-v (strict): ... saying so" refused_with "git cannot tell whether the run directory is tracked: $FR1"
+check "T-v (strict): ... and nothing is written" test ! -e "$FC/$FR1/bootstrap"
+if PATH="$T/gitwrap-tracked:$PATH" api "$FC" "confine_rundir $FR1 x"; then
+  check "T-v: in default mode that run directory, whose .gitignore holds *, is written to (exit 0)" \
+    test "$(cd "$FC" && PATH="$T/gitwrap-tracked:$PATH" "$COLLECT" --offline --repo . --out "$FR1/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 0
+  check "T-v: ... with no note, and history.md is written" \
+    sh -c "[ \"\$(cat '$T/rc.err')\" = 'collect.sh: wrote $FR1/bootstrap/history.md' ] && [ -s '$FC/$FR1/bootstrap/history.md' ]"
+else
+  skp "T-v: a run directory git cannot place, in default mode: waits for Lane 1's CONF-16 commit"
+fi
 mkdir -p "$FC/$FR2/bootstrap/sub"; ln -s "$T/elsewhere" "$FC/$FR2/bootstrap/sub/link"
 chmod 0300 "$FC/$FR2/bootstrap/sub"
 check "T-v: a run directory that cannot be fully read (a 0300 subdirectory) is refused (exit 2)" \
