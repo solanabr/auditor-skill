@@ -475,7 +475,7 @@ then
   then ok "VERIFICATION.md §4: the second block opens with the first block's mode and isolation checks, word for word, and says why"
   else bad "VERIFICATION.md §4 does not say that the second block makes the same mode and isolation checks"; fi
 else bad "VERIFICATION.md §4's second block does not open with the first block's mode and isolation checks"; fi
-if grep -qxF 'argument-hint: "<finding-id | INC-n.k> [--verify-with-mutation] [--post-patch-validation]"' "$ROOT/commands/patch.md"
+if grep -qxF 'argument-hint: "<finding-id | INC-n.k> [--verify-with-mutation] [--post-patch-validation] [--strict]"' "$ROOT/commands/patch.md"
 then ok "/auditor:patch offers --post-patch-validation"; else bad "/auditor:patch's argument-hint lacks --post-patch-validation"; fi
 for f in references/orchestration/boundary-map.md docs/power-tools.md; do
   row=$(awk -F'|' '/^\|/ && NF > 4 && index($3, "`post-patch-validation`") {print; exit}' "$ROOT/$f")

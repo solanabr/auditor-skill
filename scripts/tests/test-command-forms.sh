@@ -33,8 +33,9 @@
 #       and in the corpus C6 reads alike. A command inside $( ) or backticks, in a quoted bash -c string, or in
 #       the body of a function written as function <name> { ... }, with no (), is not read.
 #   C4  Every command, and the root SKILL.md, runs preflight.sh as step 0: the first entry point its body names
-#       is "<root>/scripts/preflight.sh", with no arguments, in a paragraph that starts "0. **Preflight" (in the
-#       root SKILL.md, "**Step 0 — Preflight") and says that a refusal, and a call that is denied, stop the run;
+#       is "<root>/scripts/preflight.sh", with no arguments (the --strict form a user's --strict asks for comes
+#       after it), in a paragraph that starts "0. **Preflight" (in the root SKILL.md, "**Step 0 — Preflight") and
+#       says that a refusal, and a call that is denied, stop the run, in both modes (OUTPUT-RULES.md Rule 11e);
 #       its body says that a resumed invocation (--resume) runs step 0 again; and the allowed-tools of every
 #       command, and of the root SKILL.md, pre-approve that call.
 #   C5  Every rooted call in a command's body, and in the bodies of the agents it spawns, is one of that
@@ -1295,13 +1296,18 @@ for fs in 'commands/respond.md|5' 'commands/hunt.md|6'; do
   done
 done
 
-# Each command's resume text, and the root SKILL.md's, says how to answer the prompt its re-invocation brings, and
-# that the file "don't ask again" writes stops that resumed invocation, whose step 0 runs again, not only the next run.
+# Each command's resume text, and the root SKILL.md's, says what stops the prompt its re-invocation brings (the
+# user-level rules), and that "Yes, and don't ask again" no longer breaks the resumed invocation, whose step 0 runs
+# again: preflight takes an untracked .claude/settings.local.json for the user's own (spec §4.8, Rule 11e). The old
+# advice, which told the human to avoid that answer because step 0 refused the file, stays gone.
 for f in commands/*.md SKILL.md; do
-  if grep -qF -- 'tell the human to answer "Yes", not "don'"'"'t ask again"' "$f"; then ok "$f: the resume text names the answer"
-  else bad "P $f: the resume text does not tell the human to answer \"Yes\", not \"don't ask again\""; fi
-  if grep -qiF -- 'a file step 0 refuses, from that resumed invocation on' "$f"; then ok "$f: the saved rule stops the resumed invocation"
-  else bad "P $f: the resume text does not say that step 0 refuses the saved rule's file from that resumed invocation on"; fi
+  if grep -qiF -- 'That invocation asks unless the user-level rules in' "$f"; then ok "$f: the resume text names the rules that stop its prompt"
+  else bad "P $f: the resume text does not name the user-level rules that stop its prompt"; fi
+  if grep -qiF -- 'which step 0 no longer refuses while git does not track it' "$f"; then ok "$f: the saved rule's file no longer stops the resumed invocation"
+  else bad "P $f: the resume text does not say that step 0 no longer refuses the saved rule's untracked file"; fi
+  for gone in 'tell the human to answer "Yes", not "don'"'"'t ask again"' 'a file step 0 refuses, from that resumed invocation on'; do
+    if grep -qiF -- "$gone" "$f"; then bad "P $f says: $gone"; else ok "gone from $f: $gone"; fi
+  done
 done
 # Each command that starts agents (Task in its allowed-tools), and the root SKILL.md, keeps them in the foreground,
 # and resumes in the turn that brings an agent's result when Claude Code ran it in the background anyway (it cannot
