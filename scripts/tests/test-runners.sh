@@ -1042,6 +1042,29 @@ run "$TARGET" "$WT" PATH="$WT/.bin:$FPATH" -- cargo-test --run audit_1 --src .
 check "a cargo in a PATH entry inside the working directory never runs" sh -c "[ '$RC' = 0 ] && [ ! -e '$T/marks/wt-cargo' ] && grep -q '^== cargo test' '$T/calls'"
 rm -rf "$WT/.bin"
 check "no target.sh run ran a program or hook the source repository's config names" test -z "$(ls -A "$T/marks")"
+# A session started below the top level of a repository, in programs/demo: outside strict mode --src . clones
+# that repository, at its HEAD, as confine_repo . takes it, and --dir stays a path from its top; the log says
+# which directory of it the session is in. Strict mode copies the directory file by file, as before.
+SUB=$WT/programs/demo
+( cd "$SUB" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$SUB/audit_1/exec-mode"
+settings FAKE_SHOW=programs/demo/src/lib.rs
+run "$TARGET" "$SUB" -- cargo-test --run audit_1 --src .
+check "a session in programs/demo: --src . copies the repository at its top, at HEAD (v2)" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF 'show: // v2' '$T/calls'"
+check "... and builds at the copy's top" calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo test --offline --workspace|"
+log=$(sed -n 's/.*; log \(audit_1\/exec\/cargo-test-[0-9]*[.]log\).*/\1/p' "$T/out")
+check "... and its log says which directory of it the session is in" \
+  grep -qE '^>> the copy: [.] at [0-9a-f]{40}; the working directory is programs/demo in it$' "$SUB/$log"
+run "$TARGET" "$SUB" -- cargo-test --run audit_1 --src . --dir programs/demo
+check "... --dir is a path from the copy's top" \
+  calls_are "rustup default|cargo fetch --manifest-path $S/src/programs/demo/Cargo.toml|cargo test --offline --workspace|"
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$SUB" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+  check "strict mode, the same session: the directory is copied file by file, as before" \
+    sh -c "[ '$RC' = 0 ] && grep -qxF 'show: ' '$T/calls'"
+fi
+rm -rf "$SUB/audit_1"
+settings
 
 # =================================================================================================
 # target.sh in an incident's run directory: INCIDENTS.json must give the root cause, and nothing of a run

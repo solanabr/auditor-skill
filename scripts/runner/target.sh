@@ -48,17 +48,19 @@
 # The copy, in a scratch directory outside the working directory. A --src that is the top level of a git
 # repository (its git directory inside the working directory, holding no symbolic link, borrowing no objects
 # and rewriting no parents, and not a partial clone), or a copy git-ro.sh copy made in <R>, is cloned with
-# --no-local, no hooks and no submodules, system and global git config dropped. --rev (HEAD when absent) must
-# name a commit, which is checked out; --patch, a file in <R>/patches/ of at most 16 MiB, is applied with git
-# apply --index. With a git that lacks the May-2024 clone fixes, target.sh never clones: outside strict mode
-# it writes the tracked files of that commit itself, from git ls-tree and git cat-file --batch through
-# hgit_tree (no path with an empty, . or .. component or a .git, none written through a symbolic link), into a
-# new repository that holds no commit, and applies --patch with git apply, and a note says so; strict mode
-# stops (exit 3). A revision that has submodules stops the run in strict mode, since target.sh never fetches
-# them; outside it, a note says so and the build sees them as empty directories. Any other directory --src
-# names is copied file by file, symbolic links kept as links, without audit_*, incident_* and .audit-memory at
-# its top, and without target/ or node_modules/ directories, each name in any letter case; --rev and --patch
-# need a repository. --dir is a path inside the copy with no symbolic link on the way.
+# --no-local, no hooks and no submodules, system and global git config dropped. Outside strict mode, --src .
+# in a session started below the top level of a repository takes that repository, as scripts/lib/confine.sh's
+# confine_repo accepts it, and --dir is then a path from its top. --rev (HEAD when absent) must name a commit,
+# which is checked out; --patch, a file in <R>/patches/ of at most 16 MiB, is applied with git apply --index.
+# With a git that lacks the May-2024 clone fixes, target.sh never clones: outside strict mode it writes the
+# tracked files of that commit itself, from git ls-tree and git cat-file --batch through hgit_tree (no path
+# with an empty, . or .. component or a .git, none written through a symbolic link), into a new repository
+# that holds no commit, and applies --patch with git apply, and a note says so; strict mode stops (exit 3). A
+# revision that has submodules stops the run in strict mode, since target.sh never fetches them; outside it,
+# a note says so and the build sees them as empty directories. Any other directory --src names is copied file
+# by file, symbolic links kept as links, without audit_*, incident_* and .audit-memory at its top, and without
+# target/ or node_modules/ directories, each name in any letter case; --rev and --patch need a repository.
+# --dir is a path inside the copy with no symbolic link on the way.
 #
 # The environment of every step is the cleaned one of scripts/lib/isolation.sh: env -i, a throwaway HOME
 # holding a fresh Solana keypair, TMPDIR in the scratch directory, the cleaned PATH, the user's CARGO_HOME,
@@ -179,6 +181,17 @@ case "$seen" in *" --src "*) ;; *) refuse "give --src, the source to copy ($USAG
 confine_rundir "$RUN_ARG" "--run"
 R=$CONFINE_RUN
 
+# src_enclosing: for --src . outside strict mode, in a session started below the top level of a repository,
+# that repository (SRC_KIND repo), when confine_repo . takes it and sets CONFINE_PREFIX; status 1 otherwise,
+# and the tree is copied file by file as before. Tried in a subshell first, since confine_repo refuses.
+src_enclosing() {
+  [ "$CONFINE_REL" = . ] && [ "$CONFINE_STRICT" = 0 ] || return 1
+  ( confine_repo . "--src" ) >/dev/null 2>&1 || return 1
+  confine_repo . "--src"
+  [ -n "${CONFINE_PREFIX:-}" ] || return 1
+  SRC_KIND=repo
+  SRC_ABS=$CONFINE_REPO
+}
 # src_arg <value>: a copy git-ro.sh copy made in R, the top level of a repository (SRC_KIND repo), or a
 # directory whose files are copied (SRC_KIND tree). Sets SRC_ABS (physical) and SRC_SHOWN.
 src_arg() {
@@ -221,6 +234,7 @@ src_arg() {
       false)
         top=$(hgit "$phys" rev-parse --show-toplevel 2>/dev/null) || refuse "git cannot describe the repository at --src: $SRC_SHOWN"
         if ! confine_phys "$top" || [ "$CONFINE_PHYS" != "$phys" ]; then
+          src_enclosing && return 0
           SRC_KIND=tree
           SRC_ABS=$phys
           return 0
@@ -232,6 +246,7 @@ src_arg() {
     SRC_ABS=$CONFINE_REPO
     return 0
   elif confine_no_repo "$?" "$out"; then
+    src_enclosing && return 0
     SRC_KIND=tree
     SRC_ABS=$phys
   else
@@ -833,7 +848,7 @@ if [ "$SRC_KIND" = repo ]; then
     hgit "$S/src" "${APPLY[@]}" --whitespace=nowarn -- "$S/patch" </dev/null >&9 2>&9 ||
       finish 3 "$PATCH_REL does not apply to $SHA"
   fi
-  printf '>> the copy: %s at %s%s\n' "$SRC_SHOWN" "$SHA" "$how" >&9
+  printf '>> the copy: %s at %s%s%s\n' "$SRC_SHOWN" "$SHA" "$how" "${CONFINE_PREFIX:+; the working directory is ${CONFINE_PREFIX%/} in it}" >&9
 else
   printf '>> the copy: the files of %s, links as links, without run directories, the store, target/ and node_modules/\n' "$SRC_SHOWN" >&9
   # Each name in any letter case: a volume that ignores case finds audit_1 under the name AUDIT_1.
