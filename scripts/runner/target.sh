@@ -476,6 +476,14 @@ case "$ACTION" in
 esac
 GIT=$(command -v git)
 CLONE=1 EXPORT_WHY=""
+# partial_complete <commit>: status 0 when the repository at SRC_ABS holds the commit's tree and every object
+# in it, as git rev-list --objects --no-walk --missing=print says, which prints a missing object as ?<id>
+# and fetches nothing (hgit sets GIT_NO_LAZY_FETCH), as git-ro.sh copy asks it.
+partial_complete() {
+  local out
+  out=$(hgit_tree "$SRC_ABS" rev-list --objects --no-walk --missing=print "$1" 2>/dev/null </dev/null) || return 1
+  case "$out" in '?'*|*$'\n?'*) return 1 ;; esac
+}
 if [ "$SRC_KIND" = repo ]; then
   # The May-2024 clone fixes (CVE-2024-32004, CVE-2024-32465), as git-ro.sh copy requires them. Without them
   # target.sh never clones: strict mode stops, and otherwise the copy is written from git's read-only
@@ -520,7 +528,20 @@ if [ "$SRC_KIND" = repo ]; then
   fi
   confine_partial_clone "$SRC_ABS" >/dev/null
   case $? in
-    0) blocker "$SRC_SHOWN is a partial clone: a copy would lack the objects it never fetched, and nothing is fetched (Rule 11c) — nothing was copied or built." ;;
+    0)
+      [ "$CONFINE_STRICT" = 0 ] ||
+        blocker "$SRC_SHOWN is a partial clone: a copy would lack the objects it never fetched, and nothing is fetched (Rule 11c) — nothing was copied or built."
+      # Outside strict mode the revision's files can all be there (a blobless clone holds those of its
+      # checkout): then the copy is written from git's plumbing, which fetches nothing.
+      PSHA=$(hgit_tree "$SRC_ABS" rev-parse --verify --quiet --end-of-options "${REV:-HEAD}^{commit}" 2>/dev/null </dev/null) &&
+        [ -n "$PSHA" ] || blocker "$(confine_text "${REV:-HEAD}") is not a commit in $SRC_SHOWN — nothing was copied or built."
+      partial_complete "$PSHA" ||
+        blocker "$SRC_SHOWN is a partial clone, and $PSHA names an object it never fetched: a copy would lack it, and nothing is fetched (Rule 11c) — nothing was copied or built."
+      if [ "$CLONE" = 1 ]; then
+        CLONE=0
+        EXPORT_WHY="it is a partial clone, and every blob of $PSHA is present"
+      fi
+      echo ">> note: --src $SRC_SHOWN is a partial clone, and every blob of $PSHA is present, so target.sh copies the tracked files of the commit with git's read-only plumbing, with nothing fetched; strict mode stops here (Rule 11f)" ;;
     2) blocker "git cannot read the config of $SRC_SHOWN, so a partial clone cannot be ruled out — nothing was copied or built." ;;
   esac
 fi

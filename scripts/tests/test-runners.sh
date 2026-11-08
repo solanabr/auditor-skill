@@ -973,8 +973,27 @@ PC=$T/partwt
 tgit clone -q --no-local "$WT" "$PC" 2>/dev/null
 tgit -C "$PC" config extensions.partialClone origin
 ( cd "$PC" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$PC/audit_1/exec-mode"
+# Outside strict mode, when the revision's tree and every object in it are there (git rev-list --objects
+# --missing=print, fetching nothing), the copy comes from git's read-only plumbing, with a note; strict mode
+# stops as today.
+settings FAKE_SHOW=programs/demo/src/lib.rs
 run "$TARGET" "$PC" -- cargo-test --run audit_1 --src .
-check "a partial clone: exit 3 before anything is copied" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: . is a partial clone' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+PCSHA=$(tgit -C "$PC" rev-parse HEAD)
+check "a partial clone whose revision has every blob: exit 0, the note, and the build sees HEAD (v2)" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF \">> note: --src . is a partial clone, and every blob of $PCSHA is present, so target.sh copies the tracked files of the commit with git's read-only plumbing, with nothing fetched; strict mode stops here (Rule 11f)\" '$T/out' && grep -qxF 'show: // v2' '$T/calls'"
+settings
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$PC" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+  check "... strict mode: exit 3 before anything is copied, as today" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: . is a partial clone: a copy would lack the objects it never fetched' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+fi
+# A blobless clone with nothing checked out lacks the files of its revision: a blocker in both modes.
+PB=$T/blobless
+tgit clone -q --no-local --bare "$WT" "$T/blobless-src.git" 2>/dev/null && tgit -C "$T/blobless-src.git" config uploadpack.allowFilter true
+tgit clone -q --no-checkout --filter=blob:none "file://$T/blobless-src.git" "$PB" 2>/dev/null
+( cd "$PB" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$PB/audit_1/exec-mode"
+run "$TARGET" "$PB" -- cargo-test --run audit_1 --src .
+check "a partial clone whose revision names an object it never fetched: exit 3, nothing fetched or copied" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: . is a partial clone, and [0-9a-f]* names an object it never fetched: a copy would lack it, and nothing is fetched (Rule 11c) — nothing was copied or built.\$' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 # git without the May-2024 clone fixes never clones the source: strict mode stops; otherwise target.sh writes the
 # tracked files of the commit itself, from git ls-tree and git cat-file --batch, and a note says so. The
 # stand-in names its version and logs every git command it runs.
