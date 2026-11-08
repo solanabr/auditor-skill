@@ -1284,8 +1284,13 @@ commands/diff-audit.md	(`deps.sh` adds a row to `audit_<n>/disclosures.tsv` befo
 commands/quick-scan.md	Skip no kept file and cut none short by choice, not even to save cost or time; Coverage & Limitations names only a file the Read tool could not open.
 commands/diff-audit.md	Read each vector file whole, with no line limit, several in each message. Read every selected file before you start the report
 commands/diff-audit.md	Skip no selected file and cut no vector file short by choice, not even to save cost or time; name there only one the Read tool could not open.
-commands/quick-scan.md	Never give a budget, turn or time limit as the reason a file went unread: a session that reaches one is stopped there
-commands/diff-audit.md	Never give a budget, turn or time limit as the reason a file went unread: a session that reaches one is stopped there
+commands/quick-scan.md	Reading every kept file whole adds about USD 1–2 to a scan, even at 80 files
+commands/diff-audit.md	Reading every selected vector file whole adds about USD 1–2 at most, even at 80 files
+commands/quick-scan.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
+commands/diff-audit.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
+commands/quick-scan.md	never stop reading early to save spend, and never give a budget, turn or time limit as the reason a file went unread
+commands/diff-audit.md	never stop reading early to save spend, and never give a budget, turn or time limit as the reason a file went unread
+docs/ci.md	Give a quick-scan in CI `--max-budget-usd 10`.
 commands/diff-audit.md	first, with the Read tool, before any verdict of this step, whatever the size of the change
 commands/diff-audit.md	Each verdict names the checklist item id or the vector step it rests on
 commands/deep-review.md	Each verdict names the checklist item id or the vector step it rests on
@@ -1327,6 +1332,15 @@ commands/triage.md	  - Edit(/audit_*/**)
 skills/dnr-analyze/SKILL.md	  - Edit(/incident_*/**)
 SKILL.md	  - Edit(/audit_*/**)
 PINS
+# Claude Code fills $ARGUMENTS and a $ followed by digits and then no letter, digit or _ (its pattern,
+# \$ARGUMENTS\[\d+\]|\$ARGUMENTS|\$\d+(?!\w)) with the invocation's arguments, in a command's or a skill's
+# body, so a cost written as $1-2 or $2.84 would print an argument; the bodies write USD 2.84.
+for f in commands/*.md skills/*/SKILL.md SKILL.md; do
+  [ -f "$f" ] || continue
+  n=$(grep -c -E '[$][0-9]+([^A-Za-z0-9_]|$)' "$f")
+  if [ "$n" = 0 ]; then ok "$f holds no \$<digits> that Claude Code would fill with an argument"
+  else bad "$f holds a \$<digits> that Claude Code fills with an argument: $(grep -n -m 1 -E '[$][0-9]+([^A-Za-z0-9_]|$)' "$f" | cut -c1-120)"; fi
+done
 # A run-directory edit stays anchored at the folder the session started in, Edit(/audit_*/**) or
 # Edit(/incident_*/**): after a cd, the bare form matches the new folder's audit_*, not the run directory.
 for f in commands/*.md skills/*/SKILL.md SKILL.md; do
@@ -1398,6 +1412,8 @@ commands/diff-audit.md	write the selected list as text in a message
 templates/pr-report.md	Outside services the run contacted
 templates/pr-report.md	that nothing went out where the output shows the tool used
 commands/diff-audit.md	records each service it contacts
+commands/quick-scan.md	so one still running has reached none
+commands/diff-audit.md	so one still running has reached none
 commands/diff-audit.md	no longer matches the write rule for `audit_*/`
 commands/deep-review.md	no longer matches the write rule for `audit_*/`
 GONE
