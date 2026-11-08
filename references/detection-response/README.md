@@ -207,8 +207,8 @@ the next free `<n>`, writes its `.gitignore` of `*` first and makes
 confirms which, and only when
 `"<auditor-skill root>/scripts/rundir.sh" check incident_<k>` prints
 `ok incident_<k>`: a real directory directly in the working directory, holding no
-symbolic link that leads out of it (in strict mode, none at all), tracked by no
-repository in any letter case, whose `.gitignore` holds exactly `*`
+symbolic link that leads out of it or to nothing (in strict mode, none at all),
+tracked by no repository in any letter case, whose `.gitignore` holds exactly `*`
 (`OUTPUT-RULES.md` Rule 11d). Never write into a tracked `incident_*`. `collect.sh` and
 `snapshot-program.sh` refuse, with exit 2 and before writing anything, a run
 directory that fails those checks, one that `find` cannot check, one that git
