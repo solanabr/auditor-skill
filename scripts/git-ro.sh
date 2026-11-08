@@ -344,7 +344,9 @@ run_copy() { # run_copy <dir> <R>
   # it), so the clone keeps git's own ownership check: no global config. In default mode a git without the
   # clone fixes, or a source another user owns, gets the copy through plumbing instead, which runs no
   # upload-pack.
-  if [ "$CONFINE_STRICT" != 1 ] && { [ "$fixed" -eq 0 ] || [ ! -O "$src" ] || [ ! -O "$CONFINE_GIT_DIR" ] || [ ! -O "$CONFINE_COMMON_DIR" ]; }; then
+  # Owned as git's own check judges it: the work tree, the git directory, and a .git file naming it.
+  if [ "$CONFINE_STRICT" != 1 ] && { [ "$fixed" -eq 0 ] || [ ! -O "$src" ] || [ ! -O "$CONFINE_GIT_DIR" ] ||
+    [ ! -O "$CONFINE_COMMON_DIR" ] || { [ -f "$src/.git" ] && [ ! -O "$src/.git" ]; }; }; then
     how=plumbing
   fi
   dest=src.git
