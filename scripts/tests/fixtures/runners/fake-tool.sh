@@ -92,15 +92,17 @@ json.dump({"version": "2.1.0", "runs": [{"results": [{"ruleId": "r%d" % i} for i
     say "avm-link: $( [ -L "$HOME/.avm" ] && ls -l "$HOME/.avm" | sed 's/.* -> //')"
     say "tools: $( [ -L "$HOME/.cache/solana" ] && ls -l "$HOME/.cache/solana" | sed 's/.* -> //')"
     say "tool-links: $(for l in "$HOME/.cache/solana"/*; do [ -L "$l" ] && printf '%s -> %s ' "${l##*/}" "$(ls -l "$l" | sed 's/.* -> //')"; done)"
-    # --help as anchor-cli FAKE_ANCHOR lists its options: 1.2 (build's --no-idl and --tools-version, idl build's
-    # --out-ts), 1.1 (--no-idl and --out-ts), or 0.29, the default (neither).
+    # --help as anchor-cli FAKE_ANCHOR lists its options: 1.2 (build's --ignore-keys, --no-idl and
+    # --tools-version, idl build's --out-ts), 1.1 (--ignore-keys, --no-idl and --out-ts), 0.31 (--no-idl and
+    # --out-ts, no --ignore-keys), or 0.29, the default (none of them).
     case " $* " in
       *" --help "*)
         case "$1 ${FAKE_ANCHOR:-0.29}" in
-          "build 1.2") printf '      --no-idl\n      --tools-version <TOOLS_VERSION>\n' ;;
-          "build 1.1") printf '      --no-idl\n' ;;
+          "build 1.2") printf '      --ignore-keys\n      --no-idl\n      --tools-version <TOOLS_VERSION>\n' ;;
+          "build 1.1") printf '      --ignore-keys\n      --no-idl\n' ;;
+          "build 0.31") printf '      --no-idl\n      --arch <ARCH>\n' ;;
           "build 0.29") printf '      --skip-lint\n' ;;
-          "idl 1.2"|"idl 1.1") printf '  -t, --out-ts <OUT_TS>\n' ;;
+          "idl 1.2"|"idl 1.1"|"idl 0.31") printf '  -t, --out-ts <OUT_TS>\n' ;;
         esac
         exit 0 ;;
     esac

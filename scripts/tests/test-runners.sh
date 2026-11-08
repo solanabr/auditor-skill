@@ -499,7 +499,7 @@ rm -rf "$CLEANHOME/.cache"
 mkdir -p "$CLEANHOME/.cache/solana/v1.51/platform-tools"
 run "$TARGET" "$WT" TOOLS_VERSION=v1.51 HTTPS_PROXY="$PROXY" -- anchor-build --run audit_1 --src . --program demo
 check "natively, anchor-build with that cargo build-sbf and TOOLS_VERSION's tools there: anchor build without those options, TOOLS_VERSION after --, its version not asked" calls_are \
-  "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|anchor build --ignore-keys -p demo -- --tools-version v1.51|"
+  "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|anchor build -p demo -- --tools-version v1.51|"
 check "... offline in the throwaway HOME, that version's tools linked, without the proxy, and the note" \
   sh -c "[ '$RC' = 0 ] && grep -qxF '>> note: this cargo build-sbf has no --install-only, --skip-tools-install or --offline: in native mode the build runs offline in the throwaway HOME, with platform-tools v1.51 from ~/.cache/solana' '$T/out' && awk '/^== anchor build/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'home: $S/home' '$T/blk' && grep -qxF 'tool-links: v1.51 -> $CLEANHOME/.cache/solana/v1.51 ' '$T/blk' && grep -qxF 'env: CARGO_NET_OFFLINE=true' '$T/blk' && ! grep -q '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]=' '$T/blk'"
 rm -rf "$CLEANHOME/.cache"
@@ -519,7 +519,7 @@ if [ "$ISOLATED_OK" = 1 ]; then
     sh -c "awk '/^== cargo build-sbf --sbf-out-dir/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'cwd: $S/src' '$T/blk' && grep -qxF 'home: $CLEANHOME' '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk' && ! grep -q '^env: CARGO_NET_OFFLINE=' '$T/blk'"
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated TOOLS_VERSION=v1.54 HTTPS_PROXY="$PROXY" -- anchor-build --run audit_1 --src . --program demo
   check "isolated mode, anchor-build with that cargo build-sbf: anchor build without those options, TOOLS_VERSION after --" calls_are \
-    "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|anchor build --ignore-keys -p demo -- --tools-version v1.54|"
+    "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|anchor build -p demo -- --tools-version v1.54|"
   check "... with the real HOME and the proxy, and the note" \
     sh -c "[ '$RC' = 0 ] && grep -qxF '$OLDSBF' '$T/out' && awk '/^== anchor build/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'home: $CLEANHOME' '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk'"
   run "$TARGET" "$WT" AUDITOR_STRICT=1 HTTPS_PROXY="$PROXY" -- build-sbf --run audit_1 --src .
@@ -587,8 +587,8 @@ run "$TARGET" "$WT" -- clippy --run audit_1 --src .
 check "clippy that is not installed: exit 3" sh -c "[ '$RC' = 3 ] && grep -q 'clippy is not installed for the pinned toolchain' '$T/err' && ! grep -q '^== cargo clippy --offline' '$T/calls'"
 settings
 run "$TARGET" "$WT" -- anchor-build --run audit_1 --src . --program demo
-check "anchor-build: the downloads, anchor's own options asked, then anchor build --ignore-keys -p <program> -- --skip-tools-install --offline" \
-  calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|cargo build-sbf --install-only|anchor build --ignore-keys -p demo -- --skip-tools-install --offline|"
+check "anchor-build: the downloads, anchor's own options asked, then anchor build -p <program> -- --skip-tools-install --offline (an anchor whose build has neither --ignore-keys nor --no-idl)" \
+  calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|cargo build-sbf --install-only|anchor build -p demo -- --skip-tools-install --offline|"
 check "... and the program's .so is kept from target/deploy" sh -c "grep -q '1 .so in audit_1/exec/anchor-build-[0-9]*/: demo.so' '$T/out'"
 check "... the build in the throwaway HOME, with its keypair" in_blocks '^== anchor build' '^keypair: yes$'
 check "... and with no ~/.avm, no AVM_HOME and no .avm link" sh -c "awk '/^== anchor build/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'avm: unset' '$T/blk' && grep -qxF 'avm-link: ' '$T/blk'"
@@ -608,7 +608,7 @@ run "$TARGET" "$WT" AVM_HOME="$T/no-such-avm" -- anchor-build --run audit_1 --sr
 check "... and one that does not exist is not passed" in_blocks '^== anchor build' '^avm: unset$'
 run "$TARGET" "$WT" HTTPS_PROXY="$PROXY" -- anchor-test --run audit_1 --src .
 check "anchor-test: npm ci --ignore-scripts first, then the build, then anchor test against no validator and no deploy" \
-  calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|cargo build-sbf --install-only|npm ci --ignore-scripts --no-audit --no-fund|anchor build --ignore-keys -- --skip-tools-install --offline|anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet --provider.wallet $S/home/.config/solana/id.json|"
+  calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|cargo build-sbf --install-only|npm ci --ignore-scripts --no-audit --no-fund|anchor build -- --skip-tools-install --offline|anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet --provider.wallet $S/home/.config/solana/id.json|"
 check "... npm ci gets the proxy, its own empty config files and the git on PATH" \
   sh -c "awk '/^== npm ci/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk' && grep -qxF 'env: npm_config_userconfig=$S/npm/userconfig' '$T/blk' && grep -qxF 'env: npm_config_globalconfig=$S/npm/globalconfig' '$T/blk' && grep -qxF 'env: npm_config_git=$T/sys/git' '$T/blk' && grep -qxF 'env: npm_config_ignore_scripts=true' '$T/blk' && grep -qxF 'userconfig-bytes: 0' '$T/blk'"
 check "... and NODE_OPTIONS and npm's node-options preload target.sh's module into npm" \
@@ -647,6 +647,12 @@ settings FAKE_ANCHOR=1.1
 run "$TARGET" "$WT" TOOLS_VERSION=v1.58 -- anchor-build --run audit_1 --src . --program demo
 check "Anchor 1.1 with TOOLS_VERSION: --no-idl, and TOOLS_VERSION after --, since its anchor build has no --tools-version" calls_are \
   "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|cargo build-sbf --install-only --tools-version v1.58|anchor build --ignore-keys --no-idl -p demo -- --skip-tools-install --offline --tools-version v1.58|"
+# Anchor 0.31's anchor build has --no-idl but no --ignore-keys, which it would reject (as anchor-cli 0.31.1 does,
+# with exit 2): neither the learning run nor the build gets it, and anchor-test still builds the IDL.
+settings FAKE_ANCHOR=0.31
+run "$TARGET" "$WT" -- anchor-test --run audit_1 --src .
+check "Anchor 0.31: no --ignore-keys anywhere, --no-idl, then anchor idl build and anchor test" calls_are \
+  "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|anchor build --no-idl -- --skip-tools-install --offline|cargo build-sbf --install-only|npm ci --ignore-scripts --no-audit --no-fund|anchor build --no-idl -- --skip-tools-install --offline|anchor idl build -p demo -o $S/src/target/idl/demo.json -t $S/src/target/types/demo.ts|anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet --provider.wallet $S/home/.config/solana/id.json|"
 settings FAKE_ANCHOR=1.2 FAKE_ANCHOR_TOOLS=v1.57
 run "$TARGET" "$WT" HTTPS_PROXY="$PROXY" -- anchor-test --run audit_1 --src .
 check "anchor-test, Anchor 1.2: anchor build --no-idl, anchor idl build for the program built, then anchor test" calls_are \

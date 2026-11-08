@@ -12,10 +12,10 @@
 #
 # The actions. Each runs a fixed command line in the copy, at --dir or at its top:
 #   anchor-build  anchor build --ignore-keys --no-idl [--tools-version <v>] [-p <program>] -- --skip-tools-install
-#                 --offline, where this anchor builds its IDL with cargo test (anchor build --help lists --no-idl
-#                 and anchor idl build --help --out-ts: Anchor 0.30 and later); with an older one, without
-#                 --no-idl. <v> is anchor build's own --tools-version where it has one (Anchor 1.2 and later),
-#                 else it goes after --
+#                 --offline. --ignore-keys only where anchor build --help lists it (Anchor 1.0 and later); --no-idl
+#                 where this anchor builds its IDL with cargo test (anchor build --help lists --no-idl and anchor
+#                 idl build --help --out-ts: Anchor 0.30 and later). <v> is anchor build's own --tools-version
+#                 where it has one (Anchor 1.2 and later), else it goes after --
 #   anchor-test   npm ci --ignore-scripts --no-audit --no-fund when that directory holds package-lock.json,
 #                 then the anchor-build command, then, where --no-idl was used, anchor idl build -p <program> -o
 #                 target/idl/<program>.json -t target/types/<program>.ts for each program built, in a step with
@@ -1134,14 +1134,16 @@ iso_value() {
   for e in ${ISO_ENV[@]+"${ISO_ENV[@]}"}; do case "$e" in "$1="*) v=${e#*=} ;; esac; done
   printf '%s' "$v"
 }
-# anchor_options: what this anchor takes, from its own help (anchor, not the copy's code): ANCHOR_NOIDL=1 when
-# anchor build has --no-idl and anchor idl build has --out-ts (Anchor 0.30 and later, whose IDL build runs
-# cargo test), ANCHOR_TV=1 when anchor build has its own --tools-version (Anchor 1.2 and later).
+# anchor_options: what this anchor takes, from its own help (anchor, not the copy's code): AB, anchor build
+# with --ignore-keys where it has one (Anchor 1.0 and later; 0.31 has none), ANCHOR_NOIDL=1 when anchor build
+# has --no-idl and anchor idl build has --out-ts (Anchor 0.30 and later, whose IDL build runs cargo test),
+# ANCHOR_TV=1 when anchor build has its own --tools-version (Anchor 1.2 and later).
 anchor_options() {
   local h i
   h=$(cd "$AD" && iso_run "${OFF[@]}" anchor build --help 2>/dev/null </dev/null) || h=""
   i=$(cd "$AD" && iso_run "${OFF[@]}" anchor idl build --help 2>/dev/null </dev/null) || i=""
-  ANCHOR_NOIDL=0 ANCHOR_TV=0
+  ANCHOR_NOIDL=0 ANCHOR_TV=0 AB=(anchor build)
+  case "$h" in *--ignore-keys*) AB+=(--ignore-keys) ;; esac
   case "$h" in *--no-idl*) case "$i" in *--out-ts*) ANCHOR_NOIDL=1 ;; esac ;; esac
   case "$h" in *'--tools-version <'*) ANCHOR_TV=1 ;; esac
   printf '>> anchor build --help: --no-idl and anchor idl build %s; its own --tools-version %s\n' \
@@ -1159,7 +1161,7 @@ anchor_tools() {
     printf '#!/bin/sh\ncase " $* " in *" --version "*|*" --help "*|*" -V "*|*" -h "*) exec "%s" "$@" ;; esac\nprintf "%%s\\n" "$*" >> "%s/rec/args"\nexit 0\n' \
       "$real" "$S" > "$S/rec/cargo-build-sbf" && chmod +x "$S/rec/cargo-build-sbf"; } ||
     finish 3 "cannot write the recording cargo-build-sbf in $S"
-  step "$AD" "${OFF[@]}" "PATH=$S/rec:$(iso_value PATH)" anchor build --ignore-keys --no-idl ${PKG[@]+"${PKG[@]}"} -- --skip-tools-install --offline
+  step "$AD" "${OFF[@]}" "PATH=$S/rec:$(iso_value PATH)" "${AB[@]}" --no-idl ${PKG[@]+"${PKG[@]}"} -- --skip-tools-install --offline
   if [ -f "$S/rec/args" ]; then
     while IFS= read -r line; do
       case " $line " in *" --tools-version "*) rest=${line#*--tools-version }; v=${rest%% *}; break ;; esac
@@ -1307,7 +1309,6 @@ print(path)' "$S/metadata.json" "$PACKAGE" "$S/src") 2>/dev/null) && [ -n "$mp" 
     # --no-idl where this anchor builds its IDL with cargo test (anchor_options), which would get the build-sbf
     # options after -- and the RUSTUP_TOOLCHAIN pin: anchor-test builds the IDL in a step of its own
     # (idl_build). TOOLS_VERSION is anchor build's own --tools-version where it has one, else after --.
-    AB=(anchor build --ignore-keys)
     [ "$ANCHOR_NOIDL" = 0 ] || AB+=(--no-idl)
     SBF_ARGS=()
     if [ -n "${TV[*]-}" ]; then
