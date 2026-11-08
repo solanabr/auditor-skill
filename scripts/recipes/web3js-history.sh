@@ -22,7 +22,9 @@
 #
 # --repo <dir> is "." (the default) or a path relative to the working directory, with no "..", and no symbolic
 # link on the way, that is the top level of a repository whose git directory lies inside the working directory
-# (scripts/lib/confine.sh, as scripts/git-ro.sh takes it). --git-dir names a copy that scripts/git-ro.sh copy
+# (scripts/lib/confine.sh, as scripts/git-ro.sh takes it, in default and in strict mode). In default mode "." may
+# also lie below the top level of a repository that tracks something there: the recipe then reads the lockfiles
+# and manifests of that whole repository, as a workspace keeps them at its top. --git-dir names a copy that scripts/git-ro.sh copy
 # made in a run directory <R>, audit_<n> or incident_<n>. A --git-dir copy holds the checkout's own branches and
 # tags but no refs/remotes, so "every branch" then covers those only.
 #
@@ -107,7 +109,7 @@ note_history() { # the notes for a partial or a shallow clone
 }
 
 main() {
-  local a repo=. given=0 gitdir="" what="the working directory" rc=0 st1
+  local a repo=. given=0 gitdir="" what="the working directory" rc=0 st1 top=""
   local -a st=()
   for a in "$@"; do
     case "$a" in *[[:cntrl:]]*) refuse "an argument holds a control character: $(confine_text "$a")" ;; esac
@@ -125,19 +127,22 @@ main() {
       *) refuse "$USAGE" ;;
     esac
   done
-  if [ -n "$gitdir" ]; then open_copy "$gitdir"; else confine_repo "$repo" "$what"; fi
+  if [ -n "$gitdir" ]; then open_copy "$gitdir"; else confine_repo "$repo" "$what" 0; fi
   REPO=$CONFINE_REPO
+  # In a session below the repository's top level, the manifests and lockfiles of the whole repository: a
+  # workspace keeps its lockfile at its top.
+  [ -z "$CONFINE_PREFIX" ] || top=':(top)'
   note_history
   printf '%s\n' '== single-line form: <commit> <subject> of each commit that adds or removes a known-bad release'
   hgit_tree "$REPO" log --no-textconv --no-ext-diff --ignore-submodules=none --all --full-history --root \
     --diff-merges=first-parent --no-patch --oneline --no-decorate --text -G"$AX|$W3" \
-    -- '*lock*' '*package.json' '*npm-shrinkwrap.json' </dev/null
+    -- "$top*lock*" "$top*package.json" "$top*npm-shrinkwrap.json" </dev/null
   st1=$?
   printf '%s\n' '== key-line form: <commit> <file> <line> of each version line under a known-bad entry'
   hgit_text_tree "$REPO" -c diff.noprefix=false -c diff.mnemonicPrefix=false -c diff.srcPrefix=a/ -c diff.dstPrefix=b/ \
     log --no-textconv --no-ext-diff --ignore-submodules=none --all --full-history --root \
     --diff-merges=first-parent -p -U3 --no-color --format='commit %h' --text -G"$KL" \
-    -- '*package-lock.json' '*npm-shrinkwrap.json' </dev/null | awk "$KL_AWK"
+    -- "$top*package-lock.json" "$top*npm-shrinkwrap.json" </dev/null | awk "$KL_AWK"
   st=("${PIPESTATUS[@]}")
   for rc in "$st1" "${st[0]}" "${st[1]}"; do
     [ "$rc" -eq 0 ] || exit "$rc"

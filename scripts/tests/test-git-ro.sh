@@ -4,8 +4,10 @@
 # fsmonitor, external diff, textconv, clean, smudge and process filters, a merge driver, signature
 # programs, a pretty alias, aliases, an include, hooks through core.hooksPath and .git/hooks), a
 # submodule whose git directory lies outside, and a partial clone whose promisor remote is a custom
-# helper or ext::. Runs the case file fixtures/git-ro/cases.txt, every allowed form, the copy and its git
-# version gate, and checks the argument order and environment git receives. Every case runs under each
+# helper or ext::. Runs the case file fixtures/git-ro/cases.txt (its strict-mode rows in both modes), every
+# allowed form, the copy and its git version gate in both modes, reads from a subdirectory of a repository,
+# blame's ignore-revs copy, another user's checkout and a linked worktree, and checks the argument order
+# and environment git receives. Every case runs under each
 # bash on the machine (/bin/bash and the bash running this suite, when they differ) and must print the
 # same under each.
 # Needs git and awk; no network. Usage (from the repo root): bash scripts/tests/test-git-ro.sh
@@ -303,7 +305,10 @@ check "... and ran nothing the copied config names" nomarks
 # =================================================================================================
 # The case file: hostile argument vectors, each refused with its one line.
 # =================================================================================================
-ncase=0
+# A plain status holds in both modes, so its case runs once, in default mode; one ending in s runs as
+# written under AUDITOR_STRICT=1, then in default mode, where it exits 0 with notes on stderr alone.
+notes_only() { [ -s "$T/err" ] && ! grep -qv '^git-ro: note: ' "$T/err"; }
+ncase=0 nstrict=0
 while IFS= read -r line; do
   case "$line" in ''|'#'*) continue ;; esac
   want_rc=${line%%$'\t'*}
@@ -311,17 +316,41 @@ while IFS= read -r line; do
   want_err=${rest%%$'\t'*}
   rest=${rest#*$'\t'}
   IFS=$'\t' read -r -a args <<< "$rest"
-  run "$WT" "${args[@]}"
   ncase=$((ncase + 1))
-  if [ "$RC" = "$want_rc" ] && err_is "$want_err" && out_empty; then ok "case: git-ro.sh ${args[*]}"
-  else ko "case: git-ro.sh ${args[*]} -> status $RC, stderr: $(cat "$T/err")"; fi
+  case "$want_rc" in
+    *s)
+      nstrict=$((nstrict + 1))
+      AUDITOR_STRICT=1 run "$WT" "${args[@]}"
+      if [ "$RC" = "${want_rc%s}" ] && err_is "$want_err" && out_empty; then ok "case, strict mode: git-ro.sh ${args[*]}"
+      else ko "case, strict mode: git-ro.sh ${args[*]} -> status $RC, stderr: $(cat "$T/err")"; fi
+      run "$WT" "${args[@]}"
+      if [ "$RC" = 0 ] && notes_only && nomarks; then ok "case, default mode: git-ro.sh ${args[*]} goes on with a note"
+      else ko "case, default mode: git-ro.sh ${args[*]} -> status $RC, stderr: $(cat "$T/err")"; fi ;;
+    *)
+      run "$WT" "${args[@]}"
+      if [ "$RC" = "$want_rc" ] && err_is "$want_err" && out_empty; then ok "case: git-ro.sh ${args[*]}"
+      else ko "case: git-ro.sh ${args[*]} -> status $RC, stderr: $(cat "$T/err")"; fi ;;
+  esac
 done < "$CASES"
-check "the case file has cases ($ncase)" test "$ncase" -gt 200
+check "the case file has cases ($ncase), $nstrict of them strict mode's alone" test "$ncase" -gt 200 -a "$nstrict" -ge 4
+UNREAD="git-ro: note: --repo keeps its git directory outside the working directory, and nothing there ties it back to this working tree, so its history is not read; strict mode refuses this (Rule 11f)"
+run "$WT" --repo escape log
+check "... where a git directory outside that nothing ties back is noted, and its history not read" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0||$UNREAD"
+run "$WT" --repo alt log --format=%s
+check "... and a repository with alternates is read, after its note" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|alt|git-ro: note: --repo borrows objects from another repository (objects/info/alternates), so its history is read from there too; strict mode refuses this (Rule 11f)"
+before=$(ls "$WT/audit_1" | tr '\n' ' ')
+run_once "$WT" copy escape audit_1
+check "... and copy of a repository whose git directory nothing ties back copies nothing" \
+  test "$RC|$(cat "$T/out")|$(ls "$WT/audit_1" | tr '\n' ' ')" = "0||$before"
 # cdir, whose commondir names a repository outside, is this suite's alone: the case file is shared with
 # test-preapproved-entrypoints.sh, whose fixture has no cdir.
-run "$WT" --repo cdir log
-check "--repo cdir (a commondir file naming a repository outside) is refused" \
+AUDITOR_STRICT=1 run "$WT" --repo cdir log
+check "in strict mode --repo cdir (a commondir file naming a repository outside) is refused" \
   sh -c "[ '$RC' = 64 ] && [ ! -s '$T/out' ] && [ \"\$(cat '$T/err')\" = 'git-ro: refused: --repo keeps its git directory outside the working directory: cdir' ]"
+run "$WT" --repo cdir log
+check "... and in default mode noted, its history not read" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0||$UNREAD"
 check "no case ran a configured program, hook or helper" nomarks
 run "$WT"
 check "no arguments: usage, exit 64" \
@@ -575,6 +604,11 @@ check "... and only the hardened environment" \
   test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_ALLOW_PROTOCOL|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
 check "... with GIT_ALLOW_PROTOCOL=file, so the copy's clone permits only the local-file transport" \
   grep -qx "ENV GIT_ALLOW_PROTOCOL=file" "$T/rec.log"
+# The clone's upload-pack runs in the source without hgit's -c pins (git's local transport clears
+# GIT_CONFIG_PARAMETERS for it), so the clone keeps git's own ownership check, in default mode too.
+check "... and with no global git config, in default mode too" \
+  awk -F '\037' '$1 == "ARGV" { c = 0; for (i = 2; i <= NF; i++) if ($i == "clone") c = 1 } $1 == "ARGV" && c { want = 1; next }
+    want && /^ENV GIT_CONFIG_GLOBAL=/ { found = ($0 == "ENV GIT_CONFIG_GLOBAL=/dev/null"); want = 0 } END { exit !found }' "$T/rec.log"
 check "... and runs no hook" nomarks
 
 # PATH: entries inside the working directory, relative ones and "." are dropped before anything runs.
@@ -672,16 +706,40 @@ fi
 # programs and templates.
 # =================================================================================================
 mkdir -p "$T/oldgit"
-printf '#!/bin/sh\nif [ "$1" = --version ]; then cat "%s/oldgit/version"; exit 0; fi\nexec "%s" "$@"\n' "$T" "$REAL_GIT" > "$T/oldgit/git"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/oldgit/calls"\nfor a in "$@"; do :; done\nif [ "$a" = --version ]; then cat "%s/oldgit/version"; exit 0; fi\nexec "%s" "$@"\n' "$T" "$T" "$REAL_GIT" > "$T/oldgit/git"
 chmod +x "$T/oldgit/git"
 OLD='git-ro: refused: copy needs git with the May-2024 clone fixes: 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, or 2.46 or later'
+FIXES='2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, 2.46 and later'
 for v in 2.39.3 2.40.1 2.41.0 2.42.1 2.43.3 2.44.0 2.45.0 2.38.9 1.9.9 'garbage' '2'; do
   printf 'git version %s\n' "$v" > "$T/oldgit/version"
   before=$(ls "$WT/audit_1" | tr '\n' ' ')
-  PATH="$T/oldgit:$PATH" run "$WT" copy . audit_1
-  check "copy with git $v: exit 69 and nothing copied" \
+  AUDITOR_STRICT=1 PATH="$T/oldgit:$PATH" run "$WT" copy . audit_1
+  check "in strict mode copy with git $v: exit 69 and nothing copied" \
     sh -c "[ '$RC' = 69 ] && [ \"\$(cat '$T/err')\" = '$OLD' ] && [ \"\$(ls '$WT/audit_1' | tr '\n' ' ')\" = '$before' ]"
 done
+# In default mode (addendum H) such a git clones nothing: copy makes the bare copy with git's plumbing,
+# with a note, and the copy holds what a clone would: every branch and tag, HEAD, the same objects.
+: > "$T/oldgit/calls"
+for v in 2.39.3 2.43.0 2.34.1 'garbage'; do
+  printf 'git version %s\n' "$v" > "$T/oldgit/version"
+  PATH="$T/oldgit:$PATH" run_once "$WT" copy . audit_1
+  c=$(cat "$T/out")
+  check "in default mode copy with git $v makes a copy, with one note" \
+    test "$RC|$(cat "$T/err")" = "0|git-ro: note: this git ($v) has none of the May-2024 clone fixes for its release line ($FIXES), so cloning a repository you do not trust could run code from it: copy made $c with git's plumbing instead (pack-objects and index-pack, no clone); strict mode refuses this (Rule 11f)"
+  check "... which holds every branch and tag of the repository, and its HEAD" \
+    test "$(git --git-dir="$WT/$c" for-each-ref --format='%(objectname) %(refname)' | tr '\n' ' ')|$(git --git-dir="$WT/$c" symbolic-ref HEAD)" = \
+      "$(git -C "$WT" for-each-ref --format='%(objectname) %(refname)' refs/heads refs/tags | tr '\n' ' ')|$(git -C "$WT" symbolic-ref HEAD)"
+  check "... is whole, its objects checked" sh -c "git --git-dir='$WT/$c' fsck --no-dangling >/dev/null 2>&1"
+  check "... and is a copy git-ro reads" sh -c "cd '$WT' && '$GITRO' --git-dir '$c' log --format=%H -1 | grep -qx '$SIGNED'"
+done
+check "... while git clone never ran" sh -c "grep -q ' pack-objects ' '$T/oldgit/calls' && ! grep -q ' clone ' '$T/oldgit/calls'"
+check "... nor did a hook, a filter or a helper" nomarks
+printf 'git version 2.34.1\n' > "$T/oldgit/version"
+PATH="$T/oldgit:$PATH" run "$WT" rev-parse HEAD
+check "a read with such a git gets a note in default mode" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|$SIGNED|git-ro: note: this git (2.34.1) has none of the May-2024 clone fixes for its release line ($FIXES); git-ro's reads clone nothing, and its copy is made without git clone (Rule 11f)"
+AUDITOR_STRICT=1 PATH="$T/oldgit:$PATH" run "$WT" rev-parse HEAD
+check "... and none in strict mode" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|$SIGNED|"
 for v in 2.39.4 2.40.2 2.41.1 2.42.2 2.43.4 2.44.1 2.45.1 2.46.0 3.0.0 '2.39.5 (Apple Git-154)' 2.47.0.windows.1 2.48.0-rc1; do
   printf 'git version %s\n' "$v" > "$T/oldgit/version"
   PATH="$T/oldgit:$PATH" run_once "$WT" copy . audit_1
@@ -741,8 +799,17 @@ put "$TRK" inner/audit_3/x.txt 'x'
 commit "$TRK" -m 'nested'
 run "$TRK/inner" tracked audit_3
 check "tracked: a repository above the working directory decides" test "$(cat "$T/out")" = audit_3/x.txt
-run "$TRK/inner" log -1
-check "... but git-ro never reads that repository's history" \
+AUDITOR_STRICT=1 run "$TRK/inner" log -1
+check "... and in strict mode git-ro never reads that repository's history, saying where its top level lies" \
+  err_is 'git-ro: refused: the working directory lies below the top level of its repository (..); strict mode reads a repository only from its top level: start Claude Code there (Rule 11f)'
+run "$TRK/inner" log --format=%s -1
+check "... while in default mode it reads it from its top level (a session in a subdirectory)" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|nested|"
+mkdir -p "$TRK/untracked/deep"
+run "$TRK/untracked/deep" log -1
+check "... but not from a directory under which it tracks nothing, in either mode" \
+  err_is 'git-ro: refused: the working directory is not a git repository that git can read (none there, or another user owns it: audit a copy): .'
+AUDITOR_STRICT=1 run "$TRK/untracked/deep" log -1
+check "... (strict mode)" \
   err_is 'git-ro: refused: the working directory is not a git repository that git can read (none there, or another user owns it: audit a copy): .'
 
 # =================================================================================================
@@ -949,15 +1016,152 @@ git -C "$SH" rev-parse HEAD > "$SH/.git/info/grafts"
 if [ "$(git -C "$SH" -c advice.graftFileDeprecated=false rev-list --count HEAD 2>/dev/null)" = 1 ]; then
   ok "sanity: plain git cuts the history at the grafted commit"
 else skp "sanity: this git does not read info/grafts"; fi
-run "$SH" log --oneline
-check "a repository with info/grafts is refused" \
+AUDITOR_STRICT=1 run "$SH" log --oneline
+check "in strict mode a repository with info/grafts is refused" \
   err_is 'git-ro: refused: the working directory rewrites commit parents (info/grafts), so git would show another history; review that file: .'
+run "$SH" log --oneline
+# git itself adds a hint that info/grafts is deprecated.
+check "... and in default mode read with a note first, as the grafts set it" \
+  test "$RC|$(wc -l < "$T/out" | tr -d ' ')|$(sed -n 1p "$T/err")" = "0|1|git-ro: note: the working directory rewrites commit parents (info/grafts), so git shows the history that file sets; strict mode refuses this (Rule 11f)"
 rm "$SH/.git/info/grafts"
 git -C "$SH" rev-parse HEAD~1 > "$SH/.git/shallow"
 run "$SH" log --format=%s
 check "a shallow clone gets a note" test "$(sed -n 1p "$T/err")" = 'git-ro: shallow clone: history before the shallow boundary is missing (Rule 11c)'
 check "... and its history stops at the boundary" test "$(wc -l < "$T/out" | tr -d ' ')" = 2
 rm "$SH/.git/shallow"
+
+# =================================================================================================
+# A session started in a subdirectory of a repository (spec §4.2): in default mode git-ro reads the
+# repository from its top level, and every read prints what plain git prints in that subdirectory; git
+# runs in <empty>/<prefix>, made and removed with each read. Strict mode refuses (above, with TRK).
+# =================================================================================================
+SUB="$T/mono"; mkrepo "$SUB"
+put "$SUB" programs/foo/src/lib.rs "$(printf 'fn a() {}\nlet x = 1;')"
+put "$SUB" programs/foo/README 'foo'
+put "$SUB" other/o.rs 'fn o() {}'
+put "$SUB" Cargo.lock "$(printf '[[package]]\nname = "a"\nversion = "1.0.0"')"
+commit "$SUB" -m one
+put "$SUB" programs/foo/src/lib.rs "$(printf 'fn a() { b(); }\nlet x = 2;')"
+put "$SUB" Cargo.lock "$(printf '[[package]]\nname = "a"\nversion = "1.0.1"')"
+commit "$SUB" -m two
+mkdir -p "$T/subtmp"
+nsub=0
+while IFS= read -r line; do
+  case "$line" in ''|'#'*) continue ;; esac
+  IFS=$'\t' read -r -a args <<< "$line"
+  nsub=$((nsub + 1))
+  TMPDIR="$T/subtmp" run "$SUB/programs/foo" "${args[@]}"
+  (cd "$SUB/programs/foo" && git "${args[@]}") > "$T/plain.out" 2>&1
+  if [ "$RC" = 0 ] && [ ! -s "$T/err" ] && cmp -s "$T/out" "$T/plain.out" && [ -z "$(ls -A "$T/subtmp")" ]; then
+    ok "from programs/foo: git-ro.sh ${args[*]} prints what git prints there"
+  else
+    ko "from programs/foo: git-ro.sh ${args[*]} -> status $RC, stderr $(cat "$T/err"), $(cmp -s "$T/out" "$T/plain.out" && echo same || echo DIFFERENT), left: $(ls -A "$T/subtmp")"
+  fi
+done <<'EOF'
+log	--format=%s	--	src/lib.rs
+log	--oneline
+log	-p	-1	--	src
+log	-L	1,1:src/lib.rs	--format=%s
+show	HEAD:./src/lib.rs
+show	HEAD:programs/foo/README
+show	--stat	HEAD
+cat-file	-p	HEAD:./src/lib.rs
+grep	-n	fn
+grep	-n	-e	let	HEAD
+grep	-n	-e	let	HEAD	--	src
+ls-files
+ls-tree	HEAD
+ls-tree	HEAD	src
+ls-tree	-r	--name-only	HEAD
+blame	HEAD	--	src/lib.rs
+diff	HEAD~1	HEAD	--	src
+diff	HEAD~1..HEAD	--stat
+diff-tree	-r	HEAD~1	HEAD	--	src
+rev-parse	--show-prefix
+rev-parse	--show-toplevel
+EOF
+check "the subdirectory reads ran ($nsub)" test "$nsub" -ge 20
+mkdir -p "$SUB/programs/foo/src/deep"; put "$SUB" programs/foo/src/deep/d.rs 'fn d() {}'; commit "$SUB" -m deep
+AUDITOR_STRICT=1 run "$SUB/programs/foo/src/deep" log -1
+check "strict mode names the top level two levels up" \
+  err_is 'git-ro: refused: the working directory lies below the top level of its repository (../../../..); strict mode reads a repository only from its top level: start Claude Code there (Rule 11f)'
+# Below the hostile repository: the reads run nothing its config names there either.
+clearmarks
+for a in 'log -p -1' 'show HEAD' 'grep -n -e has_one HEAD' 'diff HEAD~3 HEAD' 'ls-files' 'config --list'; do
+  # shellcheck disable=SC2086
+  run "$WT/programs/demo" $a
+  check "from a subdirectory of the hostile repository, git-ro.sh $a runs and starts nothing" \
+    sh -c "[ '$RC' != 64 ] && [ -z \"\$(ls -A '$T/marks')\" ]"
+done
+
+# =================================================================================================
+# blame where the repository's config sets blame.ignoreRevsFile (GIT-06). In default mode git-ro copies
+# the file it names into git's empty work tree, where git looks for a relative one, when that is a
+# regular file of one link and at most 1 MiB in the work tree; anything else, and strict mode, refuse.
+# =================================================================================================
+BI="$T/blame-ignore"; mkrepo "$BI"
+put "$BI" sub/f.txt "$(printf 'a\nb')"; commit "$BI" -m one
+put "$BI" sub/f.txt "$(printf 'A\nb')"; commit "$BI" -m reformat
+git -C "$BI" rev-parse HEAD > "$BI/.git-blame-ignore-revs"; git -C "$BI" add .git-blame-ignore-revs; commit "$BI" -m ignore
+git -C "$BI" config blame.ignoreRevsFile .git-blame-ignore-revs
+mkdir -p "$T/bitmp"
+(cd "$BI" && git blame HEAD -- sub/f.txt) > "$T/plain.out" 2>&1
+TMPDIR="$T/bitmp" run "$BI" blame HEAD -- sub/f.txt
+check "in default mode blame honours an ignore-revs file the work tree holds, as plain git does" \
+  sh -c "[ '$RC' = 0 ] && [ ! -s '$T/err' ] && cmp -s '$T/out' '$T/plain.out' && [ -z \"\$(ls -A '$T/bitmp')\" ]"
+check "... where the reformatting commit is passed over" sh -c "! grep -q \"^\$(git -C '$BI' rev-parse --short=7 HEAD~1)\" '$T/out'"
+TMPDIR="$T/bitmp" run "$BI/sub" blame HEAD -- f.txt
+check "... and from a subdirectory too" sh -c "[ '$RC' = 0 ] && [ ! -s '$T/err' ] && cmp -s '$T/out' '$T/plain.out' && [ -z \"\$(ls -A '$T/bitmp')\" ]"
+IGN="git-ro: refused: blame does not run where the repository's config sets blame.ignoreRevsFile; blame a copy (git-ro.sh copy, then --git-dir)"
+AUDITOR_STRICT=1 run "$BI" blame HEAD -- sub/f.txt
+check "... and strict mode refuses" err_is "$IGN"
+mv "$BI/.git-blame-ignore-revs" "$T/revs.kept"
+run "$BI" blame HEAD -- sub/f.txt
+check "default mode refuses when the file is missing" err_is "$IGN"
+ln -s "$T/revs.kept" "$BI/.git-blame-ignore-revs"
+run "$BI" blame HEAD -- sub/f.txt
+check "... or a link" err_is "$IGN"
+rm "$BI/.git-blame-ignore-revs"
+ln "$T/revs.kept" "$BI/.git-blame-ignore-revs"
+run "$BI" blame HEAD -- sub/f.txt
+check "... or a file with a second link" err_is "$IGN"
+rm "$BI/.git-blame-ignore-revs"
+awk 'BEGIN { for (i = 0; i < 30000; i++) print "0123456789012345678901234567890123456789" }' > "$BI/.git-blame-ignore-revs"
+run "$BI" blame HEAD -- sub/f.txt
+check "... or one over 1 MiB" err_is "$IGN"
+mv "$T/revs.kept" "$BI/.git-blame-ignore-revs"
+for v in "$BI/.git-blame-ignore-revs" '~/revs' 'sub/../.git-blame-ignore-revs' ''; do
+  git -C "$BI" config blame.ignoreRevsFile "$v"
+  run "$BI" blame HEAD -- sub/f.txt
+  check "... or when the key names '$v'" err_is "$IGN"
+done
+git -C "$BI" config blame.ignoreRevsFile .git-blame-ignore-revs
+check "the blame cases ran nothing a config names" nomarks
+
+# =================================================================================================
+# A checkout another user owns (CONF-05; git's own test knob stands for the other user, and the suite's
+# git sees no system or global config, as on CI): default mode reads it through the safe-directory file,
+# strict mode refuses it. A linked worktree whose main checkout lies outside (spec §4.5, addendum I):
+# default mode reads it, strict mode refuses it.
+# =================================================================================================
+mkdir -p "$T/other"
+printf '#!/bin/sh\nGIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec "%s" "$@"\n' "$REAL_GIT" > "$T/other/git"
+chmod +x "$T/other/git"
+PATH="$T/other:$PATH" run "$SUB" log --format=%s -1
+check "in default mode git-ro reads a checkout another user owns" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|deep|"
+AUDITOR_STRICT=1 PATH="$T/other:$PATH" run "$SUB" log --format=%s -1
+check "... and strict mode refuses it" \
+  err_is 'git-ro: refused: the working directory is not a git repository that git can read (none there, or another user owns it: audit a copy): .'
+MAINO="$T/main-out"; mkrepo "$MAINO"; put "$MAINO" m.rs 'fn m() {}'; commit "$MAINO" -m main
+git -C "$MAINO" worktree add -q -b lw "$T/lwt" >/dev/null 2>&1
+run "$T/lwt" log --format=%s -1
+check "in default mode git-ro reads a linked worktree whose main checkout lies outside it" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|main|"
+AUDITOR_STRICT=1 run "$T/lwt" log --format=%s -1
+check "... and strict mode refuses it" err_is 'git-ro: refused: the working directory keeps its git directory outside the working directory: .'
+ln -s "$T/hooks/post-checkout" "$MAINO/.git/hooks/post-checkout"
+run "$T/lwt" log --format=%s -1
+check "... and a hook installed as a link there changes nothing" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|main|"
+check "... and runs no hook" nomarks
 
 # =================================================================================================
 # The installation: never inside the working directory, and only a path a quoted call can match.

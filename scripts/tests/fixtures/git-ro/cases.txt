@@ -7,6 +7,9 @@
 # test-preapproved-entrypoints.sh runs the same cases over a fixture of its own, built the same way.
 # One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each
 # case prints nothing on stdout, starts no program the repository's config names, and fetches nothing.
+# A status that ends in s (64s) is refused so in strict mode only (AUDITOR_STRICT=1); in default mode
+# git-ro goes on with one note or more on stderr (OUTPUT-RULES.md Rule 11f), and test-git-ro.sh checks
+# the notes. A plain status holds in both modes.
 # git options before the subcommand
 64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: -c	-c	core.pager=x	log
 64	git-ro: refused: only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: -cfoo=bar	-cfoo=bar	log
@@ -89,10 +92,10 @@
 64	git-ro: refused: --repo has a component that is not a directory: a.rs/x	--repo	a.rs/x	log
 64	git-ro: refused: --repo is not the top level of its repository: programs	--repo	programs	log
 64	git-ro: refused: --repo passes through a symbolic link: linkrepo	--repo	linkrepo	log
-64	git-ro: refused: --repo keeps its git directory outside the working directory: escape	--repo	escape	log
-64	git-ro: refused: --repo keeps its git directory outside the working directory: escape-link	--repo	escape-link	log
+64s	git-ro: refused: --repo keeps its git directory outside the working directory: escape	--repo	escape	log
+64s	git-ro: refused: --repo keeps its git directory outside the working directory: escape-link	--repo	escape-link	log
 64	git-ro: refused: --repo has a symbolic link in its git directory: inner-link	--repo	inner-link	log
-64	git-ro: refused: --repo borrows objects from another repository (objects/info/alternates); audit a full copy: alt	--repo	alt	log
+64s	git-ro: refused: --repo borrows objects from another repository (objects/info/alternates); audit a full copy: alt	--repo	alt	log
 64	git-ro: refused: --repo is not the top level of its repository: worktree	--repo	worktree	log
 64	git-ro: refused: --git-dir takes <R>/src.git or <R>/src-<k>.git: audit_1	--git-dir	audit_1	log
 64	git-ro: refused: --git-dir takes <R>/src.git or <R>/src-<k>.git: audit_1/other.git	--git-dir	audit_1/other.git	log
@@ -325,7 +328,7 @@
 64	git-ro: refused: copy's run directory must be a run directory named audit_<n> or incident_<n> in the working directory: /tmp/audit_1	copy	.	/tmp/audit_1
 64	git-ro: refused: copy's run directory is not an existing directory: audit_99	copy	.	audit_99
 64	git-ro: refused: copy's repository is not the top level of its repository: programs	copy	programs	audit_1
-64	git-ro: refused: copy's repository keeps its git directory outside the working directory: escape	copy	escape	audit_1
+64s	git-ro: refused: copy's repository keeps its git directory outside the working directory: escape	copy	escape	audit_1
 64	git-ro: refused: usage: partial [--repo <dir>]	partial	x
 64	git-ro: refused: usage: partial [--repo <dir>]	--repo	.	partial	--repo	.
 64	git-ro: refused: tracked takes one path	tracked

@@ -18,7 +18,9 @@
 #
 # --repo <dir> is "." (the default) or a path relative to the working directory, with no "..", and no symbolic
 # link on the way, that is the top level of a repository whose git directory lies inside the working directory
-# (scripts/lib/confine.sh, as scripts/git-ro.sh takes it). --git-dir names a copy that scripts/git-ro.sh copy
+# (scripts/lib/confine.sh, as scripts/git-ro.sh takes it, in default and in strict mode). In default mode "." may
+# also lie below the top level of a repository that tracks something there: the recipe then reads the lockfiles
+# and manifests of that whole repository, as a workspace keeps them at its top. --git-dir names a copy that scripts/git-ro.sh copy
 # made in a run directory <R>, audit_<n> or incident_<n>. <base> and <head> name commits: letters, digits and
 # ._/~^+-, starting with a letter or a digit, with no "..", at most 255 bytes each.
 #
@@ -116,7 +118,7 @@ delta() { # delta <range> <pathspec>...: the diff the lines are read from
 }
 
 main() {
-  local a repo=. given=0 gitdir="" what="the working directory" kind range base head
+  local a repo=. given=0 gitdir="" what="the working directory" kind range base head top=""
   local -a st=()
   for a in "$@"; do
     case "$a" in *[[:cntrl:]]*) refuse "an argument holds a control character: $(confine_text "$a")" ;; esac
@@ -146,13 +148,16 @@ main() {
   esac
   check_rev "$base" && check_rev "$head" ||
     refuse "<base> and <head> name commits: letters, digits and ._/~^+-, starting with a letter or a digit, with no .., at most 255 bytes each: $(confine_text "$range")"
-  if [ -n "$gitdir" ]; then open_copy "$gitdir"; else confine_repo "$repo" "$what"; fi
+  if [ -n "$gitdir" ]; then open_copy "$gitdir"; else confine_repo "$repo" "$what" 0; fi
   REPO=$CONFINE_REPO
+  # In a session below the repository's top level, the lockfiles of the whole repository: a workspace
+  # keeps them at its top.
+  [ -z "$CONFINE_PREFIX" ] || top=':(top)'
   note_history
   case "$kind" in
-    npm) delta "$range" '*package-lock.json' '*npm-shrinkwrap.json' '*yarn.lock' | awk "$NPM_AWK" ;;
-    bun) delta "$range" '*bun.lock' | sed -nE "$BUN_SED" ;;
-    cargo) delta "$range" '*Cargo.lock' | awk "$CARGO_AWK" ;;
+    npm) delta "$range" "$top*package-lock.json" "$top*npm-shrinkwrap.json" "$top*yarn.lock" | awk "$NPM_AWK" ;;
+    bun) delta "$range" "$top*bun.lock" | sed -nE "$BUN_SED" ;;
+    cargo) delta "$range" "$top*Cargo.lock" | awk "$CARGO_AWK" ;;
   esac
   st=("${PIPESTATUS[@]}")
   [ "${st[0]}" -eq 0 ] || exit "${st[0]}"

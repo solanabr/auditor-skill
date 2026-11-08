@@ -15,8 +15,8 @@
 #     exactly "*".
 #   - A new file is created with noclobber and written through the descriptor opened at creation; a
 #     new directory is created with plain mkdir, never -p.
-# confine_init also sets LC_ALL=C and umask 077 and unsets CDPATH, BASH_ENV and ENV, and the two variables
-# a caller sets for one hgit call only (CONFINE_ALLOW_PROTOCOL, CONFINE_GIT_TIME). It refuses an
+# confine_init also sets LC_ALL=C and umask 077 and unsets CDPATH, BASH_ENV and ENV, and the variables a
+# caller sets for one hgit call only (CONFINE_ALLOW_PROTOCOL, CONFINE_GIT_TIME, CONFINE_TREE_COPY). It refuses an
 # installation root that holds a quote, "$", a backtick, a backslash or a control character, since the
 # quoted call could not match as written, or that lies inside WT (Rule 11e). PATH keeps only absolute
 # entries that resolve outside WT and outside the tree WT lies in: the outermost of WT and the directories
@@ -85,7 +85,7 @@ confine_init() { # confine_init <tool> <installation root, physical> [<refusal s
   CONFINE_GIT_CHECKING=$'\n'
   CONFINE_TREES=''
   IFS=$' \t\n'
-  unset CDPATH BASH_ENV ENV CONFINE_GIT_TIME CONFINE_ALLOW_PROTOCOL
+  unset CDPATH BASH_ENV ENV CONFINE_GIT_TIME CONFINE_ALLOW_PROTOCOL CONFINE_TREE_COPY
   LC_ALL=C
   export LC_ALL
   umask 077
@@ -585,11 +585,16 @@ hgit_text() {
 # <dir> is the top level of a work tree, or a bare repository: one confine_repo or confine_repo_top
 # accepted, or that git describes so here (confine_tree_add); anything else is refused. A question about
 # the work tree (rev-parse --show-toplevel, ls-files) keeps plain hgit.
+# For a repository confine_repo accepted from a directory below its top level (CONFINE_PREFIX), git runs
+# in <empty>/<prefix>, so it takes a caller's paths relative to the same directory as in the working
+# directory itself, and prints them as git does there. Each line of CONFINE_TREE_COPY, set for one call,
+# names a file to place in the empty work tree first, as <path there><TAB><file to copy>; the caller
+# checks both. What is made there goes again as the directory does.
 hgit_tree() { confine_tree hgit "$@"; }
 hgit_text_tree() { confine_tree hgit_text "$@"; }
 
 confine_tree() { # confine_tree <hgit|hgit_text> <dir> <git arguments>: hgit_tree and hgit_text_tree
-  local call=$1 d=$2 e rc
+  local call=$1 d=$2 e rc in
   shift 2
   confine_git_files "$d"
   confine_tree_of "$d" || { confine_tree_add "$d" && confine_tree_of "$d"; } ||
@@ -607,22 +612,89 @@ confine_tree() { # confine_tree <hgit|hgit_text> <dir> <git arguments>: hgit_tre
     confine_refuse "TMPDIR lies inside the working directory, so git has no empty work tree to read in; point it outside the tree under audit"
   e=$(mktemp -d "${e%/}/auditor-git.XXXXXX" 2>/dev/null) && [ -d "$e" ] && [ ! -L "$e" ] ||
     confine_refuse "no empty directory can be made under TMPDIR for git to read in"
+  in=$e
+  [ -z "$CONFINE_TREE_PREFIX" ] || in=$e/${CONFINE_TREE_PREFIX%/}
   # git runs in a subshell that removes the directory as it ends: when git is done, when a signal ends the
   # subshell, and, when a signal ends only the caller (a timeout's alarm), once git is done. After a
   # Ctrl-C it removes the directory and then ends by SIGINT itself, so the caller stops as it would have.
   # A refusal in there (a question's time limit) ends that subshell alone, and its status is returned.
-  ( trap 'rmdir -- "$e" 2>/dev/null' EXIT
-    trap 'rmdir -- "$e" 2>/dev/null; trap - INT; exec /bin/sh -c "kill -INT \$\$"' INT
-    CONFINE_CEILING=${e%/*} "$call" "$e" --git-dir="$CONFINE_TREE_GIT" --work-tree="$e" "$@" )
+  ( trap 'confine_tree_clean "$e"' EXIT
+    trap 'confine_tree_clean "$e"; trap - INT; exec /bin/sh -c "kill -INT \$\$"' INT
+    confine_tree_fill "$e"
+    CONFINE_CEILING=${e%/*} "$call" "$in" --git-dir="$CONFINE_TREE_GIT" --work-tree="$e" "$@" )
   rc=$?
-  rmdir -- "$e" 2>/dev/null
+  confine_tree_clean "$e"
   return "$rc"
+}
+
+# confine_tree_dirs: the directories confine_tree_fill makes in the empty work tree, each parent before
+# what it holds, one to a line: those of CONFINE_TREE_PREFIX, then the parents of each file to copy.
+confine_tree_dirs() {
+  local line rel IFS=$'\n'
+  confine_tree_parents "${CONFINE_TREE_PREFIX%/}"
+  set -f
+  for line in ${CONFINE_TREE_COPY-}; do
+    rel=${line%%$'\t'*}
+    case "$rel" in */*) confine_tree_parents "${rel%/*}" ;; esac
+  done
+  set +f
+}
+
+confine_tree_parents() { # confine_tree_parents <relative directory>: each directory on its way, the topmost first
+  local p="" rest=$1
+  while [ -n "$rest" ]; do
+    p=${p:+$p/}${rest%%/*}
+    case "$rest" in */*) rest=${rest#*/} ;; *) rest="" ;; esac
+    printf '%s\n' "$p"
+  done
+}
+
+# confine_tree_fill <empty work tree>: makes the directories of confine_tree_dirs with plain mkdir, then
+# copies each file of CONFINE_TREE_COPY with noclobber; a step that fails is refused.
+confine_tree_fill() {
+  local line dirs IFS=$'\n'
+  [ -n "${CONFINE_TREE_PREFIX}${CONFINE_TREE_COPY-}" ] || return 0
+  dirs=$(confine_tree_dirs)
+  set -f
+  for line in $dirs; do
+    [ -d "$1/$line" ] || confine_mkdir "$1/$line" ||
+      confine_refuse "no empty work tree can be made under TMPDIR for git to read in"
+  done
+  for line in ${CONFINE_TREE_COPY-}; do
+    confine_new_copy "${line#*$'\t'}" "$1/${line%%$'\t'*}" ||
+      confine_refuse "cannot copy $(confine_text "${line%%$'\t'*}") into git's empty work tree"
+  done
+  set +f
+}
+
+# confine_tree_clean <empty work tree>: removes the files confine_tree_fill copied and the directories it
+# made, the deepest first, then the directory itself. Nothing else is removed: rmdir takes only an empty
+# directory.
+confine_tree_clean() {
+  local line i IFS=$'\n'
+  local -a dirs=()
+  if [ -z "${CONFINE_TREE_PREFIX}${CONFINE_TREE_COPY-}" ]; then rmdir -- "$1" 2>/dev/null; return; fi
+  set -f
+  for line in ${CONFINE_TREE_COPY-}; do
+    rm -f -- "$1/${line%%$'\t'*}" 2>/dev/null
+  done
+  for line in $(confine_tree_dirs); do
+    dirs+=("$line")
+  done
+  set +f
+  i=${#dirs[@]}
+  while [ "$i" -gt 0 ]; do
+    i=$((i - 1))
+    rmdir -- "$1/${dirs[$i]}" 2>/dev/null
+  done
+  rmdir -- "$1" 2>/dev/null
 }
 
 # confine_tree_of <dir>: status 0 when CONFINE_TREES holds <dir> (the same directory, by identity), as
 # confine_repo, confine_repo_top and confine_tree_add put it there in this shell; sets CONFINE_TREE_BARE
-# (true or false) and CONFINE_TREE_GIT, its git directory. CONFINE_TREES holds one line per directory:
-# <dir><TAB><bare><TAB><git directory>.
+# (true or false), CONFINE_TREE_GIT, its git directory, and CONFINE_TREE_PREFIX, the path of the working
+# directory in it when confine_repo accepted it from there (CONFINE_PREFIX), else empty. CONFINE_TREES
+# holds one line per directory: <dir><TAB><bare><TAB><git directory><TAB><prefix>.
 confine_tree_of() {
   local rest=${CONFINE_TREES-} line
   while [ -n "$rest" ]; do
@@ -631,7 +703,9 @@ confine_tree_of() {
     [ "${line%%$'\t'*}" -ef "$1" ] || continue
     line=${line#*$'\t'}
     CONFINE_TREE_BARE=${line%%$'\t'*}
-    CONFINE_TREE_GIT=${line#*$'\t'}
+    line=${line#*$'\t'}
+    CONFINE_TREE_GIT=${line%%$'\t'*}
+    CONFINE_TREE_PREFIX=${line#*$'\t'}
     return 0
   done
   return 1
@@ -657,7 +731,7 @@ confine_tree_add() {
   esac
   case "$1$gd$top" in *[[:cntrl:]]*) return 1 ;; esac
   [ -n "$gd" ] && [ -n "$top" ] && [ "$top" -ef "$1" ] || return 1
-  CONFINE_TREES=${CONFINE_TREES-}$1$'\t'$bare$'\t'$gd$'\n'
+  CONFINE_TREES=${CONFINE_TREES-}$1$'\t'$bare$'\t'$gd$'\t'$'\n'
 }
 
 # confine_work_files <work tree>: status 1 (CONFINE_GIT_WHY says why) when a file git reads in the work
@@ -676,8 +750,9 @@ confine_work_files() {
 # confine_repo_top <dir>: status 0 when <dir> (absolute) is the top level of its own repository, or a
 # bare repository itself, compared with symbolic links resolved on both sides and by identity. A
 # directory inside another repository fails, so that repository is never read in its place; so does one
-# whose repository holds a file git would wait on (confine_git_check), or whose work tree does
-# (confine_work_files). One that passes is added to CONFINE_TREES (confine_tree_add) for hgit_tree.
+# whose repository holds a file git would wait on (confine_git_check), or, in strict mode, whose work tree
+# does (confine_work_files: hgit_tree's reads open no file of the work tree, and its questions have a time
+# limit). One that passes is added to CONFINE_TREES (confine_tree_add) for hgit_tree.
 confine_repo_top() {
   local top here bare
   confine_git_check "$1" || return 1
@@ -690,7 +765,7 @@ confine_repo_top() {
   [ -n "$top" ] && confine_phys "$1" || return 1
   here=$CONFINE_PHYS
   confine_phys "$top" && [ "$CONFINE_PHYS" -ef "$here" ] || return 1
-  [ "$bare" = true ] || confine_work_files "$here" || return 1
+  [ "$bare" = true ] || [ "$CONFINE_STRICT" != 1 ] || confine_work_files "$here" || return 1
   confine_tree_add "$1" "$bare"
 }
 
@@ -709,20 +784,35 @@ confine_partial_clone() {
   return 2
 }
 
-# confine_repo <dir> <what>: refuse <dir> (. for WT, or a confined directory) unless it is the top level
-# of a repository, or a bare repository, whose git directory and common directory resolve inside WT,
-# hold no symbolic link, named pipe or device (confine_git_files runs first), borrow no objects
-# (objects/info/alternates) and rewrite no commit's parents (info/grafts), and whose work tree holds no
-# file git would wait on (confine_work_files). Sets CONFINE_REPO (its physical path), CONFINE_GIT_DIR,
-# CONFINE_COMMON_DIR and CONFINE_BARE (true or false), and adds it to CONFINE_TREES for hgit_tree.
+# confine_repo <dir> <what> [<status>]: refuse <dir> (. for WT, or a confined directory) unless it is the
+# top level of a repository, or a bare repository, whose git directory and common directory resolve inside
+# WT and hold no named pipe or device (confine_git_files runs first), and, in strict mode, hold no symbolic
+# link, borrow no objects (objects/info/alternates), rewrite no commit's parents (info/grafts), and whose
+# work tree holds no file git would wait on (confine_work_files). In default mode (Rule 11f):
+#   - . may also lie below the top level of a repository that tracks something there, as in a session
+#     started in a package of a monorepo (confine_repo_above): that top level is read, CONFINE_PREFIX is
+#     the path of WT in it, and its git directory must lie inside it;
+#   - a git directory or common directory outside is accepted where git's own layout ties it back to the
+#     top level (confine_git_dir_ours). One it does not tie back is refused, or, given <status>, gets a
+#     note and ends the tool with <status>, with nothing read;
+#   - a symbolic link in a hooks directory is accepted, since git opens no hook there with core.hooksPath
+#     pinned to /dev/null; any other link is refused, as git would read through it;
+#   - alternates get a note once each object directory they name passes the checks a git directory gets
+#     (confine_alternates_ok), and grafts get a note;
+#   - the work tree is not searched: hgit_tree's reads open no file of it, and its questions have a time
+#     limit.
+# Sets CONFINE_REPO (the physical path of the top level), CONFINE_GIT_DIR, CONFINE_COMMON_DIR,
+# CONFINE_BARE (true or false) and CONFINE_PREFIX, and adds it to CONFINE_TREES for hgit_tree.
 confine_repo() {
-  local what=$2 shown abs info bare gitdir common top d odd n lines
+  local what=$2 unread=${3-} shown abs ran base info bare gitdir common top d odd n lines links ours="" prefix=""
   confine_shown "$1"
   shown=$CONFINE_SHOWN
   confine_path "$1" "$what" dir
   if [ "$CONFINE_REL" = . ]; then abs=$CONFINE_WT; else abs=$CONFINE_WT/$CONFINE_REL; fi
   confine_phys "$abs" || confine_refuse "$what cannot be resolved: $shown"
   abs=$CONFINE_PHYS
+  ran=$abs
+  base=$CONFINE_WT
   confine_git_files "$abs"
   # One call where there is a work tree; a bare repository has no top level, so it takes a second. git
   # prints each value on a line of its own, and a path can hold a line end (a core.worktree, a gitfile
@@ -730,10 +820,12 @@ confine_repo() {
   # line per value, the x keeping a last empty line, and no other control character.
   if info=$(hgit "$abs" rev-parse --is-bare-repository --absolute-git-dir --git-common-dir --show-toplevel 2>/dev/null && printf x); then
     n=4
-  else
-    info=$(hgit "$abs" rev-parse --is-bare-repository --absolute-git-dir --git-common-dir 2>/dev/null && printf x) ||
-      confine_refuse "$what is not a git repository that git can read (none there, or another user owns it: audit a copy): $shown"
+  elif info=$(hgit "$abs" rev-parse --is-bare-repository --absolute-git-dir --git-common-dir 2>/dev/null && printf x); then
     n=3
+  elif [ "$CONFINE_REL" = . ] && confine_repo_above; then
+    n=4
+  else
+    confine_refuse "$what is not a git repository that git can read (none there, or another user owns it: audit a copy): $shown"
   fi
   info=${info%x}
   lines=${info//[!$'\n']/}
@@ -755,33 +847,157 @@ confine_repo() {
   esac
   [ -n "$top" ] && confine_phys "$top" && [ "$CONFINE_PHYS" -ef "$abs" ] ||
     confine_refuse "$what is not the top level of its repository: $shown"
-  case "$common" in /*) ;; *) common=$abs/$common ;; esac
+  case "$common" in /*) ;; *) common=$ran/$common ;; esac
   confine_phys "$gitdir" || confine_refuse "$what has a git directory that cannot be resolved: $shown"
   gitdir=$CONFINE_PHYS
   confine_phys "$common" || confine_refuse "$what has a git directory that cannot be resolved: $shown"
   common=$CONFINE_PHYS
   for d in "$gitdir" "$common"; do
-    confine_inside "$d" "$CONFINE_WT" || confine_refuse "$what keeps its git directory outside the working directory: $shown"
+    if ! confine_inside "$d" "$base"; then
+      [ "$CONFINE_STRICT" != 1 ] || confine_refuse "$what keeps its git directory outside the working directory: $shown"
+      if [ -z "$ours" ]; then
+        if confine_git_dir_ours "$abs" "$gitdir" "$common"; then ours=yes; else ours=no; fi
+      fi
+      if [ "$ours" = no ]; then
+        [ -n "$unread" ] || confine_refuse "$what keeps its git directory outside the working directory: $shown"
+        confine_note "$what keeps its git directory outside the working directory, and nothing there ties it back to this working tree, so its history is not read; strict mode refuses this (Rule 11f)"
+        exit "$unread"
+      fi
+    fi
     odd=$(find "$d" ! -type f ! -type d ! -type s -print 2>/dev/null) || confine_refuse "$what has a git directory that find cannot fully read: $shown"
     if [ -n "$odd" ]; then
-      [ -z "$(find "$d" -type l -print 2>/dev/null)" ] ||
+      links=$(find "$d" -type l -print 2>/dev/null)
+      if [ -n "$links" ] && { [ "$CONFINE_STRICT" = 1 ] || ! confine_hook_links "$d" "$links"; }; then
         confine_refuse "$what has a symbolic link in its git directory: $shown"
-      confine_refuse "$what has a named pipe or device in its git directory, and git would wait on it for good: $shown"
+      fi
+      [ -z "$(find "$d" \( -type p -o -type b -o -type c \) -print 2>/dev/null)" ] ||
+        confine_refuse "$what has a named pipe or device in its git directory, and git would wait on it for good: $shown"
     fi
     [ "$common" != "$gitdir" ] || break
   done
   if [ -e "$common/objects/info/alternates" ]; then
-    confine_refuse "$what borrows objects from another repository (objects/info/alternates); audit a full copy: $shown"
+    [ "$CONFINE_STRICT" != 1 ] ||
+      confine_refuse "$what borrows objects from another repository (objects/info/alternates); audit a full copy: $shown"
+    confine_alternates_ok "$common/objects" || confine_refuse "$what $CONFINE_GIT_WHY: $shown"
+    confine_note "$what borrows objects from another repository (objects/info/alternates), so its history is read from there too; strict mode refuses this (Rule 11f)"
   fi
   if [ -e "$common/info/grafts" ]; then
-    confine_refuse "$what rewrites commit parents (info/grafts), so git would show another history; review that file: $shown"
+    confine_strict_refuse "$what rewrites commit parents (info/grafts), so git would show another history; review that file: $shown" \
+      "$what rewrites commit parents (info/grafts), so git shows the history that file sets; strict mode refuses this (Rule 11f)"
   fi
-  [ "$bare" = true ] || confine_work_files "$abs" || confine_refuse "$CONFINE_GIT_WHY"
+  [ "$bare" = true ] || [ "$CONFINE_STRICT" != 1 ] || confine_work_files "$abs" || confine_refuse "$CONFINE_GIT_WHY"
   CONFINE_REPO=$abs
   CONFINE_GIT_DIR=$gitdir
   CONFINE_COMMON_DIR=$common
   CONFINE_BARE=$bare
-  CONFINE_TREES=${CONFINE_TREES-}$abs$'\t'$bare$'\t'$gitdir$'\n'
+  CONFINE_PREFIX=$prefix
+  CONFINE_TREES=${CONFINE_TREES-}$abs$'\t'$bare$'\t'$gitdir$'\t'$prefix$'\n'
+}
+
+# confine_repo_above: for confine_repo ., the repository WT lies in below its top level. git, asked with no
+# ceiling, must put WT inside a work tree whose top level lies above WT, with WT's path in it as the
+# prefix, and must track a path under WT, so a repository at home that tracks nothing here is never taken
+# for the target. In strict mode such a repository is refused by name; in default mode it is taken: this
+# sets confine_repo's info (as its first call prints it), abs and base (the top level), ran (where git
+# answered) and prefix. Status 1 when there is none.
+confine_repo_above() {
+  local v inside b g c t p up=..
+  CONFINE_CEILING='' confine_git_files "$CONFINE_WT"
+  v=$(CONFINE_CEILING='' hgit "$CONFINE_WT" rev-parse --is-inside-work-tree --is-bare-repository --absolute-git-dir \
+    --git-common-dir --show-toplevel --show-prefix 2>/dev/null && printf x) || return 1
+  v=${v%x}
+  case "${v//$'\n'/}" in *[[:cntrl:]]*) return 1 ;; esac
+  inside=${v%%$'\n'*}; v=${v#*$'\n'}
+  b=${v%%$'\n'*}; v=${v#*$'\n'}
+  g=${v%%$'\n'*}; v=${v#*$'\n'}
+  c=${v%%$'\n'*}; v=${v#*$'\n'}
+  t=${v%%$'\n'*}; v=${v#*$'\n'}
+  p=${v%%$'\n'*}; v=${v#*$'\n'}
+  [ "$inside:$b" = true:false ] && [ -z "$v" ] && [ -n "$g" ] && [ -n "$c" ] && [ -n "$t" ] || return 1
+  case "$p" in ?*/) ;; *) return 1 ;; esac
+  confine_phys "$t" && [ ! "$CONFINE_PHYS" -ef "$CONFINE_WT" ] && confine_inside "$CONFINE_WT" "$CONFINE_PHYS" &&
+    [ "$CONFINE_PHYS/${p%/}" -ef "$CONFINE_WT" ] || return 1
+  t=$CONFINE_PHYS
+  CONFINE_CEILING='' hgit "$CONFINE_WT" ls-files --error-unmatch -- . >/dev/null 2>&1 || return 1
+  if [ "$CONFINE_STRICT" = 1 ]; then
+    v=${p%/}
+    while :; do case "$v" in */*) v=${v#*/}; up=$up/.. ;; *) break ;; esac; done
+    confine_refuse "the working directory lies below the top level of its repository ($up); strict mode reads a repository only from its top level: start Claude Code there (Rule 11f)"
+  fi
+  info=false$'\n'$g$'\n'$c$'\n'$t$'\n'x
+  ran=$CONFINE_WT
+  abs=$t
+  base=$t
+  prefix=$p
+}
+
+# confine_git_dir_ours <top> <git directory> <common directory>, all physical: status 0 when git's own
+# layout ties a git directory outside <top> back to <top>: a linked worktree's, which is
+# <common>/worktrees/<id> and whose gitdir file names <top>/.git; one whose core.worktree names <top>, as a
+# separate git directory's may and a submodule's does; or a submodule's that lies inside the top level of
+# the repository above <top>, which tracks <top> as a submodule. Status 1 for any other layout.
+confine_git_dir_ours() {
+  local top=$1 g=$2 c=$3 v sup rel
+  if [ ! "$g" -ef "$c" ]; then
+    [ -f "$g/gitdir" ] && [ "${g%/*}" -ef "$c/worktrees" ] && confine_named_dir "$g/gitdir" '' &&
+      [ "$CONFINE_NAMED" -ef "$top/.git" ]
+    return
+  fi
+  # git takes a relative core.worktree from the git directory.
+  v=$(CONFINE_CEILING='' hgit "$top" config --get core.worktree 2>/dev/null) || v=""
+  if [ -n "$v" ]; then
+    case "$v" in /*) ;; *) v=$g/$v ;; esac
+    [ ! "$v" -ef "$top" ] || return 0
+  fi
+  sup=$(CONFINE_CEILING='' hgit "${top%/*}" rev-parse --show-toplevel 2>/dev/null) && confine_phys "$sup" || return 1
+  sup=$CONFINE_PHYS
+  [ ! "$sup" -ef "$top" ] && confine_inside "$g" "$sup" || return 1
+  case "$top" in "$sup"/*) rel=${top#"$sup"/} ;; *) return 1 ;; esac
+  v=$(CONFINE_CEILING='' hgit "$sup" ls-files --stage -- ":(literal)$rel" 2>/dev/null) || return 1
+  case "$v" in "160000 "*$'\t'"$rel") return 0 ;; esac
+  return 1
+}
+
+confine_hook_links() { # confine_hook_links <git directory> <links, one to a line>: status 0 when each is the hooks directory there or lies in it
+  local l rc=0 IFS=$'\n'
+  set -f
+  for l in $2; do
+    case "$l" in "$1/hooks"|"$1/hooks/"*) ;; *) rc=1; break ;; esac
+  done
+  set +f
+  return "$rc"
+}
+
+# confine_alternates_ok <objects directory> [<depth>]: status 1 (CONFINE_GIT_WHY says why, after the
+# repository's name) when its info/alternates cannot be read, writes a path these checks do not read as
+# git does (a quoted one), or names an object directory that is a named pipe or device, holds one or a
+# symbolic link, or cannot be fully read; the object directories those name are checked in turn, to git's
+# depth of 5. One that does not exist is passed over, as git passes over it.
+confine_alternates_ok() {
+  local o=$1 depth=${2:-0} line a odd
+  [ "$depth" -lt 5 ] || return 0
+  [ -f "$o/info/alternates" ] && [ -r "$o/info/alternates" ] ||
+    { CONFINE_GIT_WHY="has an objects/info/alternates that cannot be read"; return 1; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|'#'*) continue ;;
+      '"'*) CONFINE_GIT_WHY="borrows objects through a quoted path in objects/info/alternates, which these checks do not read"; return 1 ;;
+      /*) a=$line ;;
+      *) a=$o/$line ;;
+    esac
+    if confine_special "$a"; then
+      CONFINE_GIT_WHY="borrows objects from a named pipe or device (objects/info/alternates), and git would wait on it for good"
+      return 1
+    fi
+    [ -d "$a" ] || continue
+    a=$(cd -P -- "$a" 2>/dev/null && printf '%s/' "$PWD") || continue
+    a=${a%/}
+    odd=$(find "$a" ! -type f ! -type d ! -type s -print 2>/dev/null) ||
+      { CONFINE_GIT_WHY="borrows objects from a directory that find cannot fully read (objects/info/alternates)"; return 1; }
+    [ -z "$odd" ] ||
+      { CONFINE_GIT_WHY="borrows objects from a directory that holds a symbolic link, named pipe or device (objects/info/alternates)"; return 1; }
+    [ ! -e "$a/info/alternates" ] || confine_alternates_ok "$a" $((depth + 1)) || return 1
+  done < "$o/info/alternates"
 }
 
 # confine_no_repo <status> <output>: status 0 when git, asked about a directory, answered that no

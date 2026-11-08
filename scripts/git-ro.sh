@@ -11,8 +11,16 @@
 #
 # <dir> is "." (the default) or a path relative to the working directory, with no "..", and no symbolic
 # link on the way. It must be the top level of a repository, or a bare repository, whose git directory
-# lies inside the working directory, holds no symbolic link, borrows no objects (alternates) and
-# rewrites no commit's parents (info/grafts).
+# lies inside the working directory (scripts/lib/confine.sh confine_repo). Strict mode (OUTPUT-RULES.md
+# Rule 11f) also refuses one whose git directory holds a symbolic link, borrows objects (alternates) or
+# rewrites commit parents (info/grafts). Default mode reads those, alternates and grafts with a note on
+# stderr, and:
+#   - "." may lie below the top level of a repository that tracks something there, as in a session
+#     started in a package of a monorepo: git-ro reads that repository, and every path in and out is
+#     relative to the working directory, as plain git in it takes and prints them;
+#   - a git directory outside the working directory is read where git's own layout ties it back (a
+#     linked worktree, a submodule, a separate git directory naming it in core.worktree); one that
+#     nothing ties back gets a note, and git-ro reads nothing and exits 0.
 # --git-dir names a copy that `copy` made in a run directory <R> (audit_<n> or incident_<n>).
 #
 # No caller word ever precedes the git subcommand. Every argument lands after the subcommand name, so
@@ -34,9 +42,11 @@
 #   blame: needs <rev> -- <path>, with only blame's own options before <rev>, written out in full (-L,
 #     --date, --ignore-rev, --since, --after, --until and --before may take the next word as their
 #     value). git-ro resolves <rev> to a commit (A..B, for --reverse, to two different commits) and passes
-#     the ids, so blame starts from a commit and never annotates the work tree. It refuses a repository
-#     whose config sets blame.ignoreRevsFile: git reads that file, prints a line it cannot parse, and no
-#     command-line value resets the setting. Blame a copy instead.
+#     the ids, so blame starts from a commit and never annotates the work tree. Where the repository's
+#     config sets blame.ignoreRevsFile, which no command-line value resets, default mode copies each file
+#     it names into git's empty work tree, where git looks for a relative one: a relative path with no
+#     empty, . or .. component and no link on the way, to a regular file of one link and at most 1 MiB
+#     in the work tree. Anything else, and strict mode, refuse it: blame a copy instead.
 #   grep: committed content only. git-ro reads the words as git grep does (options, then a pattern
 #     unless -e, --and, --not, ( or ) came first, then revisions, -- and paths) and resolves each
 #     revision. With none it searches the index, as with --cached; with some it gives git exactly those
@@ -70,7 +80,8 @@
 # PATH (absolute entries outside the working directory and the tree it lies in), TMPDIR, LC_ALL=C and TZ,
 # plus GIT_NO_LAZY_FETCH, GIT_TERMINAL_PROMPT=0, GIT_OPTIONAL_LOCKS=0, GIT_ALLOW_PROTOCOL (the transport
 # allowlist, empty here), GIT_CEILING_DIRECTORIES at the working directory's parent,
-# and system and global config dropped. It refuses before git starts when the repository holds a named
+# and the system config dropped. The global config is none in strict mode; in default mode it is
+# scripts/lib/safe-directory.gitconfig, so a checkout another user owns is read. It refuses before git starts when the repository holds a named
 # pipe or device git would open, and kills git, refusing, when a question (rev-parse, config, ls-files)
 # has not been answered within 10 s; any other read runs as long as it takes. Every subcommand but
 # rev-parse, ls-files, config and remote reads with a private empty directory under TMPDIR as git's work
@@ -114,13 +125,18 @@
 #
 # copy runs `clone --no-local --bare --no-recurse-submodules --template=` of <dir> into <R>/src.git
 # (src-2.git, src-3.git, ... once that exists) under the same hardened call, with protocol.file.allow
-# for that clone, from a scratch directory outside the working directory. It refuses a partial clone
-# (exit 3) and git without the May-2024 clone fixes, CVE-2024-32004 and CVE-2024-32465 (exit 69):
-# accepted are 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, 2.46 and later in each line. It
-# writes <R>/src.git/auditor-copy; read the copy with --git-dir <R>/src.git.
+# for that clone and no global config (the clone's upload-pack runs in <dir> without hgit's -c pins, so
+# git's ownership check stays on), from a scratch directory outside the working directory. It refuses a
+# partial clone (exit 3). A git without the May-2024 clone fixes, CVE-2024-32004 and CVE-2024-32465
+# (accepted are 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, 2.46 and later in each line),
+# is refused in strict mode (exit 69). In default mode such a git, or a <dir> another user owns, gets the
+# same bare copy without clone: pack-objects in <dir>, index-pack in the copy, which checks each object's
+# hash, then the branches, tags and HEAD (a note says so for the old git, and every read on it notes the
+# git too). It writes <R>/src.git/auditor-copy; read the copy with --git-dir <R>/src.git.
 #
 # Exit: git's own status (0, 1, 128, ...) · 3 partial clone (partial, copy) · 64 refused · 69 git too
-# old to copy. Needs bash >= 3.2 and git; env, find, tr, wc, cat, sort, mkdir, mktemp and rmdir.
+# old to copy (strict mode). Needs bash >= 3.2 and git; env, find, tr, wc, cat, sort, mkdir, mktemp,
+# rmdir and rm (and python3 for a run directory that holds a link, in default mode).
 
 set -uo pipefail
 unset CDPATH
@@ -128,13 +144,17 @@ case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
 here=$(cd -P -- "$here" 2>/dev/null && pwd -P) || { printf 'git-ro: refused: the installation cannot be resolved\n' >&2; exit 64; }
 . "$here/lib/confine.sh" || { printf 'git-ro: refused: scripts/lib/confine.sh cannot be read\n' >&2; exit 64; }
 confine_init git-ro "${here%/*}"
-confine_need env git find tr wc cat sort mkdir mktemp rmdir
+confine_need env git find tr wc cat sort mkdir mktemp rmdir rm
 WT=$CONFINE_WT
 REPO=""
 
 USAGE='usage: git-ro.sh [--repo <dir> | --git-dir <R>/src.git] <subcommand> [<arg>...], or copy <dir> <R>, partial [--repo <dir>], tracked <path>'
+FIXES='2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, 2.46 and later'
+GIT_VERSION=unknown
 DIFF_USAGE='diff compares committed revisions: give A..B, A...B, A^!, A B or --cached [A], and paths after --'
 BLAME_USAGE='blame needs <rev> -- <path>: a revision, then --, then one path'
+IGNORE_REVS="blame does not run where the repository's config sets blame.ignoreRevsFile; blame a copy (git-ro.sh copy, then --git-dir)"
+COPIES=""
 # Long options refused with any ending, refused as written, and allowed only with a checked value; an
 # abbreviation of any of them is refused, except the four exact options that share a denied name's prefix.
 DENY_PREFIX='output exec upload-pack receive-pack git-dir work-tree namespace super-prefix config-env recurse-submodules submodule contents ignore-revs-file exclude-from pathspec-from-file open-files-in-pager'
@@ -145,6 +165,14 @@ EXACT_OK='exclude text ignore-rev batch'
 refuse() { confine_refuse "$1"; }
 
 refuse_option() { refuse "$SUB does not allow $(confine_text "$1")"; }
+
+# rgit <git arguments>: plain hgit, for a question about the repository read that touches no history
+# (rev-parse, ls-files, config, remote, merge-base): in a session below the repository's top level
+# (CONFINE_PREFIX), asked in the working directory itself with no ceiling, so git takes and prints paths
+# from there, as it does in that directory.
+rgit() {
+  if [ -n "$CONFINE_PREFIX" ]; then CONFINE_CEILING='' hgit "$WT" "$@"; else hgit "$REPO" "$@"; fi
+}
 
 check_format() { # check_format <value of --format or --pretty>
   case "$1" in
@@ -267,10 +295,13 @@ open_copy() { # open_copy <R>/src[-<k>].git: a copy that copy made
   [ "$CONFINE_BARE" = true ] || refuse "--git-dir is not a bare repository: $shown"
 }
 
-copy_git_ok() { # status 0 when git has the May-2024 clone fixes
+copy_git_ok() { # status 0 when git has the May-2024 clone fixes; sets GIT_VERSION to what git --version names
   local v maj min pat
-  v=$(env -i PATH="$PATH" git --version 2>/dev/null) || return 1
+  GIT_VERSION=unknown
+  v=$(hgit / --version </dev/null 2>/dev/null) || return 1
   v=${v#git version }
+  confine_shown "$v"
+  GIT_VERSION=$CONFINE_SHOWN
   v=${v%% *}
   maj=${v%%.*}; v=${v#"$maj"}; v=${v#.}
   min=${v%%.*}; v=${v#"$min"}; v=${v#.}
@@ -289,9 +320,9 @@ copy_git_ok() { # status 0 when git has the May-2024 clone fixes
 }
 
 run_copy() { # run_copy <dir> <R>
-  local src rel r dest k scratch rc
+  local src rel r dest k scratch rc fixed=1 how=clone
   [ $# -eq 2 ] || refuse "copy takes a repository and a run directory: copy <dir> <R>"
-  confine_repo "$1" "copy's repository"
+  confine_repo "$1" "copy's repository" 0
   src=$CONFINE_REPO
   rel=$CONFINE_REL
   confine_rundir "$2" "copy's run directory"
@@ -302,9 +333,16 @@ run_copy() { # run_copy <dir> <R>
        exit 3 ;;
     2) refuse "git cannot read the config of $(confine_text "$1"), so a partial clone cannot be ruled out" ;;
   esac
-  if ! copy_git_ok; then
+  copy_git_ok || fixed=0
+  if [ "$fixed" -eq 0 ] && [ "$CONFINE_STRICT" = 1 ]; then
     printf 'git-ro: refused: copy needs git with the May-2024 clone fixes: 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, or 2.46 or later\n' >&2
     exit 69
+  fi
+  # The clone's upload-pack runs in the source with none of hgit's -c pins (git's local transport clears
+  # GIT_CONFIG_PARAMETERS for it), so it keeps git's own ownership check: no global config. In default mode
+  # a git without the clone fixes, or a source another user owns, gets the copy through plumbing instead.
+  if [ "$CONFINE_STRICT" != 1 ] && { [ "$fixed" -eq 0 ] || [ ! -O "$src" ] || [ ! -O "$CONFINE_GIT_DIR" ] || [ ! -O "$CONFINE_COMMON_DIR" ]; }; then
+    how=plumbing
   fi
   dest=src.git
   k=2
@@ -321,18 +359,71 @@ run_copy() { # run_copy <dir> <R>
     rmdir "$scratch" "$WT/$r/$dest"
     refuse "the scratch directory (TMPDIR) lies inside the working directory"
   fi
-  CONFINE_ALLOW_PROTOCOL=file CONFINE_CEILING=${scratch%/*} hgit "$scratch" -c protocol.file.allow=always \
-    clone --no-local --bare --no-recurse-submodules --template= -- "$src" "$WT/$r/$dest" </dev/null
-  rc=$?
+  if [ "$how" = clone ]; then
+    CONFINE_GIT_GLOBAL=/dev/null CONFINE_ALLOW_PROTOCOL=file CONFINE_CEILING=${scratch%/*} hgit "$scratch" -c protocol.file.allow=always \
+      clone --no-local --bare --no-recurse-submodules --template= -- "$src" "$WT/$r/$dest" </dev/null
+    rc=$?
+  else
+    copy_plumbing "$src" "$WT/$r/$dest" "$scratch"
+    rc=$?
+  fi
   rmdir "$scratch"
   if [ "$rc" -ne 0 ]; then
+    [ "$how" = clone ] || rm -rf -- "$WT/$r/$dest"
     rmdir "$WT/$r/$dest" 2>/dev/null
     exit "$rc"
   fi
   confine_new_file "$WT/$r/$dest/auditor-copy" "auditor-copy: made by git-ro.sh copy from $rel"$'\n' ||
     refuse "cannot write $r/$dest/auditor-copy"
+  [ "$fixed" -eq 1 ] ||
+    confine_note "this git ($GIT_VERSION) has none of the May-2024 clone fixes for its release line ($FIXES), so cloning a repository you do not trust could run code from it: copy made $r/$dest with git's plumbing instead (pack-objects and index-pack, no clone); strict mode refuses this (Rule 11f)"
   printf '%s\n' "$r/$dest"
   exit 0
+}
+
+# copy_plumbing <source top level> <empty destination> <scratch directory>: the bare copy clone --bare
+# would make, made without clone, a transport or upload-pack: git init --bare with no template in the
+# destination; the objects every branch and tag and HEAD reach, packed by pack-objects in the source and
+# indexed by index-pack in the copy, which checks each object's hash; then the branches, the tags, HEAD,
+# and the shallow file, when the source has one. Each call is hardened (hgit), none opens a work tree,
+# and each runs in the scratch directory, the source or the copy. Status: git's own when a step fails.
+copy_plumbing() {
+  local src=$1 dest=$2 scratch=$3 fmt line ref head refs="" tips="" rc
+  local -a st=()
+  fmt=$(hgit "$src" rev-parse --show-object-format </dev/null 2>/dev/null) || fmt=sha1
+  case "$fmt" in sha256) ;; *) fmt=sha1 ;; esac
+  if [ "$fmt" = sha1 ]; then
+    CONFINE_CEILING=${scratch%/*} hgit "$scratch" -c init.defaultBranch=main init -q --bare --template= "$dest" </dev/null >/dev/null || return
+  else
+    CONFINE_CEILING=${scratch%/*} hgit "$scratch" -c init.defaultBranch=main init -q --bare --template= --object-format="$fmt" "$dest" </dev/null >/dev/null || return
+  fi
+  refs=$(hgit "$src" for-each-ref --format='%(objectname) %(refname)' refs/heads refs/tags </dev/null) || return
+  # Split on line ends, not read from a here-document, which bash 3.2 writes to a file in the working
+  # directory when it finds no TMPDIR it can write to. Ref names hold no blank or line end.
+  IFS=$'\n'
+  set -f
+  for line in $refs; do tips=$tips${line%% *}$'\n'; done
+  set +f
+  IFS=$' \t\n'
+  head=$(hgit "$src" rev-parse --verify --quiet HEAD </dev/null) && tips=$tips$head$'\n'
+  if [ -n "$tips" ]; then
+    printf '%s' "$tips" | hgit "$src" pack-objects --revs --stdout -q | hgit "$dest" index-pack --stdin >/dev/null
+    st=("${PIPESTATUS[@]}")
+    for rc in "${st[@]}"; do [ "$rc" -eq 0 ] || return "$rc"; done
+  fi
+  if [ -e "$CONFINE_COMMON_DIR/shallow" ]; then
+    confine_new_copy "$CONFINE_COMMON_DIR/shallow" "$dest/shallow" || return 1
+  fi
+  if [ -n "$refs" ]; then
+    ( IFS=$'\n'
+      set -f
+      for line in $refs; do printf 'create %s %s\n' "${line#* }" "${line%% *}"; done ) | hgit "$dest" update-ref --stdin || return
+  fi
+  if ref=$(hgit "$src" symbolic-ref -q HEAD </dev/null); then
+    hgit "$dest" symbolic-ref HEAD "$ref" </dev/null || return
+  elif [ -n "$head" ]; then
+    hgit "$dest" update-ref --no-deref HEAD "$head" </dev/null || return
+  fi
 }
 
 run_tracked() { # run_tracked <path>
@@ -391,9 +482,9 @@ run_config() { # run_config <arg>...: reads of the repository's own config file
     *) false ;;
   esac || refuse "config only reads: --get, --get-all or --get-regexp <name> [<value-pattern>], --get-urlmatch <name> <URL>, --list, config get <name>, config list"
   if [ "$form" = legacy ]; then
-    hgit "$REPO" config --local --no-includes ${opts[@]+"${opts[@]}"} "$action" ${pos[@]+"${pos[@]}"} </dev/null
+    rgit config --local --no-includes ${opts[@]+"${opts[@]}"} "$action" ${pos[@]+"${pos[@]}"} </dev/null
   else
-    hgit "$REPO" config "$form" --local --no-includes ${opts[@]+"${opts[@]}"} ${pos[@]+"${pos[@]}"} </dev/null
+    rgit config "$form" --local --no-includes ${opts[@]+"${opts[@]}"} ${pos[@]+"${pos[@]}"} </dev/null
   fi
   exit $?
 }
@@ -491,7 +582,7 @@ run_remote() { # run_remote <arg>...: remote, remote -v, remote get-url [--all] 
   else
     refuse "remote only reads: remote, remote -v, or remote get-url [--all] [--push] <name>"
   fi
-  hgit "$REPO" config --local --no-includes -z --get-regexp '^remote\..*\.(url|pushurl)$' </dev/null |
+  rgit config --local --no-includes -z --get-regexp '^remote\..*\.(url|pushurl)$' </dev/null |
     remote_table "$mode" "$name" "$all" "$push"
   st=("${PIPESTATUS[@]}")
   [ "${st[0]}" -le 1 ] || exit "${st[0]}"
@@ -503,8 +594,8 @@ run_remote() { # run_remote <arg>...: remote, remote -v, remote get-url [--all] 
 # negation (^A, which rev-parse prints as ^<id>). git resolves the word; only its plain answer counts.
 one_object() {
   local o
-  o=$(hgit "$REPO" rev-parse --verify --quiet --end-of-options "$1" 2>/dev/null </dev/null) && is_oid "$o" &&
-    o=$(hgit "$REPO" rev-parse --verify --quiet "$o^{$2}" 2>/dev/null </dev/null) && is_oid "$o" || return 1
+  o=$(rgit rev-parse --verify --quiet --end-of-options "$1" 2>/dev/null </dev/null) && is_oid "$o" &&
+    o=$(rgit rev-parse --verify --quiet "$o^{$2}" 2>/dev/null </dev/null) && is_oid "$o" || return 1
   OID=$o
 }
 
@@ -561,7 +652,7 @@ run_diff() {
           [ -n "$r" ] || r=HEAD
           diff_side "$l" commit; ca=$OID
           diff_side "$r" commit; cb=$OID
-          bases=$(hgit "$REPO" merge-base --all "$ca" "$cb" </dev/null)
+          bases=$(rgit merge-base --all "$ca" "$cb" </dev/null)
           case $? in
             0) ;;
             1) printf 'fatal: %s...%s: no merge base\n' "$l" "$r" >&2; exit 128 ;;
@@ -581,11 +672,11 @@ run_diff() {
       # starts from the empty tree
       prev=-1
       diff_side "${w%'^!'}" commit; ca=$OID
-      parents=$(hgit "$REPO" rev-parse "$ca^@" </dev/null) || exit 128
+      parents=$(rgit rev-parse "$ca^@" </dev/null) || exit 128
       if [ -n "$parents" ]; then
         diff_side "${parents%%$'\n'*}" tree
       else
-        a=$(hgit "$REPO" hash-object -t tree /dev/null </dev/null) && is_oid "$a" || exit 128
+        a=$(rgit hash-object -t tree /dev/null </dev/null) && is_oid "$a" || exit 128
         OID=$a
       fi
       tl=$OID
@@ -674,14 +765,45 @@ run_blame() {
       one_object "$rev" commit || refuse "blame needs a commit, and this names no single commit: $(confine_text "$rev")"
       spec=$OID ;;
   esac
-  hgit "$REPO" config --get-all blame.ignorerevsfile >/dev/null 2>&1
+  rgit config --get-all blame.ignorerevsfile >/dev/null 2>&1
   case $? in
     1) ;;
-    0) refuse "blame does not run where the repository's config sets blame.ignoreRevsFile; blame a copy (git-ro.sh copy, then --git-dir)" ;;
+    0) ignore_revs_copies ;;
     *) refuse "git cannot read the repository's config" ;;
   esac
-  hgit_tree "$REPO" blame --no-textconv --no-ext-diff "$spec" ${opts[@]+"${opts[@]}"} -- "$path" </dev/null
+  CONFINE_TREE_COPY=$COPIES hgit_tree "$REPO" blame --no-textconv --no-ext-diff "$spec" ${opts[@]+"${opts[@]}"} -- "$path" </dev/null
   exit $?
+}
+
+# ignore_revs_copies: for a repository whose config sets blame.ignoreRevsFile, which no command-line value
+# resets, sets COPIES (CONFINE_TREE_COPY's lines) so git finds each file it names in its empty work tree,
+# where it looks for a relative one. In default mode (Rule 11f) each value must be a relative path, with
+# no empty, . or .. component and no link on the way, to a regular file of one link and at most 1 MiB in
+# the repository's work tree; anything else, a bare repository, and strict mode keep the refusal.
+ignore_revs_copies() {
+  local v d rest c size
+  local -a vals=()
+  COPIES=""
+  [ "$CONFINE_STRICT" != 1 ] && [ "$CONFINE_BARE" = false ] || refuse "$IGNORE_REVS"
+  while IFS= read -r -d '' v; do vals+=("$v"); done < <(rgit config -z --get-all blame.ignorerevsfile 2>/dev/null </dev/null)
+  [ "${#vals[@]}" -gt 0 ] || refuse "$IGNORE_REVS"
+  for v in "${vals[@]}"; do
+    case "$v" in ''|/*|'~'*|'%(prefix)/'*|-*|*[[:cntrl:]]*) refuse "$IGNORE_REVS" ;; esac
+    case "/$v/" in *//*|*/./*|*/../*) refuse "$IGNORE_REVS" ;; esac
+    [ "${#v}" -le 1024 ] || refuse "$IGNORE_REVS"
+    d=$REPO rest=$v
+    while :; do
+      c=${rest%%/*}
+      d=$d/$c
+      [ ! -L "$d" ] || refuse "$IGNORE_REVS"
+      case "$rest" in */*) [ -d "$d" ] || refuse "$IGNORE_REVS"; rest=${rest#*/} ;; *) break ;; esac
+    done
+    confine_one_link "$d" || refuse "$IGNORE_REVS"
+    size=$(wc -c < "$d" 2>/dev/null) || refuse "$IGNORE_REVS"
+    size=${size//[!0-9]/}
+    [ -n "$size" ] && [ "$size" -le 1048576 ] || refuse "$IGNORE_REVS"
+    COPIES=$COPIES$v$'\t'$d$'\n'
+  done
 }
 
 # run_grep <arg>...: the words read the way git grep reads them. Options come first, up to the first word
@@ -800,8 +922,10 @@ main() {
     -*) refuse "only --repo <dir> or --git-dir <R>/src.git may come before the subcommand, never a git option: $(confine_text "$sub")" ;;
     *) refuse "$(confine_text "$sub") is not a read-only subcommand that git-ro runs" ;;
   esac
-  if [ -n "$gitdir" ]; then open_copy "$gitdir"; else confine_repo "$repo" "$what"; fi
+  if [ -n "$gitdir" ]; then open_copy "$gitdir"; else confine_repo "$repo" "$what" 0; fi
   REPO=$CONFINE_REPO
+  [ "$CONFINE_STRICT" = 1 ] || copy_git_ok ||
+    confine_note "this git ($GIT_VERSION) has none of the May-2024 clone fixes for its release line ($FIXES); git-ro's reads clone nothing, and its copy is made without git clone (Rule 11f)"
   case "$sub" in
     partial) run_partial ;;
     config) run_config "$@" ;;
@@ -829,7 +953,7 @@ main() {
       if [ "$batch" -eq 1 ]; then hgit_tree "$REPO" cat-file "$@"; else hgit_tree "$REPO" cat-file "$@" </dev/null; fi ;;
     rev-parse|ls-files)
       check_options "$sub" "$@"
-      hgit "$REPO" "$sub" "$@" </dev/null ;;
+      rgit "$sub" "$@" </dev/null ;;
     *)
       check_options "$sub" "$@"
       hgit_tree "$REPO" "$sub" "$@" </dev/null ;;
