@@ -31,18 +31,19 @@
 # then isolated, then native. With none of them it is native, and a note says so. With none, or with a
 # --mode that names another mode, target.sh stops (exit 3) before it copies anything. In isolated mode the
 # credential self-check of scripts/lib/isolation.sh runs first: something it reads that is readable, or a
-# check that cannot finish, stops the run. In native mode the same check prints, as a warning, what the code
-# the run builds can read, by kind and count, never a path. An incident's code (--run incident_<n>) is built
-# only once incident_<n>/INCIDENTS.json (a regular file of at most 4 MiB) records the root_cause_class of the
-# incident --patch names (INC-<n>.<k>), or of every incident without one. In native mode it needs every
-# incident's, whatever --patch names, and builds nothing while any incident is supply_chain_or_ci: a patch of
-# one incident builds the same tree as the others. And natively nothing is built, whatever --run names, while
-# the INCIDENTS.json of any run directory of the auditor's in the working directory (incident_<n>, with the
-# .gitignore of exactly * that scripts/rundir.sh writes) records a supply_chain_or_ci incident or cannot be
-# read, or the working directory cannot be listed, since every --src is the working tree or a copy of it; a
-# run directory without INCIDENTS.json, or whose file records no incident, counts for nothing, and any other
-# incident_* directory (a client's Incident_Response/, a run moved aside) is passed over, with a note
-# (OUTPUT-RULES.md Rule 11a).
+# check that cannot finish, stops the run, and the blocker says what the human changes to build natively
+# instead, or in strict mode why it cannot. In native mode the same check prints, as a warning, what the
+# code the run builds can read, by kind and count, never a path. An incident's code (--run incident_<n>) is
+# built only once incident_<n>/INCIDENTS.json (a regular file of at most 4 MiB) records the root_cause_class
+# of the incident --patch names (INC-<n>.<k>), or of every incident without one. In native mode it needs
+# every incident's, whatever --patch names, and builds nothing while any incident is supply_chain_or_ci: a
+# patch of one incident builds the same tree as the others. And natively nothing is built, whatever --run
+# names, while the INCIDENTS.json of any run directory of the auditor's in the working directory
+# (incident_<n>, with the .gitignore of exactly * that scripts/rundir.sh writes) records a
+# supply_chain_or_ci incident or cannot be read, or the working directory cannot be listed, since every
+# --src is the working tree or a copy of it; a run directory without INCIDENTS.json, or whose file records no
+# incident, counts for nothing, and any other incident_* directory (a client's Incident_Response/, a run
+# moved aside) is passed over, with a note (OUTPUT-RULES.md Rule 11a).
 #
 # The copy, in a scratch directory outside the working directory. A --src that is the top level of a git
 # repository (its git directory inside the working directory, holding no symbolic link, borrowing no objects
@@ -393,12 +394,23 @@ if [ "$MODE" = native ]; then
 fi
 # python3 starts from /, so nothing in the working directory picks the interpreter.
 cd / || blocker "cannot leave the working directory for /"
+# The isolated blockers end with how to build natively instead, from what recorded isolated, as the human's
+# step (the agent copies these lines, and a mode is the human's answer); in strict mode, with why isolated
+# is the only way.
+if [ "$CONFINE_STRICT" = 1 ]; then
+  native=". Strict mode is on ($(confine_text "$CONFINE_MODE_WHY")), so target.sh builds only on an isolated runner (Rule 11f)"
+else
+  steps=""
+  [ "$ENV_MODE" != isolated ] || steps="unsets AUDITOR_EXEC_MODE where Claude Code runs"
+  [ "$FILE_MODE" != isolated ] || steps="${steps:+$steps and }writes native to $R/exec-mode"
+  native=". To build natively instead, on this machine, the human $steps"
+fi
 rc=0
 iso_credentials || rc=$?
 case "$MODE:$rc" in
   *:0) ;;
-  isolated:1) blocker "isolated mode, but these are readable here: $ISO_KINDS; this is not the isolated runner (Rule 11a), and scripts/runner/probe.sh --only isolation lists them — nothing was copied or built." ;;
-  isolated:*) blocker "isolated mode, but the credential self-check could not finish ($ISO_WHY), so target.sh cannot tell that this is the isolated runner (Rule 11a) — nothing was copied or built." ;;
+  isolated:1) blocker "isolated mode, but these are readable here: $ISO_KINDS; this is not the isolated runner (Rule 11a), and scripts/runner/probe.sh --only isolation lists them$native — nothing was copied or built." ;;
+  isolated:*) blocker "isolated mode, but the credential self-check could not finish ($ISO_WHY), so target.sh cannot tell that this is the isolated runner (Rule 11a)$native — nothing was copied or built." ;;
   *:1) echo ">> warning: native mode, and these are readable here, to the code this run builds and runs too: $ISO_KINDS (Rule 11a)" ;;
   *) echo ">> warning: native mode, and the credential check could not finish ($ISO_WHY), so what the code this run builds can read here is not known (Rule 11a)" ;;
 esac

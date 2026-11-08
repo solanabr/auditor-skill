@@ -349,14 +349,31 @@ printf 'key\n' > "$CREDHOME/.ssh/id_rsa"
 run "$TARGET" "$WT" HOME="$CREDHOME" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
 check "isolated mode with a readable SSH key: exit 3, nothing copied, the kinds named and no path" \
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: isolated mode, but these are readable here: SSH keys (1)' '$T/err' && grep -q 'this is not the isolated runner (Rule 11a)' '$T/err' && ! grep -q 'id_rsa' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+# That blocker says what the human changes to build natively instead: what recorded isolated (Addendum L). In
+# strict mode isolated is the only way, and the blocker says so.
+LISTS=', and scripts/runner/probe.sh --only isolation lists them'
+NATIVE='. To build natively instead, on this machine, the human'
+check "... and says how to build natively instead: the human unsets AUDITOR_EXEC_MODE" \
+  sh -c "[ \"\$(grep -c . '$T/err')\" = 1 ] && grep -qF '$LISTS$NATIVE unsets AUDITOR_EXEC_MODE where Claude Code runs — nothing was copied or built.' '$T/err' && grep -q 'built\.\$' '$T/err'"
+printf 'isolated\n' > "$WT/audit_1/exec-mode"
+run "$TARGET" "$WT" HOME="$CREDHOME" -- cargo-test --run audit_1 --src .
+check "... an exec-mode of isolated: the human writes native to it" \
+  sh -c "[ '$RC' = 3 ] && grep -qF '$LISTS$NATIVE writes native to audit_1/exec-mode — nothing was copied or built.' '$T/err' && grep -q 'built\.\$' '$T/err'"
+run "$TARGET" "$WT" HOME="$CREDHOME" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
+check "... both: both" \
+  sh -c "[ '$RC' = 3 ] && grep -qF '$LISTS$NATIVE unsets AUDITOR_EXEC_MODE where Claude Code runs and writes native to audit_1/exec-mode — nothing was copied or built.' '$T/err' && grep -q 'built\.\$' '$T/err'"
+printf 'native\n' > "$WT/audit_1/exec-mode"
+run "$TARGET" "$WT" HOME="$CREDHOME" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+check "strict mode with a readable SSH key: exit 3, nothing copied, and the blocker says strict mode builds only on an isolated runner" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: isolated mode, but these are readable here: SSH keys (1)' '$T/err' && grep -qF '$LISTS. Strict mode is on (AUDITOR_STRICT=1), so target.sh builds only on an isolated runner (Rule 11f) — nothing was copied or built.' '$T/err' && ! grep -q 'To build natively' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
 run "$TARGET" "$WT" HOME="$CREDHOME" -- cargo-test --run audit_1 --src .
 check "native mode with a readable SSH key: a warning by kind and count, and the run goes on" \
   sh -c "[ '$RC' = 0 ] && grep -q '^>> warning: native mode, and these are readable here, to the code this run builds and runs too: SSH keys (1)' '$T/out' && ! grep -q 'id_rsa' '$T/out'"
 mkdir -p "$T/sys-nopy"
 for f in "$T/sys/"*; do [ "${f##*/}" = python3 ] || ln -s "$(readlink "$f")" "$T/sys-nopy/${f##*/}"; done
 run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
-check "isolated mode where the self-check cannot run (no python3): exit 3, nothing copied" \
-  sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: isolated mode, but the credential self-check could not finish (python3 is not on PATH)' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+check "isolated mode where the self-check cannot run (no python3): exit 3, nothing copied, and how to build natively instead" \
+  sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: isolated mode, but the credential self-check could not finish (python3 is not on PATH)' '$T/err' && grep -qF 'isolated runner (Rule 11a)$NATIVE unsets AUDITOR_EXEC_MODE where Claude Code runs — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
 check "native mode without python3: a blocker before anything is copied, since only python3 tells that incident_1 holds no INCIDENTS.json" \
   sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so target.sh cannot tell whether incident_1 holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
