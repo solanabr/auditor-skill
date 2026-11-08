@@ -36,9 +36,10 @@ env:
   AUDITOR_FAIL_ON: "7"
   # The most one review may spend, in US dollars. A review that reaches it fails.
   AUDITOR_MAX_BUDGET_USD: "5"
-  # The tools job: the semgrep rulesets it runs, and the analyzer releases it installs.
+  # The tools job: the semgrep rulesets it runs, and the analyzer releases it installs. Pin a release that has
+  # been out two weeks or more, so a broken one has had time to be pulled.
   SEMGREP_RULESETS: "p/rust p/trailofbits"
-  SEMGREP_VERSION: "1.117.0"
+  SEMGREP_VERSION: "1.182.1"
   CARGO_AUDIT_VERSION: "0.22.2"
 
 jobs:

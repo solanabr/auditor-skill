@@ -20,7 +20,7 @@ The settings you may change are in the file's top-level `env:` block:
 | `AUDITOR_FAIL_ON` | `7` | the review fails on a finding of this severity or more, from 1 to 10 (`OUTPUT-RULES.md` Rule 1: 7 and 8 are HIGH, 9 and 10 CRITICAL) |
 | `AUDITOR_MAX_BUDGET_USD` | `5` | the most one review may spend, in US dollars |
 | `SEMGREP_RULESETS` | `p/rust p/trailofbits` | the semgrep rulesets the tools job runs, any of `p/rust`, `p/trailofbits`, `p/typescript`, `p/javascript`, `p/python`, `p/golang`, `p/solidity`, `p/github-actions` and `p/secrets` |
-| `SEMGREP_VERSION`, `CARGO_AUDIT_VERSION` | `1.117.0`, `0.22.2` | the releases of semgrep and cargo-audit the tools job installs |
+| `SEMGREP_VERSION`, `CARGO_AUDIT_VERSION` | `1.182.1`, `0.22.2` | the releases of semgrep and cargo-audit the tools job installs. Move them to releases at least two weeks old, so a broken one has had time to be pulled. |
 
 Leave `AUDITOR_STRICT` and `AUDITOR_EXEC_MODE` as they are ([below](#strict-mode-and-nothing-built)).
 

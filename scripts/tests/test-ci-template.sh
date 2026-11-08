@@ -150,6 +150,15 @@ for want in '  AUDITOR_STRICT: "1"' '  AUDITOR_EXEC_MODE: none'; do
 done
 n=$(printf '%s\n' "$code" | grep -c -E 'AUDITOR_(STRICT|EXEC_MODE):')
 check "nothing else sets AUDITOR_STRICT or AUDITOR_EXEC_MODE" [ "$n" -eq 2 ]
+# the defaults docs/ci.md's settings table gives are the ones the workflow sets
+envval() { printf '%s\n' "$top_env" | sed -n "s/^  $1: \"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p"; }
+for row in "| \`AUDITOR_FAIL_ON\` | \`$(envval AUDITOR_FAIL_ON)\` |" \
+           "| \`AUDITOR_MAX_BUDGET_USD\` | \`$(envval AUDITOR_MAX_BUDGET_USD)\` |" \
+           "| \`SEMGREP_RULESETS\` | \`$(envval SEMGREP_RULESETS)\` |" \
+           "| \`SEMGREP_VERSION\`, \`CARGO_AUDIT_VERSION\` | \`$(envval SEMGREP_VERSION)\`, \`$(envval CARGO_AUDIT_VERSION)\` |"; do
+  n=$(grep -c -F -- "$row" docs/ci.md)
+  check "docs/ci.md's settings table matches the workflow: $row" [ "$n" -eq 1 ]
+done
 # every uses: is a full commit id with a version comment, and one the repository's own workflows pin
 pins=$(grep -h -E '^[[:space:]-]*uses:' .github/workflows/*.yml | sed -E 's/^[[:space:]-]*uses:[[:space:]]*//; s/[[:space:]]+#.*//' | sort -u)
 nuses=0
