@@ -52,7 +52,7 @@ Deep single-unit review: read the file, run Phase 0.5 context reconstruction on 
 **When:** one handler/endpoint/function needs depth. **Emits:** per-item verdicts + findings for that unit only. N≥6 findings pass Rule 5b.
 
 ### `/auditor:diff-audit`
-**Arg:** `[base..head | PR number] [--strict]`
+**Arg:** `[base..head] [--strict]`
 Differential audit (Mode 4). Changed set via read-only git, `git-ro.sh diff --name-only base..head` (default `main..HEAD`); Phase 0.5 on changed functions + 1-hop callers/callees; risk-classify (auth/crypto/value-transfer/validation-removal = HIGH); git-blame removed security code (deletion in a "fix"/"CVE" commit = CRITICAL regression); run only the matching checklist items + vectors through Rule 5b. When a manifest or lockfile changed, a **dependency lane** runs checklist 11 §11.11 (the published artifact's code delta, SC-059..062) and adds a Dependency delta section.
 **When:** a PR / commit range, not the whole tree. **Emits:** `audit_<n>/PR-REPORT.md` — changed-surface verdicts only; skips whole-repo discovery.
 
