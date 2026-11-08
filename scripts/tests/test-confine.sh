@@ -1212,23 +1212,25 @@ for m in vanish-once vanish-always deny-twice deny-always; do
     "$REAL_FIND" "$T/$m/calls" "$T/$m/calls" "$upto" "$why" > "$T/$m/find"
   chmod +x "$T/$m/find"
 done
-for m in vanish-once vanish-always deny-twice; do
-  rm -f "$T/$m/calls"
-  LIB_PATH="$T/$m:$PATH" lib_once "$T/walkrepo" 'confine_repo . R; printf "%s" "$CONFINE_BARE"'
-  check "a walk of the git directory that fails as $m still takes the repository" out_is false
+for st in 0 1; do
+  for m in vanish-once vanish-always deny-twice; do
+    rm -f "$T/$m/calls"
+    AUDITOR_STRICT=$st LIB_PATH="$T/$m:$PATH" lib_once "$T/walkrepo" 'confine_repo . R; printf "%s" "$CONFINE_BARE"'
+    check "a walk of the git directory that fails as $m still takes the repository (strict $st)" out_is false
+  done
+  check "... the one denied twice, after it was tried again (strict $st)" test "$(cat "$T/deny-twice/calls")" -ge 3
+  rm -f "$T/deny-always/calls"
+  AUDITOR_STRICT=$st LIB_PATH="$T/deny-always:$PATH" lib_once "$T/walkrepo" 'confine_repo . R'
+  check "... but one that keeps failing for another reason is refused, after three tries (strict $st)" \
+    refused "the git directory holds a directory that cannot be read, so a named pipe or device in it cannot be ruled out: $(shown "$T/walkrepo/.git")"
+  check "... whose walks were tried three times (strict $st)" test "$(cat "$T/deny-always/calls")" = 6
+  if mkfifo "$T/walkrepo/.git/pipe" 2>/dev/null; then
+    AUDITOR_STRICT=$st LIB_PATH="$T/vanish-always:$PATH" lib_bounded "$T/walkrepo/.git/pipe" "$T/walkrepo" 'confine_repo . R'
+    check "... and a named pipe that is still there is refused, whatever vanished beside it (strict $st)" \
+      refused "a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$T/walkrepo/.git")"
+    rm "$T/walkrepo/.git/pipe"
+  fi
 done
-check "... the one denied twice, after it was tried again" test "$(cat "$T/deny-twice/calls")" -ge 3
-rm -f "$T/deny-always/calls"
-LIB_PATH="$T/deny-always:$PATH" lib_once "$T/walkrepo" 'confine_repo . R'
-check "... but one that keeps failing for another reason is refused, after three tries" \
-  refused "the git directory holds a directory that cannot be read, so a named pipe or device in it cannot be ruled out: $(shown "$T/walkrepo/.git")"
-check "... whose walks were tried three times" test "$(cat "$T/deny-always/calls")" = 6
-if mkfifo "$T/walkrepo/.git/pipe" 2>/dev/null; then
-  LIB_PATH="$T/vanish-always:$PATH" lib_bounded "$T/walkrepo/.git/pipe" "$T/walkrepo" 'confine_repo . R'
-  check "... and a named pipe that is still there is refused, whatever vanished beside it" \
-    refused "a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$T/walkrepo/.git")"
-  rm "$T/walkrepo/.git/pipe"
-fi
 # A git directory holding 2000 symbolic links: one find lists them and the shell tests each, so rundir.sh
 # and confine_repo end within 5 s (a find -exec per link took minutes).
 mkrepo "$RW/links"; put "$RW/links" f x; commit "$RW/links" -m x
