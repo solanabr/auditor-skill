@@ -1009,6 +1009,8 @@ confine_git_dir_ours() {
   return 1
 }
 
+# Accepting these rests on hooks never running: hgit pins core.hooksPath=/dev/null and upload-pack runs
+# none, so no hook's target is opened. Drop that pin, and this must refuse hooks links again.
 confine_hook_links() { # confine_hook_links <git directory> <links, one to a line>: status 0 when each is the hooks directory there or lies in it
   local l rc=0 IFS=$'\n'
   set -f
