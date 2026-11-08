@@ -5,6 +5,9 @@
 # a.rs; the directory src/; and linkdir, a symbolic link to audit_1. AUDITOR_EXEC_MODE is not set.
 # One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each
 # case prints nothing on stdout, makes no scratch directory and changes nothing in the working directory.
+# Each line is what strict mode gives, with AUDITOR_STRICT=1 (OUTPUT-RULES.md Rule 11f), as
+# test-preapproved-entrypoints.sh replays the file. test-dnr-poc-runner.sh runs it in default mode as well,
+# without the lines that say strict mode is on: there the mode is native, and its --mode cases stand in.
 # what run.sh takes
 3	[PoC-ATTEMPTED] blocker: run.sh refused: -x is not an argument run.sh takes (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	-x
 3	[PoC-ATTEMPTED] blocker: run.sh refused: --help is not an argument run.sh takes (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	--help
@@ -95,8 +98,8 @@
 3	[PoC-ATTEMPTED] blocker: run.sh refused: --mode takes none, isolated or native, not 'yes' — nothing was copied or built.	--crate	audit_1/poc/F-1	--mode	yes
 3	[PoC-ATTEMPTED] blocker: run.sh refused: --mode takes none, isolated or native, not 'Native' — nothing was copied or built.	--crate	audit_1/poc/F-1	--mode	Native
 3	[PoC-ATTEMPTED] blocker: run.sh refused: --mode takes none, isolated or native, not '--keep' — nothing was copied or built.	--crate	audit_1/poc/F-1	--mode	--keep
-3	[PoC-ATTEMPTED] blocker: --mode is isolated, but the recorded execution mode is native (audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset); the mode changes only when the human answers again — nothing was copied or built.	--crate	audit_1/poc/F-1	--mode	isolated
-3	[PoC-ATTEMPTED] blocker: --mode is none, but the recorded execution mode is native (audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset); the mode changes only when the human answers again — nothing was copied or built.	--crate	audit_1/poc/F-1	--mode	none
+3	[PoC-ATTEMPTED] blocker: --mode is native, but the recorded execution mode is isolated (audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset; strict mode: on (AUDITOR_STRICT=1)); the mode changes only when the human answers again — nothing was copied or built.	--crate	audit_1/poc/F-1	--mode	native
+3	[PoC-ATTEMPTED] blocker: --mode is none, but the recorded execution mode is isolated (audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset; strict mode: on (AUDITOR_STRICT=1)); the mode changes only when the human answers again — nothing was copied or built.	--crate	audit_1/poc/F-1	--mode	none
 # --init: a new or empty <R>/poc/<ID>
 3	[PoC-ATTEMPTED] blocker: run.sh refused: --init makes a crate in a new or empty directory, and audit_1/poc/F-1 holds files — nothing was copied or built.	--init	audit_1/poc/F-1
 3	[PoC-ATTEMPTED] blocker: run.sh refused: --init must be relative to the working directory: /tmp/audit_1/poc/F-9 — nothing was copied or built.	--init	/tmp/audit_1/poc/F-9

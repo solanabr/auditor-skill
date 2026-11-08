@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # test-dnr-poc-runner.sh — self-test for templates/poc/run.sh and the PoC contract
 # assertions in templates/poc/shared-test-utils:
-#   * the execution mode every run needs (without AUDITOR_EXEC_MODE=isolated|native it
-#     exits 3 before anything is copied or compiled, whatever the crate holds), and the
-#     same gate, shown verbatim in the docs, for the runners poc-engineer writes;
+#   * the execution mode: native when nothing is recorded, with a note; strict mode
+#     (AUDITOR_STRICT in each of its forms, or a strict entry in a run directory) makes
+#     it isolated at least; none, or an AUDITOR_EXEC_MODE that names no mode, exits 3
+#     before anything is copied or compiled, whatever the crate holds; and the mode gate,
+#     shown verbatim in the docs, for the runners poc-engineer writes;
 #   * prebuilt bytes: VULNERABLE_SO alone runs the exploit arm, FIXED_SO adds the
 #     fixed arm and needs VULNERABLE_SO; an arm counts only on the marker its contract
 #     assertion leaves when it runs and holds; success prints the Leg 3 line with the
@@ -83,9 +85,11 @@
 #     case file fixtures/poc-run/cases.txt among others, and long values (a --cache
 #     over 1024 bytes, --update-pins over 1024 bytes or 32 pins) are refused at once;
 #     --init copies the template byte for byte; --cache takes only a directory
-#     --new-cache made; the mode is the stricter of AUDITOR_EXEC_MODE and the
-#     exec-mode of every run directory an argument names, and --mode must match it;
-#     ./run.sh in a crate at <R>/poc/<ID> reads <R>/exec-mode as well; the
+#     --new-cache made; the mode is the stricter of AUDITOR_EXEC_MODE, the exec-mode
+#     of every run directory an argument names and strict mode, and --mode must match
+#     it; ./run.sh in a crate at <R>/poc/<ID> reads <R>/exec-mode and <R>/strict as
+#     well; the case file runs in both modes; an isolated-mode blocker says how the
+#     human builds natively instead, or that strict mode needs an isolated runner; the
 #     installation's template never builds itself;
 #   * an incident's crate runs only once incident_<n>/INCIDENTS.json records its
 #     root_cause_class (a file, an incident or a class that cannot be read stops it,
@@ -150,6 +154,9 @@
 # checks.
 
 set -uo pipefail
+# The checks below set strict mode themselves; rundir.sh new, which some of them call with
+# this environment, would mark every run directory it makes strict.
+unset AUDITOR_STRICT
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE="$HERE/../../templates/poc"
@@ -522,32 +529,109 @@ FR="fixed_blocked:attempted fixed_blocked:held fixed_blocked:rejected_with fixed
 FB="fixed_blocked:attempted=blocked fixed_blocked:held=blocked fixed_blocked:blocked fixed_blocked:loaded"
 
 # ---------------------------------------------------------------------------
-# The execution mode. Without AUDITOR_EXEC_MODE=isolated|native, run.sh exits 3
-# before it copies or compiles anything — a dependency-free crate included.
+# The execution mode. With nothing recorded, run.sh runs natively and says so, on its
+# mode line and in a note; strict mode (OUTPUT-RULES.md Rule 11f) makes it isolated at
+# least, which for ./run.sh means the run is inside the isolated runner, as
+# AUDITOR_EXEC_MODE=isolated does; none, or a value that names no mode, exits 3 before it
+# copies or compiles anything, a dependency-free crate included. $T/inc lies in no run
+# directory, so only the environment counts.
 # ---------------------------------------------------------------------------
+NOTE_DEFAULT='>> note: no execution mode is recorded, so this PoC builds and runs natively, on this machine (OUTPUT-RULES.md Rule 11a)'
+mode_line() {  # mode_line <mode> <sources>: the mode line run.sh prints
+  printf '>> execution mode: %s (the stricter of %s; native when none is recorded)' "$1" "$2"
+}
+strict_why() {  # strict_why <AUDITOR_STRICT value>: why strict mode is on, as the mode line names it
+  printf 'AUDITOR_STRICT=%s' "$1"
+}
+notes_are() {  # notes_are <line>...: the >> note: lines of $T/out are exactly these, in this order
+  [ "$(grep '^>> note: ' "$T/out")" = "$(printf '%s\n' ${1+"$@"} | sed '/^$/d')" ]
+}
 code="$(gate "$T/inc" "$VULN" "$FIX")"
-[ "$code" = 3 ] && grep -q 'AUDITOR_EXEC_MODE' "$T/out" && grep -q 'Rule 11a' "$T/out" && grep -q 'Q46' "$T/out" && nothing_ran \
-  && ok "no execution mode, dependency-free crate (prebuilt) -> exit 3 pointing to Rule 11a / Q46, no cargo call, no scratch dir" \
-  || { bad "no execution mode, prebuilt: exit $code"; cat "$T/out" >&2; }
+bd="$(build_dir)"
+[ "$code" = 0 ] && from_scratch "$bd" && grep -qxF "$(mode_line native 'AUDITOR_EXEC_MODE: unset; strict mode: off')" "$T/out" \
+  && notes_are "$NOTE_DEFAULT" && grep -q '^>> build dir: .*AUDITOR_EXEC_MODE=native;' "$T/out" \
+  && ok "no execution mode, dependency-free crate (prebuilt) -> native: builds and tests the scratch copy, the mode line and a note say so" \
+  || { bad "no execution mode, prebuilt: exit $code, build dir '$bd'"; cat "$T/out" >&2; }
 code="$(gate "$T/inc")"
-[ "$code" = 3 ] && nothing_ran && ok "no execution mode, build mode -> exit 3 before any SBF build" || bad "no execution mode, build mode: exit $code"
+bd="$(build_dir)"
+[ "$code" = 0 ] && from_scratch "$bd" && notes_are "$NOTE_DEFAULT" && grep -q '^>> build dir: .*AUDITOR_EXEC_MODE=native;' "$T/out" \
+  && ok "no execution mode, build mode -> native, with the note" || { bad "no execution mode, build mode: exit $code"; cat "$T/out" >&2; }
 code="$(gate "$T/inc" AUDITOR_EXEC_MODE= "$VULN" "$FIX")"
-[ "$code" = 3 ] && nothing_ran && ok "an empty AUDITOR_EXEC_MODE -> exit 3" || bad "AUDITOR_EXEC_MODE empty: exit $code"
+[ "$code" = 0 ] && notes_are "$NOTE_DEFAULT" && grep -q '^>> build dir: .*AUDITOR_EXEC_MODE=native;' "$T/out" \
+  && ok "an empty AUDITOR_EXEC_MODE -> native, as an unset one" || { bad "AUDITOR_EXEC_MODE empty: exit $code"; cat "$T/out" >&2; }
 code="$(gate "$T/inc" AUDITOR_EXEC_MODE=yes "$VULN" "$FIX")"
 [ "$code" = 3 ] && grep -q "AUDITOR_EXEC_MODE is 'yes'" "$T/out" && nothing_ran && ok "an unknown AUDITOR_EXEC_MODE value -> exit 3" || bad "AUDITOR_EXEC_MODE=yes: exit $code"
+code="$(gate "$T/inc" AUDITOR_EXEC_MODE=none "$VULN" "$FIX")"
+[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the recorded execution mode is none (AUDITOR_EXEC_MODE: none; strict mode: off): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." "$T/out" \
+  && nothing_ran && one_blocker && ok "AUDITOR_EXEC_MODE=none -> exit 3, nothing copied or built" || { bad "AUDITOR_EXEC_MODE=none: exit $code"; cat "$T/out" >&2; }
 code="$(gate "$T/inc" AUDITOR_EXEC_MODE=isolated "$VULN" "$FIX")"
 bd="$(build_dir)"
 [ "$code" = 0 ] && from_scratch "$bd" && grep -q '^>> build dir: .*AUDITOR_EXEC_MODE=isolated;' "$T/out" \
-  && ok "AUDITOR_EXEC_MODE=isolated -> builds and tests the scratch copy, and says which mode ran" || bad "isolated: exit $code, build dir '$bd'"
+  && grep -qxF "$(mode_line isolated 'AUDITOR_EXEC_MODE: isolated; strict mode: off')" "$T/out" && notes_are \
+  && ok "AUDITOR_EXEC_MODE=isolated -> builds and tests the scratch copy, and says which mode ran" || { bad "isolated: exit $code, build dir '$bd'"; cat "$T/out" >&2; }
 code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX")"
 bd="$(build_dir)"
 [ "$code" = 0 ] && from_scratch "$bd" && grep -q '^>> build dir: .*AUDITOR_EXEC_MODE=native;' "$T/out" \
-  && ok "AUDITOR_EXEC_MODE=native -> builds and tests the scratch copy, and says which mode ran" || bad "native: exit $code, build dir '$bd'"
+  && grep -qxF "$(mode_line native 'AUDITOR_EXEC_MODE: native; strict mode: off')" "$T/out" && notes_are \
+  && ok "AUDITOR_EXEC_MODE=native -> builds and tests the scratch copy, and says which mode ran" || { bad "native: exit $code, build dir '$bd'"; cat "$T/out" >&2; }
+# AUDITOR_STRICT: 1, true, yes and on, in any letter case, turn strict mode on, and so does any other value, with
+# the note scripts/lib/confine.sh prints for it, "run.sh: note: AUDITOR_STRICT is '<v>', read as on" on stderr; 0,
+# false, no, off and an empty value leave it off. On, the mode is isolated whatever else is recorded, and none
+# still stops the run.
+strict_note_is() {  # strict_note_is <value as shown, or nothing>: $T/out holds that AUDITOR_STRICT note, or none
+  if [ -n "$1" ]; then [ "$(grep -c '^run.sh: note: ' "$T/out")" = 1 ] && grep -qxF "run.sh: note: AUDITOR_STRICT is '$1', read as on" "$T/out"
+  else ! grep -q '^run.sh: note: ' "$T/out"; fi
+}
+while IFS='|' read -r strict env want part shown; do
+  [ -n "$want" ] || continue
+  set -- "$VULN" "AUDITOR_STRICT=$strict"; [ -n "$env" ] && set -- "$@" "AUDITOR_EXEC_MODE=$env"
+  code="$(gate "$T/inc" "$@")"
+  label="./run.sh with AUDITOR_STRICT '$strict', AUDITOR_EXEC_MODE '${env:-unset}'"
+  sources="AUDITOR_EXEC_MODE: ${env:-unset}; strict mode: off"
+  [ "$part" = on ] && sources="AUDITOR_EXEC_MODE: ${env:-unset}; strict mode: on ($(strict_why "$strict"))"
+  set -- ; [ "$part" = off ] && [ -z "$env" ] && set -- "$NOTE_DEFAULT"
+  if [ "$want" = none ]; then
+    [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the recorded execution mode is none ($sources): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." "$T/out" \
+      && nothing_ran && one_blocker && ok "$label -> none: exit 3, nothing copied or built" || { bad "$label: exit $code, want none"; cat "$T/out" >&2; }
+  else
+    [ "$code" = 0 ] && grep -qxF "$(mode_line "$want" "$sources")" "$T/out" && grep -q "^>> build dir: .*AUDITOR_EXEC_MODE=$want;" "$T/out" \
+      && notes_are ${1+"$@"} && strict_note_is "$shown" \
+      && ok "$label -> runs in $want mode, strict mode $part" || { bad "$label: exit $code, want $want with strict mode $part"; cat "$T/out" >&2; }
+  fi
+done <<'CASES'
+1||isolated|on
+1|native|isolated|on
+1|isolated|isolated|on
+1|none|none|on
+true||isolated|on
+YES|native|isolated|on
+On||isolated|on
+tRuE||isolated|on
+2||isolated|on|2
+strict|native|isolated|on|strict
+ 1||isolated|on| 1
+0||native|off
+0|isolated|isolated|off
+false|native|native|off
+No||native|off
+OFF||native|off
+||native|off
+CASES
+code="$(gate "$T/inc" "$VULN" "AUDITOR_STRICT=$(printf 'on\033[2Jx')")"
+[ "$code" = 0 ] && grep -qxF "$(mode_line isolated "AUDITOR_EXEC_MODE: unset; strict mode: on ($(strict_why 'on?[2Jx'))")" "$T/out" \
+  && notes_are && strict_note_is 'on?[2Jx' && ! grep -q "$(printf '\033')" "$T/out" \
+  && ok "an AUDITOR_STRICT holding a control character is shown with ? in its place, and read as on" || { bad "AUDITOR_STRICT with a control character: exit $code"; cat -v "$T/out" >&2; }
+long_strict="$(printf '%0300d' 0)"
+code="$(gate "$T/inc" "$VULN" "AUDITOR_STRICT=$long_strict")"
+[ "$code" = 0 ] && strict_note_is "${long_strict:0:200}..." && grep -qxF "$(mode_line isolated "AUDITOR_EXEC_MODE: unset; strict mode: on ($(strict_why "${long_strict:0:200}..."))")" "$T/out" \
+  && ok "an AUDITOR_STRICT of 300 bytes is shown cut after 200, as confine_shown shows a value, and read as on" || { bad "AUDITOR_STRICT of 300 bytes: exit $code"; cat "$T/out" >&2; }
 
 # A runner poc-engineer writes (a Trident or cargo-fuzz target, a Surfpool scenario)
-# starts with run.sh's mode gate, copied from the docs: the lines poc-harness.md and
-# poc-engineer.md show are run.sh's own, and as a runner's first lines they stop a run
-# with no recorded mode.
+# applies run.sh's mode gate, copied from the docs: the lines poc-harness.md and
+# poc-engineer.md show are run.sh's own. The lines before it there set the mode, as
+# crate_mode does here (test-command-forms.sh runs them), so the gate itself stops on
+# whatever is not isolated or native: an empty value, none, and a word that names no
+# mode.
 gate_lines() {  # gate_lines <file>: the mode gate, from its `case` line to its `esac`
   awk 'index($0, "case \"${AUDITOR_EXEC_MODE:-}\" in") == 1 { on = 1 } on { print } on && $0 == "esac" { exit }' "$1"
 }
@@ -563,8 +647,15 @@ printf '#!/usr/bin/env bash\nset -euo pipefail\n%s\necho "past the gate"\n' "$(g
 code="$( (cd "$T" && env -i PATH="$PATH" bash ./runner.sh) >"$T/out" 2>&1; echo $?)"
 [ "$code" = 3 ] && grep -q 'nothing was copied or built' "$T/out" && ! grep -q 'past the gate' "$T/out" \
   && ok "the documented gate as a runner's first lines: no AUDITOR_EXEC_MODE -> exit 3 before anything else" || bad "documented gate, no mode: exit $code"
-code="$( (cd "$T" && env -i PATH="$PATH" AUDITOR_EXEC_MODE=isolated bash ./runner.sh) >"$T/out" 2>&1; echo $?)"
-[ "$code" = 0 ] && grep -q 'past the gate' "$T/out" && ok "the documented gate lets a run with a recorded mode through" || bad "documented gate, isolated: exit $code"
+for value in none yes Native; do
+  code="$( (cd "$T" && env -i PATH="$PATH" AUDITOR_EXEC_MODE="$value" bash ./runner.sh) >"$T/out" 2>&1; echo $?)"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: AUDITOR_EXEC_MODE is '$value', not isolated or native — nothing was copied or built." "$T/out" && ! grep -q 'past the gate' "$T/out" \
+    && ok "the documented gate as a runner's first lines: AUDITOR_EXEC_MODE=$value -> exit 3 before anything else" || bad "documented gate, AUDITOR_EXEC_MODE=$value: exit $code"
+done
+for value in isolated native; do
+  code="$( (cd "$T" && env -i PATH="$PATH" AUDITOR_EXEC_MODE="$value" bash ./runner.sh) >"$T/out" 2>&1; echo $?)"
+  [ "$code" = 0 ] && [ "$(cat "$T/out")" = "past the gate" ] && ok "the documented gate lets a run in $value mode through" || bad "documented gate, $value: exit $code"
+done
 
 # The installation's run.sh is what each PoC holds: nothing in it is filled in, so the
 # commands can compare a PoC's copy with it byte for byte, and refresh it.
@@ -1267,8 +1358,9 @@ code="$(run "$T/inc" "$SP" "$NATIVE" VULNERABLE_SO=../vuln.so FIXED_SO=../fixed.
 
 # Crate shapes that reach for target code — a path dependency (one of them inside the
 # hostile tree), a git dependency, a workspace-inherited one — and the shipped
-# template itself. Each needs the mode; with it, each is built and tested from a
-# scratch copy, never in place, so the target's config stays out of reach.
+# template itself. In each mode, native with nothing recorded and isolated in strict
+# mode included, each is built and tested from a scratch copy, never in place, so the
+# target's config stays out of reach.
 mk_dep() {  # mk_dep <dir> <Cargo.toml dependency line>
   mk_crate "$1"
   printf '[package]\nname = "p"\nversion = "0.1.0"\n\n[dependencies]\n%s\n' "$2" > "$1/Cargo.toml"
@@ -1281,16 +1373,22 @@ mkdir -p "$T/tmpl"; cp -R "$TEMPLATE/." "$T/tmpl/"
 sed 's/{PROGRAM_NAME}/poc_tmpl/' "$TEMPLATE/Cargo.toml" > "$T/tmpl/Cargo.toml"
 for c in "$T/d-path" "$T/d-git" "$T/d-ws" "$T/tmpl" "$R/incident_1/poc/INC-1.3"; do
   label="${c#"$T"/}"
-  code="$(gate "$c" "$VULN" "$FIX")"
-  [ "$code" = 3 ] && nothing_ran && ok "$label, no execution mode -> exit 3, nothing copied or compiled" || bad "$label without a mode: exit $code"
-  rm -f "$LOG"
-  code="$(gate "$c" "$NATIVE" "$VULN" "$FIX" SHIM_LOG="$LOG")"
-  bd="$(build_dir)"
-  if [ "$code" = 0 ] && from_scratch "$bd" && [ ! -s "$LOG" ]; then
-    ok "$label under native -> built and tested from a scratch copy, the target's config out of reach"
-  else
-    bad "$label under native: exit $code, build dir '$bd'"; cat "$T/out" >&2
-  fi
+  for how in "no execution mode" native "AUDITOR_STRICT=1"; do
+    set -- ; ran=native
+    case "$how" in
+      native) set -- "$NATIVE" ;;
+      AUDITOR_STRICT=1) set -- AUDITOR_STRICT=1; ran=isolated ;;
+    esac
+    rm -f "$LOG"
+    code="$(gate "$c" ${1+"$@"} "$VULN" "$FIX" SHIM_LOG="$LOG")"
+    bd="$(build_dir)"
+    if [ "$code" = 0 ] && from_scratch "$bd" && [ ! -s "$LOG" ] && grep -q "^>> build dir: .*AUDITOR_EXEC_MODE=$ran;" "$T/out" \
+       && { [ "$how" != "no execution mode" ] || grep -qxF "$NOTE_DEFAULT" "$T/out"; }; then
+      ok "$label, $how -> $ran: built and tested from a scratch copy, the target's config out of reach"
+    else
+      bad "$label, $how: exit $code, build dir '$bd'"; cat "$T/out" >&2
+    fi
+  done
 done
 
 # Refusals, in either mode: the copy never takes a symbolic link, .cargo/ or
@@ -1720,11 +1818,13 @@ for spec in "--cache|$long|--cache takes a directory --new-cache made, \$TMPDIR/
     && ok "$opt with a value of ${#value} bytes -> refused in ${took}s" || { bad "$opt, a long value: exit $code after ${took}s"; cut -c1-300 "$T/out" >&2; }
 done
 
-# The execution mode: the stricter of <R>/exec-mode and AUDITOR_EXEC_MODE (none, then isolated, then
-# native). Missing or none exits 3 before anything is copied, and so does a --mode that is not it.
-# Isolated runs can pass only where no credential the self-check reads is readable, here in an empty
-# HOME and the account's home directory; the driver says whether this machine's is. A CI runner must be
-# such a machine, so that those checks run there.
+# The execution mode: the stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode (none, then isolated,
+# then native; strict mode counts as isolated), and native, with a note, when none of them says anything. none
+# exits 3 before anything is copied, and so does a --mode that is not the mode. Isolated runs can pass only where
+# no credential the self-check reads is readable, here in an empty HOME and the account's home directory; the
+# driver says whether this machine's is. A CI runner must be such a machine, so that those checks run there.
+# Elsewhere an isolated run stops at the self-check, after its mode line, and the blocker ends by saying how the
+# human builds natively instead, or, in strict mode, that strict mode builds only on an isolated runner.
 readable="$(cd "$WT" && env -i HOME="$CLEANHOME" "${TOOL_HOMES[@]}" PATH="$PATH" bash "$T/iso-driver.sh" "$ROOT" creds 2>&1)"; rc=$?
 ISOLATED_OK=0
 if [ "$rc" = 0 ]; then
@@ -1736,57 +1836,115 @@ elif [ "${CI:-}" = true ]; then
 else
   echo "note: this machine is not an isolated runner (${readable%%$'\n'*}); the checks that isolated mode passes are skipped"
 fi
-while IFS='|' read -r file env expect_mode; do
+# iso_tail <exec-mode> <AUDITOR_EXEC_MODE> <why strict mode is on, or nothing>: how an isolated-mode blocker of
+# run.sh --crate ends, for audit_1/exec-mode and the variable as given.
+iso_tail() {
+  local how=""
+  if [ -n "$3" ]; then printf '. Strict mode is on (%s), so this PoC builds only on an isolated runner (Rule 11f)' "$3"; return; fi
+  [ "$2" = isolated ] && how="unsets AUDITOR_EXEC_MODE where Claude Code runs"
+  [ "$1" = isolated ] && how="${how:+$how and }writes native to audit_1/exec-mode"
+  printf '. To build natively instead, on this machine, the human %s' "$how"
+}
+# iso_ran <sources> <tail> <label>: an isolated run of run.sh --crate printed its mode line; it ran where this
+# machine passes the self-check, and elsewhere stopped there before anything was copied, its blocker ending in
+# <tail>.
+iso_ran() {
+  grep -qxF "$(mode_line isolated "$1")" "$T/out" || { bad "$3: no isolated mode line"; cat "$T/out" >&2; return; }
+  if [ "$ISOLATED_OK" = 1 ]; then
+    [ "$code" = 0 ] && grep -q '^>> build dir: .*AUDITOR_EXEC_MODE=isolated;' "$T/out" && ok "$3 -> runs in isolated mode" || { bad "$3: exit $code, want an isolated run"; cat "$T/out" >&2; }
+  else
+    local line
+    line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but ' "$T/out")"
+    [ "$code" = 3 ] && case "$line" in *"$2 — nothing was copied or built.") true ;; *) false ;; esac && new_nothing_ran && one_blocker \
+      && ok "$3 -> isolated: this machine stops it at the self-check, and the blocker ends '${2#. }'" || { bad "$3: exit $code, want the self-check's blocker ending '${2#. }'"; cat "$T/out" >&2; }
+  fi
+}
+while IFS='|' read -r file env strict expect_mode; do
   [ -n "$expect_mode" ] || continue
   if [ -n "$file" ]; then printf '%s\n' "$file" > "$WT/audit_1/exec-mode"; else rm -f "$WT/audit_1/exec-mode"; fi
-  set -- ; [ -n "$env" ] && set -- "AUDITOR_EXEC_MODE=$env"
-  code="$(ngate "$@" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
-  label="exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}'"
+  set -- ; [ -n "$env" ] && set -- "AUDITOR_EXEC_MODE=$env"; [ -n "$strict" ] && set -- "$@" "AUDITOR_STRICT=$strict"
+  code="$(ngate ${1+"$@"} -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  label="exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}', AUDITOR_STRICT '${strict:-unset}'"
+  why=""; [ "$strict" = 1 ] && why="$(strict_why 1)"
+  sources="audit_1/exec-mode: ${file:-absent}; AUDITOR_EXEC_MODE: ${env:-unset}; strict mode: ${why:+on ($why)}"
+  [ -n "$why" ] || sources="${sources}off"
   case "$expect_mode" in
-    isolated|native)
-      if [ "$expect_mode" = isolated ] && [ "$ISOLATED_OK" = 0 ]; then continue; fi
-      [ "$code" = 0 ] && grep -q "^>> execution mode: $expect_mode (the stricter of audit_1/exec-mode: ${file:-absent}; AUDITOR_EXEC_MODE: ${env:-unset})$" "$T/out" \
-        && grep -q "^>> build dir: .*AUDITOR_EXEC_MODE=$expect_mode;" "$T/out" \
-        && ok "$label -> runs in $expect_mode mode" || { bad "$label: exit $code, want $expect_mode"; cat "$T/out" >&2; } ;;
+    isolated) iso_ran "$sources" "$(iso_tail "$file" "$env" "$why")" "$label" ;;
+    native)
+      set -- ; [ -z "$file$env" ] && set -- "$NOTE_DEFAULT"
+      [ "$code" = 0 ] && grep -qxF "$(mode_line native "$sources")" "$T/out" && notes_are ${1+"$@"} \
+        && grep -q "^>> build dir: .*AUDITOR_EXEC_MODE=native;" "$T/out" \
+        && ok "$label -> runs in native mode" || { bad "$label: exit $code, want native"; cat "$T/out" >&2; } ;;
     none)
-      [ "$code" = 3 ] && grep -q 'blocker: the recorded execution mode is none' "$T/out" && new_nothing_ran && one_blocker \
-        && ok "$label -> none: exit 3, nothing copied or built" || { bad "$label: exit $code, want none"; cat "$T/out" >&2; } ;;
-    missing)
-      [ "$code" = 3 ] && grep -q 'blocker: no recorded mode: audit_1/exec-mode is missing and AUDITOR_EXEC_MODE is not set' "$T/out" && new_nothing_ran && one_blocker \
-        && ok "$label -> no recorded mode: exit 3, nothing copied or built" || { bad "$label: exit $code, want missing"; cat "$T/out" >&2; } ;;
+      [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the recorded execution mode is none ($sources): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." "$T/out" \
+        && new_nothing_ran && one_blocker && ok "$label -> none: exit 3, nothing copied or built" || { bad "$label: exit $code, want none"; cat "$T/out" >&2; } ;;
   esac
 done <<'CASES'
-native||native
-isolated||isolated
-|native|native
-|isolated|isolated
-native|isolated|isolated
-isolated|native|isolated
-none||none
-|none|none
-none|native|none
-native|none|none
-none|isolated|none
-||missing
+native|||native
+isolated|||isolated
+|native||native
+|isolated||isolated
+native|isolated||isolated
+isolated|native||isolated
+isolated|isolated||isolated
+none|||none
+|none||none
+none|native||none
+native|none||none
+none|isolated||none
+|||native
+||0|native
+||1|isolated
+native||1|isolated
+|native|1|isolated
+isolated||1|isolated
+none||1|none
+|none|1|none
 CASES
+# A strict entry in any run directory of the working directory turns strict mode on for the installation's copy,
+# as scripts/lib/confine.sh reads them: here the crate's own audit_1 and another, incident_1.
 printf 'native\n' > "$WT/audit_1/exec-mode"
-for spec in 'native|native|0' 'native|isolated|3' 'native|none|3' 'isolated|native|3'; do
-  file="${spec%%|*}"; rest="${spec#*|}"; mode="${rest%%|*}"; expect_rc="${rest#*|}"
-  printf '%s\n' "$file" > "$WT/audit_1/exec-mode"
-  code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}" --mode "$mode")"
-  if [ "$expect_rc" = 0 ]; then
-    [ "$code" = 0 ] && ok "--mode $mode with the recorded mode $file -> runs" || { bad "--mode $mode, recorded $file: exit $code"; cat "$T/out" >&2; }
-  else
-    [ "$code" = 3 ] && grep -q "blocker: --mode is $mode, but the recorded execution mode is $file " "$T/out" && new_nothing_ran && one_blocker \
-      && ok "--mode $mode with the recorded mode $file -> exit 3 before anything is copied" || { bad "--mode $mode, recorded $file: exit $code"; cat "$T/out" >&2; }
-  fi
+for marker in audit_1/strict incident_1/strict; do
+  printf 'strict\n' > "$WT/$marker"
+  code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  rm -f "$WT/$marker"
+  iso_ran "audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset; strict mode: on ($marker)" \
+    ". Strict mode is on ($marker), so this PoC builds only on an isolated runner (Rule 11f)" "a strict entry, $marker, with audit_1/exec-mode native"
 done
+# An AUDITOR_STRICT value outside both lists turns strict mode on too, with confine.sh's note on stderr.
+code="$(ngate AUDITOR_STRICT=maybe -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+strict_note_is maybe && ok "--crate with AUDITOR_STRICT=maybe -> the note that it is read as on, once" || { bad "--crate, AUDITOR_STRICT=maybe: not the one note"; cat "$T/out" >&2; }
+iso_ran "audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset; strict mode: on ($(strict_why maybe))" \
+  ". Strict mode is on ($(strict_why maybe)), so this PoC builds only on an isolated runner (Rule 11f)" "--crate with AUDITOR_STRICT=maybe"
+# --mode must name the mode that results, strict mode's floor included.
+for spec in 'native|native||0' 'native|isolated||3' 'native|none||3' 'isolated|native||3' 'native|native|1|3' 'native|none|1|3' 'native|isolated|1|isolated'; do
+  IFS='|' read -r file mode strict expect_rc <<< "$spec"
+  printf '%s\n' "$file" > "$WT/audit_1/exec-mode"
+  set -- ; [ -n "$strict" ] && set -- "AUDITOR_STRICT=$strict"
+  code="$(ngate ${1+"$@"} -- --crate audit_1/poc/F-1 "${NVULN[@]}" --mode "$mode")"
+  why=""; [ -n "$strict" ] && why="$(strict_why "$strict")"
+  sources="audit_1/exec-mode: $file; AUDITOR_EXEC_MODE: unset; strict mode: ${why:+on ($why)}"
+  [ -n "$why" ] || sources="${sources}off"
+  resolved="$file"; [ -n "$why" ] && resolved=isolated
+  label="--mode $mode with the recorded mode $file, AUDITOR_STRICT '${strict:-unset}'"
+  case "$expect_rc" in
+    0) [ "$code" = 0 ] && ok "$label -> runs" || { bad "$label: exit $code"; cat "$T/out" >&2; } ;;
+    isolated) iso_ran "$sources" "$(iso_tail "$file" "" "$why")" "$label" ;;
+    *) [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: --mode is $mode, but the recorded execution mode is $resolved ($sources); the mode changes only when the human answers again — nothing was copied or built." "$T/out" \
+         && new_nothing_ran && one_blocker && ok "$label -> exit 3 before anything is copied" || { bad "$label: exit $code"; cat "$T/out" >&2; } ;;
+  esac
+done
+printf 'native\n' > "$WT/audit_1/exec-mode"
+# These refusals hold in both modes, with the same line.
 while IFS='|' read -r content text; do
   [ -n "$text" ] || continue
   printf "$content" > "$WT/audit_1/exec-mode"
-  code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
-  [ "$code" = 3 ] && grep -qF "run.sh refused: $text" "$T/out" && new_nothing_ran && one_blocker \
-    && ok "exec-mode holding '$content' -> refused before anything is copied" || { bad "exec-mode '$content': exit $code"; cat "$T/out" >&2; }
+  for strict in "" 1; do
+    set -- ; [ -n "$strict" ] && set -- AUDITOR_STRICT=1
+    code="$(ngate ${1+"$@"} -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+    [ "$code" = 3 ] && grep -qF "run.sh refused: $text" "$T/out" && new_nothing_ran && one_blocker \
+      && ok "exec-mode holding '$content'${strict:+, strict mode} -> refused before anything is copied" || { bad "exec-mode '$content'${strict:+, strict mode}: exit $code"; cat "$T/out" >&2; }
+  done
 done <<'CASES'
 yes\n|audit_1/exec-mode holds something other than one word, none, isolated or native
 Native\n|audit_1/exec-mode holds something other than one word, none, isolated or native
@@ -1795,14 +1953,17 @@ native isolated\n|audit_1/exec-mode holds something other than one word, none, i
 \n|audit_1/exec-mode holds something other than one word, none, isolated or native
 native\r\n|audit_1/exec-mode holds something other than one word, none, isolated or native
 CASES
-rm -f "$WT/audit_1/exec-mode"; mkdir "$WT/audit_1/exec-mode"
-code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
-[ "$code" = 3 ] && grep -qF 'run.sh refused: audit_1/exec-mode is not a regular file' "$T/out" && new_nothing_ran \
-  && ok "an exec-mode that is a directory -> refused" || { bad "exec-mode directory: exit $code"; cat "$T/out" >&2; }
-rmdir "$WT/audit_1/exec-mode"; printf 'native\n' > "$WT/audit_1/exec-mode"
-code="$(ngate AUDITOR_EXEC_MODE=yes -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
-[ "$code" = 3 ] && grep -qF "run.sh refused: AUDITOR_EXEC_MODE is 'yes', not none, isolated or native" "$T/out" && new_nothing_ran \
-  && ok "AUDITOR_EXEC_MODE=yes -> refused, even with a recorded mode" || { bad "AUDITOR_EXEC_MODE=yes: exit $code"; cat "$T/out" >&2; }
+for strict in "" 1; do
+  set -- ; [ -n "$strict" ] && set -- AUDITOR_STRICT=1
+  rm -f "$WT/audit_1/exec-mode"; mkdir "$WT/audit_1/exec-mode"
+  code="$(ngate ${1+"$@"} -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qF 'run.sh refused: audit_1/exec-mode is not a regular file' "$T/out" && new_nothing_ran \
+    && ok "an exec-mode that is a directory${strict:+, strict mode} -> refused" || { bad "exec-mode directory${strict:+, strict mode}: exit $code"; cat "$T/out" >&2; }
+  rmdir "$WT/audit_1/exec-mode"; printf 'native\n' > "$WT/audit_1/exec-mode"
+  code="$(ngate ${1+"$@"} AUDITOR_EXEC_MODE=yes -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qF "run.sh refused: AUDITOR_EXEC_MODE is 'yes', not none, isolated or native" "$T/out" && new_nothing_ran \
+    && ok "AUDITOR_EXEC_MODE=yes${strict:+, strict mode} -> refused, even with a recorded mode" || { bad "AUDITOR_EXEC_MODE=yes${strict:+, strict mode}: exit $code"; cat "$T/out" >&2; }
+done
 
 # The harness copy: run.sh --crate checks the crate's shared-test-utils/ before anything is copied, and every
 # build compiles the installation's src/lib.rs whatever the crate holds; its >> harness: line says whether the
@@ -1871,43 +2032,64 @@ done
 # Every run directory an argument names counts: here --vulnerable-so and --fixed-so under audit_2/exec/.
 ( cd "$WT" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null || bad "rundir.sh could not make audit_2"
 mkdir -p "$WT/audit_2/exec/b"; cp "$T/vuln.so" "$T/fixed.so" "$WT/audit_2/exec/b/"
-while IFS='|' read -r one two expect; do
+while IFS='|' read -r one two expect files; do
   [ -n "$expect" ] || continue
   if [ -n "$one" ]; then printf '%s\n' "$one" > "$WT/audit_1/exec-mode"; else rm -f "$WT/audit_1/exec-mode"; fi
   if [ -n "$two" ]; then printf '%s\n' "$two" > "$WT/audit_2/exec-mode"; else rm -f "$WT/audit_2/exec-mode"; fi
   code="$(ngate -- --crate audit_1/poc/F-1 --vulnerable-so audit_2/exec/b/vuln.so --fixed-so audit_2/exec/b/fixed.so)"
   label="audit_1/exec-mode '${one:-absent}', audit_2/exec-mode '${two:-absent}'"
-  sources="audit_1/exec-mode: ${one:-absent}; audit_2/exec-mode: ${two:-absent}; AUDITOR_EXEC_MODE: unset"
+  sources="audit_1/exec-mode: ${one:-absent}; audit_2/exec-mode: ${two:-absent}; AUDITOR_EXEC_MODE: unset; strict mode: off"
   case "$expect" in
-    none) [ "$code" = 3 ] && grep -qF "blocker: the recorded execution mode is none ($sources)" "$T/out" && new_nothing_ran \
+    none) [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the recorded execution mode is none ($sources): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." "$T/out" && new_nothing_ran \
             && ok "$label -> none, from the run directory of the prebuilt bytes: exit 3" || { bad "$label: exit $code"; cat "$T/out" >&2; } ;;
-    *) grep -qxF ">> execution mode: $expect (the stricter of $sources)" "$T/out" && { [ "$code" = 0 ] || [ "$expect" = isolated ]; } \
+    isolated) iso_ran "$sources" ". To build natively instead, on this machine, the human writes native to $files" "$label, the stricter over both run directories" ;;
+    *) set -- ; [ -z "$one$two" ] && set -- "$NOTE_DEFAULT"
+       [ "$code" = 0 ] && grep -qxF "$(mode_line "$expect" "$sources")" "$T/out" && notes_are ${1+"$@"} \
          && ok "$label -> $expect, the stricter over both run directories" || { bad "$label: exit $code"; cat "$T/out" >&2; } ;;
   esac
 done <<'CASES'
-native|isolated|isolated
-isolated|native|isolated
+native|isolated|isolated|audit_2/exec-mode
+isolated|native|isolated|audit_1/exec-mode
+isolated|isolated|isolated|audit_1/exec-mode and audit_2/exec-mode
 native|none|none
 |native|native
+||native
 CASES
 rm -rf "$WT/audit_2"
 printf 'native\n' > "$WT/audit_1/exec-mode"
 
-# ./run.sh in a crate at <R>/poc/<ID> takes the stricter of <R>/exec-mode and AUDITOR_EXEC_MODE as well;
-# a crate anywhere else, or an exec-mode it cannot use, leaves the mode gate to decide from the environment.
-while IFS='|' read -r file env expect; do
+# ./run.sh in a crate at <R>/poc/<ID> takes the stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode as
+# well, strict mode from AUDITOR_STRICT and a strict entry in its own <R> alone (a file, a directory or a link,
+# a dangling one too); a crate anywhere else reads the environment alone, and an AUDITOR_EXEC_MODE that names no
+# mode is left to the mode gate.
+while IFS='|' read -r file env strict marker expect; do
   [ -n "$expect" ] || continue
   if [ -n "$file" ]; then printf '%s\n' "$file" > "$WT/audit_1/exec-mode"; else rm -f "$WT/audit_1/exec-mode"; fi
-  set -- "$VULN"; [ -n "$env" ] && set -- "$@" "AUDITOR_EXEC_MODE=$env"
+  case "$marker" in
+    file) printf 'strict\n' > "$WT/audit_1/strict" ;;
+    dir) mkdir "$WT/audit_1/strict" ;;
+    dangling) ln -s nowhere "$WT/audit_1/strict" ;;
+    elsewhere) printf 'strict\n' > "$WT/incident_1/strict" ;;
+  esac
+  set -- "$VULN"; [ -n "$env" ] && set -- "$@" "AUDITOR_EXEC_MODE=$env"; [ -n "$strict" ] && set -- "$@" "AUDITOR_STRICT=$strict"
   code="$(gate "$WT/audit_1/poc/F-1" "$@")"
-  label="./run.sh with exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}'"
+  rm -rf "$WT/audit_1/strict" "$WT/incident_1/strict"
+  label="./run.sh with exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}', AUDITOR_STRICT '${strict:-unset}'${marker:+, a strict entry ($marker)}"
+  why=""
+  case "$strict:$marker" in
+    1:*) why="$(strict_why 1)" ;;
+    *:file|*:dir|*:dangling) why=audit_1/strict ;;
+  esac
+  sources="audit_1/exec-mode: ${file:-absent}; AUDITOR_EXEC_MODE: ${env:-unset}; strict mode: ${why:+on ($why)}"
+  [ -n "$why" ] || sources="${sources}off"
   case "$expect" in
     isolated|native)
+      set -- ; [ -z "$file$env$why" ] && set -- "$NOTE_DEFAULT"
       [ "$code" = 0 ] && grep -q "^>> build dir: .*AUDITOR_EXEC_MODE=$expect;" "$T/out" \
-        && { [ -z "$file" ] || grep -qxF ">> execution mode: $expect (the stricter of audit_1/exec-mode: $file; AUDITOR_EXEC_MODE: ${env:-unset})" "$T/out"; } \
+        && grep -qxF "$(mode_line "$expect" "$sources")" "$T/out" && notes_are ${1+"$@"} \
         && ok "$label -> runs in $expect mode" || { bad "$label: exit $code, want $expect"; cat "$T/out" >&2; } ;;
     none)
-      [ "$code" = 3 ] && grep -qF "blocker: the recorded execution mode is none (audit_1/exec-mode: $file; AUDITOR_EXEC_MODE: ${env:-unset})" "$T/out" && nothing_ran && one_blocker \
+      [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the recorded execution mode is none ($sources): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." "$T/out" && nothing_ran && one_blocker \
         && ok "$label -> none: exit 3, nothing copied or built" || { bad "$label: exit $code, want none"; cat "$T/out" >&2; } ;;
     gate)
       [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: AUDITOR_EXEC_MODE is '$env', not isolated or native — nothing was copied or built." "$T/out" && nothing_ran \
@@ -1917,20 +2099,37 @@ while IFS='|' read -r file env expect; do
         && ok "$label -> refused: exit 3" || { bad "$label: exit $code, want refused"; cat "$T/out" >&2; } ;;
   esac
 done <<'CASES'
-none|native|none
-native|none|none
-none||none
-isolated|native|isolated
-native|isolated|isolated
-native||native
-|native|native
-||gate
-native|yes|gate
-yes|native|refused
+none|native|||none
+native|none|||none
+none||||none
+isolated|native|||isolated
+native|isolated|||isolated
+native||||native
+|native|||native
+||||native
+native|yes|||gate
+native|yes|1||gate
+yes|native|||refused
+yes||1||refused
+||1||isolated
+native||1||isolated
+none||1||none
+native|||file|isolated
+||0|file|isolated
+native|||dir|isolated
+native|||dangling|isolated
+none|||file|none
+native||1|file|isolated
+native|||elsewhere|native
 CASES
 mkdir -p "$T/not-a-run/poc"; cp -R "$WT/audit_1/poc/F-1" "$T/not-a-run/poc/F-1"; printf 'none\n' > "$T/not-a-run/exec-mode"
+printf 'strict\n' > "$T/not-a-run/strict"
 code="$(gate "$T/not-a-run/poc/F-1" "$VULN" "$NATIVE")"
-[ "$code" = 0 ] && ! grep -q '^>> execution mode:' "$T/out" && ok "./run.sh in a crate outside a run directory reads no exec-mode" || { bad "./run.sh outside a run directory: exit $code"; cat "$T/out" >&2; }
+[ "$code" = 0 ] && grep -qxF "$(mode_line native 'AUDITOR_EXEC_MODE: native; strict mode: off')" "$T/out" && notes_are \
+  && ok "./run.sh in a crate outside a run directory reads no exec-mode and no strict entry: the environment alone counts" || { bad "./run.sh outside a run directory: exit $code"; cat "$T/out" >&2; }
+code="$(gate "$T/not-a-run/poc/F-1" "$VULN" AUDITOR_STRICT=1)"
+[ "$code" = 0 ] && grep -qxF "$(mode_line isolated "AUDITOR_EXEC_MODE: unset; strict mode: on ($(strict_why 1))")" "$T/out" && notes_are \
+  && ok "./run.sh in a crate outside a run directory, AUDITOR_STRICT=1 -> isolated" || { bad "./run.sh outside a run directory, strict: exit $code"; cat "$T/out" >&2; }
 printf 'native\n' > "$WT/audit_1/exec-mode"
 
 # The isolation self-check. In isolated mode, a fake HOME holding any one credential the check reads
@@ -1948,7 +2147,7 @@ while IFS='|' read -r cred kind; do
     && ok "~/$cred is read, and counts as $kind" || bad "the check on ~/$cred: $rc '$out'"
   code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
   line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: ' "$T/out")"
-  [ "$code" = 3 ] && case "$line" in *"$kind ("*"; this is not the isolated runner (Rule 11a), and scripts/runner/probe.sh --only isolation lists them — nothing was copied or built.") true ;; *) false ;; esac \
+  [ "$code" = 3 ] && case "$line" in *"$kind ("*"; this is not the isolated runner (Rule 11a), and scripts/runner/probe.sh --only isolation lists them. To build natively instead, on this machine, the human writes native to audit_1/exec-mode — nothing was copied or built.") true ;; *) false ;; esac \
     && new_nothing_ran && one_blocker && ok "isolated mode with a readable ~/$cred -> exit 3 naming $kind, nothing copied" || { bad "isolated, ~/$cred: exit $code"; cat "$T/out" >&2; }
 done <<'CREDS'
 .ssh/id_ed25519|SSH keys
@@ -2023,8 +2222,37 @@ line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable 
 FH="$T/fh-many"; mkdir -p "$FH/.ssh" "$FH/.gnupg/private-keys-v1.d"; printf 'secret\n' > "$FH/.gnupg/private-keys-v1.d/ABC.key"
 i=0; while [ "$i" -le 5000 ]; do : > "$FH/.ssh/known_hosts.$i"; i=$((i + 1)); done
 code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
-[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: isolated mode, but the credential self-check could not finish (more than 5000 entries in the directories it lists), so run.sh cannot tell that this is the isolated runner (Rule 11a) — nothing was copied or built." "$T/out" \
+[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: isolated mode, but the credential self-check could not finish (more than 5000 entries in the directories it lists), so run.sh cannot tell that this is the isolated runner (Rule 11a). To build natively instead, on this machine, the human writes native to audit_1/exec-mode — nothing was copied or built." "$T/out" \
   && new_nothing_ran && one_blocker && ok "isolated mode with more than 5000 entries to list -> exit 3: the check cannot tell, nothing copied" || { bad "isolated, a check that cannot finish: exit $code"; cat "$T/out" >&2; }
+code="$(ngate HOME="$FH" AUDITOR_STRICT=1 -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: isolated mode, but the credential self-check could not finish (more than 5000 entries in the directories it lists), so run.sh cannot tell that this is the isolated runner (Rule 11a). Strict mode is on ($(strict_why 1)), so this PoC builds only on an isolated runner (Rule 11f) — nothing was copied or built." "$T/out" \
+  && new_nothing_ran && one_blocker && ok "... and in strict mode the blocker says that strict mode builds only on an isolated runner" || { bad "isolated, a check that cannot finish, strict: exit $code"; cat "$T/out" >&2; }
+# The end of the blocker of a readable credential (here ~/.ssh/id_ed25519) names what the human changes to build
+# natively instead, whatever this machine holds: AUDITOR_EXEC_MODE, the exec-mode file, or both; strict mode, from
+# AUDITOR_STRICT or a strict entry, is named instead, since leaving it is not the way out it offers.
+FH="$T/fh-tail"; mkdir -p "$FH/.ssh"; printf 'secret\n' > "$FH/.ssh/id_ed25519"
+while IFS='|' read -r file env strict tail; do
+  [ -n "$tail" ] || continue
+  printf '%s\n' "$file" > "$WT/audit_1/exec-mode"
+  set -- HOME="$FH"; [ -n "$env" ] && set -- "$@" "AUDITOR_EXEC_MODE=$env"
+  case "$strict" in marker) printf 'strict\n' > "$WT/audit_1/strict" ;; ?*) set -- "$@" "AUDITOR_STRICT=$strict" ;; esac
+  code="$(ngate "$@" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  rm -f "$WT/audit_1/strict"
+  case "$tail" in strict:*) tail=". Strict mode is on (${tail#strict:}), so this PoC builds only on an isolated runner (Rule 11f)" ;; *) tail=". To build natively instead, on this machine, the human $tail" ;; esac
+  [ -z "$strict" ] || [ "$strict" = marker ] || tail="${tail/@WHY@/$(strict_why "$strict")}"
+  line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: ' "$T/out")"
+  label="isolated mode with a readable key, exec-mode $file, AUDITOR_EXEC_MODE '${env:-unset}', strict mode from '${strict:-nothing}'"
+  [ "$code" = 3 ] && case "$line" in *"SSH keys ("*"; this is not the isolated runner (Rule 11a), and scripts/runner/probe.sh --only isolation lists them$tail — nothing was copied or built.") true ;; *) false ;; esac \
+    && new_nothing_ran && one_blocker && ok "$label -> the blocker ends '${tail#. }'" || { bad "$label: exit $code, want the blocker ending '${tail#. }'"; cat "$T/out" >&2; }
+done <<'CASES'
+isolated|||writes native to audit_1/exec-mode
+native|isolated||unsets AUDITOR_EXEC_MODE where Claude Code runs
+isolated|isolated||unsets AUDITOR_EXEC_MODE where Claude Code runs and writes native to audit_1/exec-mode
+native||1|strict:@WHY@
+isolated|isolated|1|strict:@WHY@
+native||marker|strict:audit_1/strict
+CASES
+printf 'isolated\n' > "$WT/audit_1/exec-mode"
 FH="$T/fh-native"; mkdir -p "$FH/.aws" "$FH/.config/gcloud/legacy_credentials/me@example.invalid"; printf 'secret\n' > "$FH/.aws/credentials"
 printf 'secret\n' > "$FH/.config/gcloud/legacy_credentials/me@example.invalid/adc.json"
 printf 'native\n' > "$WT/audit_1/exec-mode"
@@ -2903,29 +3131,34 @@ fi
 rm -rf "$IJ" "$WT/incident_1/poc/INC-1.1"
 
 # Every refusal in the case file, under each bash on the machine: one stderr line, exit 3, nothing on
-# stdout, nothing copied, nothing changed in the working directory, and the same under each shell.
+# stdout, nothing copied, nothing changed in the working directory, and the same under each shell. A case file
+# holds the truth of strict mode, in which test-preapproved-entrypoints.sh replays it, and runs here in both
+# modes: in default mode without the cases whose line says strict mode is on, whose default-mode twins are the
+# --mode cases above.
 SHELLS=("$BASH"); if [ -x /bin/bash ] && [ "$(/bin/bash -c 'printf %s "$BASH_VERSION"')" != "$BASH_VERSION" ]; then SHELLS+=(/bin/bash); fi
-case_file() {  # case_file <cases.txt> <program> <dir>: run every case under each shell
-  local file="$1" prog="$2" dir="$3" line want_rc want_err rest sh i ncase=0
-  local -a args
+case_file() {  # case_file <cases.txt> <program> <dir> [strict]: run every case under each shell, with AUDITOR_STRICT=1 when strict
+  local file="$1" prog="$2" dir="$3" strict="${4:-}" line want_rc want_err rest sh i ncase=0 how=""
+  local -a args mode=()
+  if [ -n "$strict" ]; then mode=(AUDITOR_STRICT=1); how=" (strict mode)"; fi
   while IFS= read -r line; do
     case "$line" in ''|'#'*) continue ;; esac
     want_rc=${line%%$'\t'*}; rest=${line#*$'\t'}; want_err=${rest%%$'\t'*}; rest=${rest#*$'\t'}
+    if [ -z "$strict" ]; then case "$want_err" in *"strict mode: on ("*) continue ;; esac; fi
     IFS=$'\t' read -r -a args <<< "$rest"
     ncase=$((ncase + 1)); i=0
     for sh in "${SHELLS[@]}"; do
       rm -rf "$NT"; mkdir -p "$NT"; rm -f "$T/shim/settings.env"
-      ( cd "$dir" && env -i HOME="$CLEANHOME" PATH="$SP" TMPDIR="$NT" "$sh" "$prog" "${args[@]}" ) >"$T/case.out.$i" 2>"$T/case.err.$i" </dev/null
+      ( cd "$dir" && env -i HOME="$CLEANHOME" PATH="$SP" TMPDIR="$NT" ${mode[@]+"${mode[@]}"} "$sh" "$prog" "${args[@]}" ) >"$T/case.out.$i" 2>"$T/case.err.$i" </dev/null
       echo $? > "$T/case.rc.$i"
       i=$((i + 1))
     done
     if [ "$(cat "$T/case.rc.0")" = "$want_rc" ] && [ "$(cat "$T/case.err.0")" = "$want_err" ] && [ ! -s "$T/case.out.0" ] && [ -z "$(ls -A "$NT")" ]; then
-      ok "case: ${prog##*/} ${args[*]}"
+      ok "case$how: ${prog##*/} ${args[*]}"
     else
-      bad "case: ${prog##*/} ${args[*]} -> status $(cat "$T/case.rc.0"), stderr: $(cat "$T/case.err.0"), stdout: $(cat "$T/case.out.0")"
+      bad "case$how: ${prog##*/} ${args[*]} -> status $(cat "$T/case.rc.0"), stderr: $(cat "$T/case.err.0"), stdout: $(cat "$T/case.out.0")"
     fi
     if [ "$i" -gt 1 ] && { ! cmp -s "$T/case.rc.0" "$T/case.rc.1" || ! cmp -s "$T/case.err.0" "$T/case.err.1" || ! cmp -s "$T/case.out.0" "$T/case.out.1"; }; then
-      bad "case: ${prog##*/} ${args[*]} prints differently under ${SHELLS[0]} and ${SHELLS[1]}"
+      bad "case$how: ${prog##*/} ${args[*]} prints differently under ${SHELLS[0]} and ${SHELLS[1]}"
     fi
   done < "$file"
   CASES_RUN=$ncase
@@ -2934,6 +3167,10 @@ printf 'native\n' > "$WT/audit_1/exec-mode"
 before="$(tree_of "$WT")"
 case_file "$HERE/fixtures/poc-run/cases.txt" "$RUNSH" "$WT"
 [ "$CASES_RUN" -gt 50 ] && ok "the run.sh case file has cases ($CASES_RUN)" || bad "the run.sh case file has $CASES_RUN cases"
+default_cases=$CASES_RUN
+case_file "$HERE/fixtures/poc-run/cases.txt" "$RUNSH" "$WT" strict
+[ "$CASES_RUN" -gt "$default_cases" ] && ok "the run.sh case file has cases that only strict mode runs ($CASES_RUN, $default_cases in default mode)" \
+  || bad "the run.sh case file runs $CASES_RUN cases in strict mode and $default_cases in default mode"
 [ "$(tree_of "$WT")" = "$before" ] && ok "no run.sh case changed anything in the working directory" || bad "a run.sh case changed the working directory"
 rm -f "$T/shim/settings.env"
 
@@ -3163,8 +3400,10 @@ mkdir -p "$T/probe-copy"; cp "$PROBE" "$T/probe-copy/probe.sh"
 code="$( (cd "$WT" && env -i HOME="$PH" PATH="$PB:$PS" TMPDIR="$PT" /bin/bash "$T/probe-copy/probe.sh") >"$T/out" 2>"$T/err"; echo $?)"
 [ "$code" = 64 ] && [ "$(cat "$T/err")" = 'probe: refused: probe.sh runs from <auditor-skill root>/scripts/runner' ] \
   && ok "a copy of probe.sh outside scripts/runner -> 64" || { bad "probe.sh copy: exit $code"; cat "$T/err" >&2; }
-case_file "$HERE/fixtures/probe/cases.txt" "$PROBE" "$WT"
-[ "$CASES_RUN" -gt 10 ] && ok "the probe.sh case file has cases ($CASES_RUN)" || bad "the probe.sh case file has $CASES_RUN cases"
+for m in "" strict; do
+  case_file "$HERE/fixtures/probe/cases.txt" "$PROBE" "$WT" "$m"
+  [ "$CASES_RUN" -gt 10 ] && ok "the probe.sh case file has cases ($CASES_RUN${m:+, strict mode})" || bad "the probe.sh case file has $CASES_RUN cases${m:+ in strict mode}"
+done
 
 # ---------------------------------------------------------------------------
 # Real cargo and rustup, when present: the template's own tests and shared-test-utils,
@@ -3519,12 +3758,6 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
   ( cd "$RC" && env -u RUSTUP_TOOLCHAIN cargo --version >/dev/null 2>&1 ) || true
   if grep -q toolchain "$MK" 2>/dev/null; then ok "control (real rustup): in place, the target's path toolchain runs"; else echo "note: this rustup does not honour a path toolchain in rust-toolchain.toml; that control is skipped"; fi
   rm -f "$MK" "$RC/Cargo.lock"
-  code="$(run "$RC" "$PATH" CARGO_NET_OFFLINE=true VULNERABLE_SO="$SB-takeover.so")"
-  if [ "$code" = 3 ] && [ ! -e "$MK" ] && [ ! -e "$RC/Cargo.lock" ]; then
-    ok "real cargo, no execution mode: exit 3 and nothing compiled (no Cargo.lock, no wrapper or toolchain run)"
-  else
-    bad "real cargo, no execution mode: exit $code, marker: $(tr '\n' ' ' < "$MK" 2>/dev/null)"
-  fi
 
   # The template as shipped, in the hostile tree: both arms on prebuilt bytes.
   code="$(run "$RC" "$PATH" "$NATIVE" CARGO_NET_OFFLINE=true VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-MissingRequiredSignature.so")"
@@ -3543,6 +3776,16 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
     ok "real cargo: VULNERABLE_SO alone reaches the Leg 3 line, built into an inherited CARGO_TARGET_DIR"
   else
     bad "real cargo, VULNERABLE_SO alone: exit $code"; cat "$T/out" >&2
+  fi
+  # With no execution mode recorded the same run is native, and says so; it builds from the scratch copy, so the
+  # target's wrapper and toolchain stay out of reach.
+  rm -f "$MK"
+  code="$(run "$RC" "$PATH" "${E2E[@]}" VULNERABLE_SO="$SB-takeover.so")"
+  if [ "$code" = 0 ] && [ ! -e "$MK" ] && grep -qxF "$NOTE_DEFAULT" "$T/out" && grep -q '^>> build dir: .*AUDITOR_EXEC_MODE=native;' "$T/out" \
+     && grep -qx "${LEG3}$(zhash "$SB-takeover.so") → \[PoC-REPRODUCED\]" "$T/out"; then
+    ok "real cargo, no execution mode: native, with the note, from the scratch copy, no wrapper or toolchain run"
+  else
+    bad "real cargo, no execution mode: exit $code, marker: $(tr '\n' ' ' < "$MK" 2>/dev/null)"; cat "$T/out" >&2
   fi
   # A target-dir in cargo's own config (here the CARGO_HOME config, which run.sh keeps)
   # is where cargo builds, so the build lock goes there too: a live lock in it holds
