@@ -1,0 +1,152 @@
+# CI: a Quick review of every pull request
+
+auditor-skill can review every pull request with nobody at the keyboard. The workflow template, `templates/ci/auditor-pr.yml`, runs two jobs: a free one that runs the bundled analyzers on every pull request, forks included, and a review by Claude Code for pull requests from your repository's own branches. Each job ends with one line that says pass or fail and nothing about what it found. On a public repository anyone signed in to GitHub can read a job's log, so the details stay on the runner, and you read them by running the same check yourself.
+
+This is the Quick depth, run unattended. It is not a full audit: `/auditor:audit` covers a module and `/auditor:audit-cycle` a release ([audit-flows.md](audit-flows.md)).
+
+## Setup
+
+1. Copy `templates/ci/auditor-pr.yml`, from the auditor-skill release you use, to `.github/workflows/auditor-pr.yml` in your repository.
+2. Pin auditor-skill. Set `AUDITOR_SKILL_COMMIT`, near the top of the file, to the full commit id of that release's tag; `git ls-remote https://github.com/solanabr/auditor-skill refs/tags/<tag>` prints it. Both jobs fetch exactly that commit and stop when it does not match, so a tag that moves later changes nothing. Until you set it, both jobs fail and say so. The file's `actions/checkout` is pinned by commit id as well; Dependabot's `github-actions` updates keep such pins current.
+3. Add a repository secret named `ANTHROPIC_API_KEY` (Settings, Secrets and variables, Actions). Only the review job reads it, and only in the step that starts Claude Code. Pull requests that Dependabot opens see Dependabot secrets only: add the key there too, or the review fails on them with "no ANTHROPIC_API_KEY".
+4. Make both jobs required checks in your branch protection: `auditor tools (no secrets)` and `auditor review (same-repository pull requests)`. Require both. When the tools job fails, GitHub skips the review, and a skipped required check counts as passed.
+
+The settings you may change are in the file's top-level `env:` block:
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `AUDITOR_FAIL_ON` | `7` | the review fails on a finding of this severity or more, from 1 to 10 (`OUTPUT-RULES.md` Rule 1: 7 and 8 are HIGH, 9 and 10 CRITICAL) |
+| `AUDITOR_MAX_BUDGET_USD` | `5` | the most one review may spend, in US dollars |
+| `SEMGREP_RULESETS` | `p/rust p/trailofbits` | the semgrep rulesets the tools job runs, any of `p/rust`, `p/trailofbits`, `p/typescript`, `p/javascript`, `p/python`, `p/golang`, `p/solidity`, `p/github-actions` and `p/secrets` |
+| `SEMGREP_VERSION`, `CARGO_AUDIT_VERSION` | `1.117.0`, `0.22.2` | the releases of semgrep and cargo-audit the tools job installs |
+
+Leave `AUDITOR_STRICT` and `AUDITOR_EXEC_MODE` as they are ([below](#strict-mode-and-nothing-built)).
+
+The tools job fails on any semgrep result and any dependency advisory, in the whole checkout, not only in what a pull request changes. If your default branch already has some, every pull request fails until they are fixed, or marked with a `nosemgrep` comment that says why; choose `SEMGREP_RULESETS` with that in mind.
+
+**Cost.** The tools job uses no model, so it costs runner minutes only. A review costs what a Quick review of that change costs, up to `AUDITOR_MAX_BUDGET_USD`; a review that reaches the cap stops and fails, and never passes. A newer push to the same pull request cancels the run still going for it, so you pay for the last push only.
+
+## What each job does
+
+**tools** runs on every pull request, forks included, with no secret and no Claude. On GitHub's merge commit of the pull request it makes a run directory with the bundled `rundir.sh`, then runs:
+
+- semgrep over the whole checkout, through the bundled `sast.sh`, with `SEMGREP_RULESETS`;
+- `cargo audit` on each `Cargo.lock`, through the bundled `deps.sh`;
+- `npm audit` on each `package.json` that has a `package-lock.json` or `npm-shrinkwrap.json` beside it, through `deps.sh` too.
+
+It passes only when every analyzer ran and none found anything. An analyzer that could not run is named in the log with its one-line reason, which is about the tool, never about a finding.
+
+**review** runs only for pull requests from branches of your repository. It installs Claude Code at the exact version that auditor-skill's own `plugin-validate` workflow pins, from the lockfile there, with each package's integrity checked and no install script run. It builds the bundled Rust tools, removes every `.claude/`, `.mcp.json` and `.claude.json` from its checkout, checks that preflight names strict mode, and then runs:
+
+```bash
+# example: the review job's command, with the pull request's base commit and merge commit filled in
+claude -p "/auditor:diff-audit <base>..<head> --ci --fail-on 7" \
+  --plugin-dir "<auditor-skill root>" --setting-sources user --strict-mcp-config \
+  --max-budget-usd 5 --output-format json --json-schema "<the text of templates/ci/verdict.schema.json>"
+```
+
+`<base>` is the commit the pull request merges into and `<head>` GitHub's merge commit, both as full commit ids. Its last step checks what the review returned and exits on it ([What the verdict means](#what-the-verdict-means)).
+
+Every install and build runs from the runner's temp folder, outside the checkout, so no config a pull request ships, such as a `.cargo/config.toml`, applies to them.
+
+## The launch-line flags
+
+- `--plugin-dir "<auditor-skill root>"` loads the plugin from the pinned copy, for this one session. The copy sits in the runner's temp folder: the bundled tools refuse an installation inside the tree they audit.
+- `--setting-sources user` loads only the runner's own user settings, and it has none. A pull request's `.claude/settings.json` hooks and `env`, its `CLAUDE.md`, rules, skills, commands and agents do not load. Without it, `claude -p` runs a repository's hooks before preflight does anything.
+- `--strict-mcp-config`, with no `--mcp-config` beside it, starts no MCP server, so a `.mcp.json` in the pull request starts nothing.
+- `--max-budget-usd` caps what the review spends. A review that reaches the cap stops, and the job fails.
+- `--output-format json` prints one JSON result, which the job keeps on the runner and never prints.
+- `--json-schema` makes Claude Code check the review's reply against `templates/ci/verdict.schema.json` and return it as the result's `structured_output`. Every field there is a fixed word or a number, so the line the job prints from it cannot carry a finding.
+
+The strict launch line for a person at a terminal also passes `--settings` with a copy of `templates/strict-settings.json` ([permissions-and-isolation.md](permissions-and-isolation.md#default-and-strict-mode)). The review does not, for three reasons. It builds and runs nothing, so that template's sandbox has nothing to confine. Its sandbox block stops Claude Code wherever Claude Code's sandbox cannot start, for example on a Linux runner without bubblewrap. And its `env` sets `AUDITOR_EXEC_MODE=isolated`, where this job wants `none`. Strict mode comes from the job's own `AUDITOR_STRICT=1`, which no file in the repository can change while project settings do not load.
+
+## Strict mode, and nothing built
+
+- **`AUDITOR_STRICT=1`.** A pull request's content is an untrusted source, so both jobs run in strict mode (`OUTPUT-RULES.md` Rule 11f). The bundled tools refuse what default mode only notes, such as a link that leads out of the tree, a tracked `audit_*` directory, or a lockfile that names a registry other than crates.io. A refusal fails the job; it never passes it.
+- **`AUDITOR_EXEC_MODE=none`.** Nothing from the pull request is built, tested or run: no `build.rs`, proc-macro, test or npm script runs on the runner. The review reads the code and does not execute it.
+
+## What the verdict means
+
+The review job prints one line, for example:
+
+```text
+auditor: verdict: pass (threshold 7, analyzers run: audit-scan)
+auditor: verdict: fail (threshold 7, analyzers run: audit-scan, lock-delta; not run: deps-artifacts)
+```
+
+It is **fail** when any of these holds, and **pass** otherwise:
+
+- **A finding of severity N or more counts**, N being `AUDITOR_FAIL_ON`. A finding counts when it passed the validation gate of `OUTPUT-RULES.md` Rule 5b, when it is `[UNDETERMINED]` (reachable, its full impact not measured), or when its severity is 5 or less, where the gate does not apply. An `[UNCONFIRMED]` or `[PARTIAL]` finding is in the report but does not count.
+- **An analyzer the review called for did not run.** These are `audit-scan`, which the job builds; `lock-delta` and `deps-artifacts`, the lockfile delta and the published code of changed dependencies, when the pull request changes a manifest or lockfile; and `web3js-history`, when the review runs it.
+- **The review stopped early.** Preflight refused the tree, a call it needs was denied, the range could not be read, or it ran out of budget.
+- **The review's result and its `findings.json` disagree, or either one does not match its schema.** The last step reads both and works the verdict out again from the findings, so a reply that says pass over a finding that counts fails.
+
+When the reason is one of the last two, the line ends with it, in fixed words: for example `; the review ended early (error_max_budget_usd)`.
+
+The tools job's line is simpler: `auditor: tools: pass` when every analyzer ran and found nothing, `fail` otherwise, with the analyzers that ran and those that did not.
+
+What a pass does not tell you:
+
+- It is a Quick review: the changed code and its direct callers and callees, not a whole audit.
+- semgrep honours the repository's own `.semgrepignore` files and `nosemgrep` comments, which a pull request can change. The review still sees such a change in the diff.
+- A `yarn.lock`, `pnpm-lock.yaml` or `bun.lock` with no npm lockfile beside it gets no dependency audit in the tools job, and its log says so.
+- The review reads the pull request's text, and text written to steer a reviewer can steer it too. The last step catches a reply that contradicts its own findings file, not a review that was talked into missing something.
+
+## Fork pull requests
+
+On `pull_request`, GitHub gives a fork's pull request no secrets, so the review job does not run for it. GitHub shows the job as skipped, and a skipped required check counts as passed. A fork's pull request gets the tools job only, so review it yourself before you merge it ([Reading the details](#reading-the-details)).
+
+Never switch the trigger to `pull_request_target`, or to `workflow_run`, to get the review on forks: both run the fork's changes with your secrets ([github-actions.md](../references/vuln-classes/github-actions.md) §5).
+
+To see what the tools job found, run the same analyzers in your clone, at the pull request's merge commit. `/auditor:quick-scan` in Claude Code runs them and more. Or run the bundled scripts, from the top of your clone:
+
+```bash
+# example: what you type; <auditor-skill root> is where auditor-skill is installed
+export AUDITOR_STRICT=1
+# prints the run directory's name, audit_<n>
+"<auditor-skill root>/scripts/rundir.sh" new audit
+"<auditor-skill root>/scripts/runner/sast.sh" semgrep --run audit_<n> --path . --ruleset p/rust --ruleset p/trailofbits
+"<auditor-skill root>/scripts/runner/deps.sh" cargo-audit --run audit_<n> --manifest Cargo.lock
+```
+
+The findings are in `audit_<n>/sast/` and `audit_<n>/deps/`.
+
+## Public repositories
+
+On a public repository anyone signed in to GitHub can read a workflow's logs, its job summaries and its artifacts, and the comments and annotations on a pull request. So the template publishes pass or fail only, as `OUTPUT-RULES.md` Rule 11d asks:
+
+- The log and the summary show the lines above. They name the verdict, the threshold and the analyzers, and nothing a finding says, not even how many there are.
+- The review's reply, its report and its findings file stay on the runner, which GitHub discards when the job ends.
+- The template uploads nothing: no artifact, no SARIF, no comment.
+
+The job never fails only because you have no private channel for the details. You read them by running the check again yourself.
+
+### Reading the details
+
+The review job's summary names the pull request's two commits. In a clone of your own, check out the pull request's merge commit: `git fetch origin pull/<number>/merge`, then `git checkout --detach FETCH_HEAD`. Start Claude Code there with the strict launch line, since the pull request's own `.claude/` config would load otherwise ([permissions-and-isolation.md](permissions-and-isolation.md#default-and-strict-mode)), and run `/auditor:diff-audit <base>..<head>` with the two commits the summary names. The report lands in `audit_<n>/PR-REPORT.md`. With the same auditor-skill commit and the same range it reads the same code, though a model's answers can differ from one run to the next.
+
+### Private repositories
+
+The template keeps details out of a private repository's logs too. Anyone who can read the repository can read them, and if it is ever made public, its earlier runs become as readable as its code until they expire. To see details in CI on a private repository, add a step of your own after the verdict step. It can upload `$RUNNER_TEMP/auditor-review/findings.sarif`, the findings as SARIF 2.1.0, to code scanning, with `security-events: write` on that job, or the run directory as an artifact, with an action pinned by commit id either way. Whether GitHub shows a public repository's code scanning results to everyone was not checked for this template, so add no such step there.
+
+## Running `--ci` yourself
+
+`--ci` works outside this workflow too: in another CI system, or at a terminal. `/auditor:diff-audit <base>..<head> --ci` and `/auditor:quick-scan --ci` take `--fail-on <N>`, ask nothing, write `audit_<n>/findings.json` (`templates/ci/findings.schema.json`), keep finding text out of their reply, and end with the closing line above. Without `--ci`, `--fail-on` only sets the threshold of the verdict at the top of the report. For a scheduled scan of your default branch, `/auditor:quick-scan --ci` is the one to run: it scans the whole repository, while diff-audit reads one range.
+
+## The files
+
+| File | What it is |
+|---|---|
+| `templates/ci/auditor-pr.yml` | the workflow |
+| `templates/ci/verdict.schema.json` | the review's result, for `claude -p --json-schema` |
+| `templates/ci/findings.schema.json` | `audit_<n>/findings.json`, which `--ci` writes |
+| `templates/ci/verdict.jq` | the check the verdict step runs |
+| `templates/ci/findings-to-sarif.jq` | `findings.json` as SARIF 2.1.0 |
+
+`scripts/tests/test-ci-template.sh` checks them: both schemas parse, the workflow keeps the shape this page describes, a sample `findings.json` turns into SARIF 2.1.0, and the verdict step passes only what this page says passes.
+
+## What remains a risk
+
+- The review job holds one secret, the API key, in the step that runs Claude Code. Nothing in that job builds or runs the pull request's code, its bundled tools refuse what strict mode refuses, and Claude Code takes its settings and MCP servers from the runner alone. Use a key made for this job, under a spending limit on your Anthropic account.
+- Only people who can push a branch to your repository start a review, and they could change the workflow itself anyway.
+- A pull request can still try to steer the review with the text it adds ([What the verdict means](#what-the-verdict-means)).
