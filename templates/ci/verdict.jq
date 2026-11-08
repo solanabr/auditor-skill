@@ -3,8 +3,8 @@
 #
 #   jq -n -r --slurpfile result <result.json or /dev/null> --slurpfile findings <findings.json or /dev/null> \
 #     --argjson threshold <N> --arg command <diff-audit|quick-scan> --arg mode <strict|default> \
-#     --arg base <full commit id, or empty> --arg head <full commit id> --arg problem <a fixed reason, or empty> \
-#     -f verdict.jq
+#     --arg base <full commit id, or empty> --arg head <full commit id> \
+#     --argjson required <a JSON list of analyzer names> --arg problem <a fixed reason, or empty> -f verdict.jq
 #
 # result.json is what `claude -p --output-format json --json-schema <templates/ci/verdict.schema.json>`
 # printed: in Claude Code 2.1.304 an object of type "result" whose subtype is "success" or one of four error
@@ -18,7 +18,8 @@
 # 11d). It says pass only when all of these hold:
 #   - --arg problem is empty;
 #   - the result is a success whose structured_output matches the verdict schema for this command, threshold
-#     and mode, and names a run directory (run 1 or more);
+#     and mode, names a run directory (run 1 or more), and lists every analyzer --argjson required names, which
+#     the caller works out from the change itself, so a result that leaves one out does not pass;
 #   - the run's findings.json matches the findings schema, is final, and names the same run, command,
 #     threshold, mode, stopped step and analyzers, and the commits given;
 #   - the verdict follows from it: no finding of severity at least the threshold whose rule5b is passed,
@@ -108,6 +109,9 @@ def follows($t):
   elif $v.command != $command then "its result is another command's"
   elif $v.threshold != $threshold then "its result names another threshold"
   elif $v.mode != $mode then "preflight did not name " + $mode + " mode"
+  elif ($required | names | not) then "the analyzers this change calls for could not be read"
+  elif $v.run != 0 and ($required - $v.analyzers_run - $v.analyzers_not_run | length) > 0 then
+    "its result leaves out an analyzer this change calls for"
   elif $v.run == 0 then
     (if ($v.stopped | member(["preflight", "run-directory", "arguments", "denied"])) | not then
       "its result names no run directory"

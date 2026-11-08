@@ -12,14 +12,21 @@
 #      same-repository pull requests, after the tools job, started with the decided launch line; AUDITOR_STRICT=1
 #      and AUDITOR_EXEC_MODE=none for both; the verdict step last, run unless the job is cancelled, deciding
 #      through verdict.jq. The workflow checker of test-ci-checks.sh (wfcheck) passes it too;
+#   2b. the steps' own scripts, run here: the tools step on stub analyzers hands a linked lockfile on, reads
+#      npm-shrinkwrap.json first, skips node_modules, names a manifest it cannot audit, shows sast.sh's notes
+#      but not its count, lets no file name start a workflow command, and passes only when every analyzer ran
+#      clean; on a scratch merge commit the clean step removes Claude Code config in any letter case, and the
+#      review step finds the range, the analyzers the change calls for, and strict mode, and stops before
+#      Claude Code on a tree strict preflight refuses;
 #   3. findings-to-sarif.jq turns a sample findings.json into SARIF 2.1.0: one run, a rule per checklist or
 #      vector id with its security-severity, a result per finding at the level its severity and Rule 5b status
 #      give, each location a relative URI with a start line; and it refuses a file without findings;
 #   4. verdict.jq passes only a successful result whose structured_output and findings.json agree on pass, for
-#      the threshold, mode, command and commits it is given, and its line never holds text from either file;
+#      the threshold, mode, command and commits it is given, that lists every analyzer the change calls for, and
+#      its line never holds text from either file;
 #   5. the CI's suite loop over scripts/tests/*.sh runs this file.
 # Usage (from the repo root): bash scripts/tests/test-ci-template.sh   (VERBOSE=1 lists every check)
-# Needs bash >= 3.2, jq, awk, grep, sed, mktemp. No network.
+# Needs bash >= 3.2, jq, git, awk, grep, sed, find, mktemp. No network.
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT" || exit 1
@@ -31,6 +38,9 @@ bad() { failn=$((failn + 1)); echo "FAIL $*"; }
 check() { # check NAME COMMAND...: ok when the command succeeds; its output is dropped
   local name=$1; shift
   if "$@" > /dev/null 2>&1; then ok "$name"; else bad "$name"; fi
+}
+same() { # same NAME WANT GOT: ok when GOT is WANT
+  if [ "$3" = "$2" ]; then ok "$1"; else bad "$1: got '$3', want '$2'"; fi
 }
 command -v jq > /dev/null || { echo "FAIL jq is not on PATH"; exit 1; }
 T=$(mktemp -d "${TMPDIR:-/tmp}/ci-template.XXXXXX") || exit 1
@@ -193,6 +203,10 @@ case "$last" in
 esac
 n=$(printf '%s\n' "$code" | grep -c -E 'upload-artifact|upload-sarif|code-scanning|gh (pr|issue|api)')
 check "the workflow uploads and posts nothing" [ "$n" -eq 0 ]
+case "$last" in
+  *'--argjson required "${required:-[]}"'*) ok "the verdict step hands verdict.jq the analyzers the change calls for" ;;
+  *) bad "the verdict step does not hand verdict.jq the analyzers the change calls for" ;;
+esac
 # the repository's own workflow checker, from test-ci-checks.sh
 awk '/^wfcheck\(\) \{/ { on = 1 } on { print } on && /^\}$/ { exit }' scripts/tests/test-ci-checks.sh > "$T/wfcheck.sh"
 if grep -q '^wfcheck() {' "$T/wfcheck.sh" && . "$T/wfcheck.sh"; then
@@ -202,6 +216,109 @@ if grep -q '^wfcheck() {' "$T/wfcheck.sh" && . "$T/wfcheck.sh"; then
   case "$(wfcheck "$T/broken.yml")" in *'inside a run: script'*) ok "wfcheck flags an expression pasted into the template's scripts" ;;
     *) bad "wfcheck did not flag an expression in a run: script of a broken copy" ;; esac
 else bad "no wfcheck function in scripts/tests/test-ci-checks.sh"; fi
+
+# ---- 2b. the steps' own scripts, run here ---------------------------------------------------------------------
+step_script() { # step_script NAME: the run: script of the step whose name starts with NAME, dedented
+  awk -v name="$1" '
+    index($0, "      - name: " name) == 1 { want = 1; next }
+    want && /^        run: \|/ { inrun = 1; next }
+    inrun { if ($0 ~ /^ *$/) { print ""; next }
+            match($0, /^ */); if (RLENGTH < 10) exit
+            print substr($0, 11) }' "$WF"
+}
+# the tools step, on stub analyzers that log their arguments: sast.sh finds results and notes a .semgrepignore
+RT="$T/rt" WS="$T/ws"
+nl=$'\n'
+mkdir -p "$RT/auditor-skill/scripts/runner" "$WS/web" "$WS/app" "$WS/locks" "$WS/node_modules/dep" \
+  "$WS/x$nl::warning title=t::pass" || bad "could not build the tools step's tree"
+printf '%s\n' '#!/bin/sh' 'mkdir audit_1 && echo audit_1' > "$RT/auditor-skill/scripts/rundir.sh"
+printf '%s\n' '#!/bin/sh' 'echo "sast $*" >> "$STUB_LOG"' \
+  'echo ">> semgrep: 3 results (exit 1): audit_1/sast/semgrep-1.sarif; log x; note: .semgrepignore files narrow the scan: .semgrepignore"' \
+  'exit 1' > "$RT/auditor-skill/scripts/runner/sast.sh"
+printf '%s\n' '#!/bin/sh' 'echo "deps $*" >> "$STUB_LOG"' 'exit 0' > "$RT/auditor-skill/scripts/runner/deps.sh"
+chmod 755 "$RT/auditor-skill/scripts/rundir.sh" "$RT/auditor-skill/scripts/runner/sast.sh" "$RT/auditor-skill/scripts/runner/deps.sh"
+: > "$WS/Cargo.toml"; : > "$WS/locks/real.lock"; ln -s locks/real.lock "$WS/Cargo.lock"
+: > "$WS/web/package.json"; : > "$WS/web/package-lock.json"; : > "$WS/web/npm-shrinkwrap.json"
+: > "$WS/app/package.json"; : > "$WS/node_modules/dep/package.json"; : > "$WS/x$nl::warning title=t::pass/package.json"
+step_script "Run the bundled analyzers" > "$T/tools.sh"
+tools_run() { # tools_run: the tools step in $WS, its output in $T/tools.out and its stub calls in $T/stub.log
+  : > "$T/stub.log"; : > "$T/summary.md"; rm -rf "$WS/audit_1"
+  (cd "$WS" && env RUNNER_TEMP="$RT" GITHUB_STEP_SUMMARY="$T/summary.md" SEMGREP_RULESETS="p/rust p/trailofbits" \
+    STUB_LOG="$T/stub.log" "$BASH" "$T/tools.sh") > "$T/tools.out" 2>&1
+}
+tools_run; rc=$?
+got=$(sed -n '$p' "$T/tools.out")
+same "the tools step fails on semgrep's results, and says which analyzers ran" \
+  "auditor: tools: fail (analyzers run: semgrep, cargo-audit, npm-audit)" "$got"
+check "the tools step exits non-zero when it fails" [ "$rc" -ne 0 ]
+n=$(grep -c -x -F 'semgrep: note: .semgrepignore files narrow the scan: .semgrepignore' "$T/tools.out")
+m=$(grep -c -E '3 results|semgrep-1[.]sarif' "$T/tools.out")
+check "the log shows sast.sh's notes, and not its count of results" [ "$n:$m" = 1:0 ]
+n=$(grep -c -x -F 'deps cargo-audit --run audit_1 --manifest Cargo.lock' "$T/stub.log")
+check "a Cargo.lock that is a link is handed to deps.sh, which refuses it" [ "$n" -eq 1 ]
+n=$(grep -c -x -F 'deps npm-audit --run audit_1 --manifest web/package.json --manifest web/npm-shrinkwrap.json' "$T/stub.log")
+check "npm audit reads npm-shrinkwrap.json before package-lock.json, as npm does" [ "$n" -eq 1 ]
+n=$(grep -c 'node_modules' "$T/stub.log")
+check "nothing under node_modules is audited" [ "$n" -eq 0 ]
+n=$(grep -c -F 'beside app/package.json, so its dependencies are not audited' "$T/tools.out")
+check "a package.json with no npm lockfile is named in the log" [ "$n" -eq 1 ]
+n=$(grep -c '^::' "$T/tools.out" "$T/summary.md" | awk -F: '{ s += $NF } END { print s + 0 }')
+check "no file name starts a workflow command in the log or the summary" [ "$n" -eq 0 ]
+rm -f "$WS/Cargo.lock"
+printf '%s\n' '#!/bin/sh' 'echo "sast $*" >> "$STUB_LOG"' 'exit 0' > "$RT/auditor-skill/scripts/runner/sast.sh"
+tools_run; rc=$?
+n=$(grep -c -x -F 'cargo-audit: no Cargo.lock in the checkout, so its Rust dependencies are not audited' "$T/tools.out")
+check "a Cargo.toml with no Cargo.lock is named in the log" [ "$n" -eq 1 ]
+same "the tools step passes when every analyzer ran and found nothing" \
+  "auditor: tools: pass (analyzers run: semgrep, npm-audit)" "$(sed -n '$p' "$T/tools.out")"
+check "and exits 0" [ "$rc" -eq 0 ]
+printf '%s\n' '#!/bin/sh' 'echo "sast: blocker: semgrep is not installed" >&2' 'exit 3' > "$RT/auditor-skill/scripts/runner/sast.sh"
+tools_run
+n=$(grep -c -x -F 'semgrep did not run (exit 3): sast: blocker: semgrep is not installed' "$T/tools.out")
+same "an analyzer that did not run fails the tools step, with its reason" \
+  "1 auditor: tools: fail (analyzers run: npm-audit; not run: semgrep)" "$n $(sed -n '$p' "$T/tools.out")"
+
+# the clean step and the review step, up to Claude Code, on a scratch pull request: a merge commit whose second
+# parent changes a .rs file and the Cargo.lock and ships Claude Code config
+G="$T/repo" RT2="$T/rt2"
+mkdir -p "$G" "$RT2" "$T/outside/.claude" && ln -s "$ROOT" "$RT2/auditor-skill" \
+  || bad "could not build the review step's repository"
+printf '%s\n' '{"hooks": {}}' > "$T/outside/.claude/settings.json"
+gitq() { git -C "$G" -c user.name=ci-test -c user.email=ci-test@example.invalid -c commit.gpgsign=false \
+  -c core.hooksPath=/dev/null "$@" > /dev/null 2>&1; }
+if gitq init -q -b main && printf 'fn a() {}\n' > "$G/a.rs" && : > "$G/Cargo.lock" && gitq add -A && gitq commit -q -m base \
+  && gitq checkout -q -b pr && mkdir -p "$G/.claude" "$G/sub" && printf '{"hooks": {}}\n' > "$G/.claude/settings.json" \
+  && : > "$G/sub/.MCP.json" && : > "$G/CLAUDE.md" && printf 'fn b() {}\n' > "$G/b.rs" \
+  && printf '# changed\n' > "$G/Cargo.lock" && gitq add -A && gitq commit -q -m pr \
+  && gitq checkout -q main && gitq merge -q --no-ff -m merge pr; then
+  step_script "Remove the pull request" > "$T/clean.sh"
+  step_script "Review the pull request" > "$T/review.sh"
+  (cd "$G" && "$BASH" "$T/clean.sh") > "$T/clean.out" 2>&1
+  left=$(cd "$G" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort | tr '\n' ' ')
+  same "the clean step removes .claude/, .mcp.json and CLAUDE.md in any letter case, and nothing else" \
+    "./Cargo.lock ./a.rs ./b.rs " "$left"
+  review_run() { # review_run: the review step in $G, with no API key, so it stops before Claude Code
+    rm -rf "$RT2/auditor-review"
+    (cd "$G" && env RUNNER_TEMP="$RT2" AUDITOR_STRICT=1 AUDITOR_EXEC_MODE=none AUDITOR_FAIL_ON=7 \
+      AUDITOR_MAX_BUDGET_USD=5 ANTHROPIC_API_KEY= "$BASH" "$T/review.sh") > "$T/review.out" 2>&1
+  }
+  review_run; rc=$?
+  O="$RT2/auditor-review"
+  want="$(git -C "$G" rev-parse 'HEAD^1') $(git -C "$G" rev-parse HEAD)"
+  check "the review step stops for want of a key, exit 0, and leaves the verdict to the next step" \
+    [ "$rc:$(ls "$O" | grep -c -x no-key)" = 0:1 ]
+  same "the range is the merge commit's first parent to the merge commit" "$want" "$(tr '\n' ' ' < "$O/range.txt" | sed 's/ $//')"
+  same "a changed .rs file and Cargo.lock call for audit-scan and lock-delta" '["audit-scan","lock-delta"]' "$(cat "$O/required.json")"
+  case "$(sed -n 1p "$O/preflight.out")" in
+    "preflight: mode: strict "*) ok "preflight names strict mode on the cleaned checkout" ;;
+    *) bad "preflight did not name strict mode on the cleaned checkout: $(sed -n 1p "$O/preflight.out") $(sed -n 1p "$O/preflight.err")" ;;
+  esac
+  ln -s "$T/outside" "$G/elsewhere"
+  review_run; rc=$?
+  check "a tree strict preflight refuses stops the review before Claude Code" [ "$rc:$(ls "$O" | grep -c -x preflight-stopped)" = 0:1 ]
+  n=$(grep -c '^preflight (exit 64): preflight: refused: ' "$T/review.out")
+  check "the review step's log names preflight's refusal" [ "$n" -eq 1 ]
+else bad "could not build the scratch pull request with git"; fi
 
 # ---- 3. findings.json to SARIF 2.1.0 ------------------------------------------------------------------------------
 SARIF_OK='
@@ -237,98 +354,110 @@ elif [ -n "$out" ]; then bad "findings-to-sarif.jq printed something for a file 
 else ok "findings-to-sarif.jq refuses a file with no findings, and prints nothing"; fi
 
 # ---- 4. the verdict --------------------------------------------------------------------------------------------
-verdict() { # verdict RESULT FINDINGS [THRESHOLD [COMMAND [MODE [PROBLEM]]]]: the line verdict.jq prints
+verdict() { # verdict RESULT FINDINGS [THRESHOLD [COMMAND [MODE [PROBLEM]]]]: the line verdict.jq prints; REQ, a
+  # JSON list, names the analyzers the change calls for
   jq -n -r --slurpfile result "$1" --slurpfile findings "$2" --argjson threshold "${3:-7}" --arg command "${4:-diff-audit}" \
-    --arg mode "${5:-strict}" --arg base "$B" --arg head "$H" --arg problem "${6-}" -f "$CI/verdict.jq" 2>&1
-}
-expect() { # expect NAME WANT GOT
-  if [ "$3" = "$2" ]; then ok "$1"; else bad "$1: got '$3', want '$2'"; fi
+    --arg mode "${5:-strict}" --arg base "$B" --arg head "$H" --argjson required "${REQ:-[]}" --arg problem "${6-}" \
+    -f "$CI/verdict.jq" 2>&1
 }
 RAN='analyzers run: audit-scan, lock-delta'
-expect "pass: both files say pass and no finding counts at 7" "auditor: verdict: pass (threshold 7, $RAN)" \
+same "pass: both files say pass and no finding counts at 7" "auditor: verdict: pass (threshold 7, $RAN)" \
   "$(verdict "$T/pass-result.json" "$T/pass-findings.json")"
-expect "fail: a severity-8 finding that passed the gate" "auditor: verdict: fail (threshold 7, $RAN)" \
+same "fail: a severity-8 finding that passed the gate" "auditor: verdict: fail (threshold 7, $RAN)" \
   "$(verdict "$T/fail-result.json" "$T/fail-findings.json")"
 line=$(verdict "$T/fail-result.json" "$T/fail-findings.json")
 case "$line" in *Withdraw*|*owner*|*programs/*|*F-1*|*AV-015*|*" 1 "*) bad "the line holds text from the files: $line" ;;
   *) ok "the line holds no finding text, id, path or count" ;; esac
 jq '.structured_output.verdict = "pass"' "$T/fail-result.json" > "$T/v.json"
-expect "fail: the result says pass over a counted finding" \
+same "fail: the result says pass over a counted finding" \
   "auditor: verdict: fail (threshold 7, $RAN; the findings file and the result disagree)" \
   "$(verdict "$T/v.json" "$T/fail-findings.json")"
 jq '.verdict = "pass"' "$T/fail-findings.json" > "$T/f.json"
-expect "fail: both files say pass over a counted finding" \
+same "fail: both files say pass over a counted finding" \
   "auditor: verdict: fail (threshold 7, $RAN; the verdict does not follow from the findings file)" \
   "$(verdict "$T/v.json" "$T/f.json")"
 jq '.findings += [{"id":"F-4","severity":7,"title":"t","file":"a.rs","line":1,"rule5b":"undetermined","refs":[]}] | .verdict = "fail"' \
   "$T/pass-findings.json" > "$T/f.json"
-expect "fail: an [UNDETERMINED] finding counts" "auditor: verdict: fail (threshold 7, $RAN)" \
+same "fail: an [UNDETERMINED] finding counts" "auditor: verdict: fail (threshold 7, $RAN)" \
   "$(verdict "$T/fail-result.json" "$T/f.json")"
 jq '.findings[0].rule5b = "partial"' "$T/fail-findings.json" | jq '.verdict = "pass"' > "$T/f.json"
-expect "pass: a [PARTIAL] finding does not count" "auditor: verdict: pass (threshold 7, $RAN)" \
+same "pass: a [PARTIAL] finding does not count" "auditor: verdict: pass (threshold 7, $RAN)" \
   "$(verdict "$T/pass-result.json" "$T/f.json")"
 jq '.threshold = 9 | .verdict = "pass"' "$T/fail-findings.json" > "$T/f.json"
 jq '.structured_output.threshold = 9 | .structured_output.verdict = "pass"' "$T/fail-result.json" > "$T/v.json"
-expect "pass: the severity-8 finding at threshold 9" "auditor: verdict: pass (threshold 9, $RAN)" \
+same "pass: the severity-8 finding at threshold 9" "auditor: verdict: pass (threshold 9, $RAN)" \
   "$(verdict "$T/v.json" "$T/f.json" 9)"
-expect "fail: the result's threshold is not the one given" \
+same "fail: the result's threshold is not the one given" \
   "auditor: verdict: fail (threshold 7, $RAN; its result names another threshold)" "$(verdict "$T/v.json" "$T/f.json" 7)"
 jq '.analyzers[1] = {"name":"deps-artifacts","status":"not-run","reason":"deps: blocker: the download failed"}' \
   "$T/pass-findings.json" | jq '.verdict = "fail"' > "$T/f.json"
 jq '.structured_output.analyzers_run = ["audit-scan"] | .structured_output.analyzers_not_run = ["deps-artifacts"]' \
   "$T/fail-result.json" > "$T/v.json"
-expect "fail: an analyzer the run called for did not run" \
+same "fail: an analyzer the run called for did not run" \
   "auditor: verdict: fail (threshold 7, analyzers run: audit-scan; not run: deps-artifacts)" "$(verdict "$T/v.json" "$T/f.json")"
 jq '.structured_output.analyzers_not_run = []' "$T/v.json" > "$T/v2.json"
-expect "fail: the result and the findings file name other analyzers" \
+same "fail: the result and the findings file name other analyzers" \
   "auditor: verdict: fail (threshold 7, analyzers run: audit-scan; the findings file and the result name other analyzers)" \
   "$(verdict "$T/v2.json" "$T/f.json")"
+same "pass: the analyzers the change calls for are listed" "auditor: verdict: pass (threshold 7, $RAN)" \
+  "$(REQ='["audit-scan", "lock-delta"]' verdict "$T/pass-result.json" "$T/pass-findings.json")"
+same "fail: the result leaves out an analyzer the change calls for" \
+  "auditor: verdict: fail (threshold 7, $RAN; its result leaves out an analyzer this change calls for)" \
+  "$(REQ='["audit-scan", "deps-artifacts"]' verdict "$T/pass-result.json" "$T/pass-findings.json")"
+jq '.structured_output.analyzers_run = [] | .structured_output.analyzers_not_run = []' "$T/pass-result.json" > "$T/v.json"
+jq '.analyzers = []' "$T/pass-findings.json" > "$T/f.json"
+same "fail: a result and a findings file that both list no analyzer, for a change that calls for one" \
+  "auditor: verdict: fail (threshold 7, analyzers run: none; its result leaves out an analyzer this change calls for)" \
+  "$(REQ='["audit-scan"]' verdict "$T/v.json" "$T/f.json")"
+same "fail: a list of required analyzers that names no analyzer" \
+  "auditor: verdict: fail (threshold 7, $RAN; the analyzers this change calls for could not be read)" \
+  "$(REQ='["clippy"]' verdict "$T/pass-result.json" "$T/pass-findings.json")"
 jq '.final = false | .verdict = "fail"' "$T/pass-findings.json" > "$T/f.json"
-expect "fail: a findings file that never became final" \
+same "fail: a findings file that never became final" \
   "auditor: verdict: fail (threshold 7, $RAN; the run ended before its last step)" "$(verdict "$T/fail-result.json" "$T/f.json")"
 jq '.final = false' "$T/pass-findings.json" > "$T/f.json"
-expect "fail: a findings file that says pass while it is not final" \
+same "fail: a findings file that says pass while it is not final" \
   "auditor: verdict: fail (threshold 7, $RAN; the run's findings file does not match templates/ci/findings.schema.json)" \
   "$(verdict "$T/pass-result.json" "$T/f.json")"
 for sub in error_max_budget_usd error_max_turns error_during_execution error_max_structured_output_retries something_new; do
   case "$sub" in something_new) shown=unknown ;; *) shown=$sub ;; esac
   printf '{"type":"result","subtype":"%s","is_error":true}\n' "$sub" > "$T/v.json"
-  expect "fail: a result of subtype $sub" \
+  same "fail: a result of subtype $sub" \
     "auditor: verdict: fail (threshold 7, analyzers run: unknown; the review ended early ($shown))" \
     "$(verdict "$T/v.json" "$T/pass-findings.json")"
 done
 jq '.is_error = true' "$T/pass-result.json" > "$T/v.json"
-expect "fail: a success that is an error" \
+same "fail: a success that is an error" \
   "auditor: verdict: fail (threshold 7, $RAN; the review ended in an error)" "$(verdict "$T/v.json" "$T/pass-findings.json")"
-expect "fail: no result" "auditor: verdict: fail (threshold 7, analyzers run: unknown; the review returned no result)" \
+same "fail: no result" "auditor: verdict: fail (threshold 7, analyzers run: unknown; the review returned no result)" \
   "$(verdict /dev/null /dev/null)"
-expect "fail: a run directory with no findings file" \
+same "fail: a run directory with no findings file" \
   "auditor: verdict: fail (threshold 7, $RAN; the run's findings file is missing)" "$(verdict "$T/pass-result.json" /dev/null)"
-expect "fail: the wrapper's own reason" \
+same "fail: the wrapper's own reason" \
   "auditor: verdict: fail (threshold 7, $RAN; the run directory its result names was there before the review)" \
   "$(verdict "$T/pass-result.json" "$T/pass-findings.json" 7 diff-audit strict 'the run directory its result names was there before the review')"
 jq '.structured_output.mode = "default"' "$T/pass-result.json" > "$T/v.json"
-expect "fail: preflight named default mode" \
+same "fail: preflight named default mode" \
   "auditor: verdict: fail (threshold 7, $RAN; preflight did not name strict mode)" "$(verdict "$T/v.json" "$T/pass-findings.json")"
-expect "fail: the result is another command's" \
+same "fail: the result is another command's" \
   "auditor: verdict: fail (threshold 7, $RAN; its result is another command's)" \
   "$(verdict "$T/pass-result.json" "$T/pass-findings.json" 7 quick-scan)"
 jq ".commits.head = \"$B\"" "$T/pass-findings.json" > "$T/f.json"
-expect "fail: the findings file pins other commits" \
+same "fail: the findings file pins other commits" \
   "auditor: verdict: fail (threshold 7, $RAN; the findings file pins other commits)" "$(verdict "$T/pass-result.json" "$T/f.json")"
 jq '.run = "audit_4" | .report = "audit_4/PR-REPORT.md"' "$T/pass-findings.json" > "$T/f.json"
-expect "fail: the findings file is another run's" \
+same "fail: the findings file is another run's" \
   "auditor: verdict: fail (threshold 7, $RAN; the findings file is another run's)" "$(verdict "$T/pass-result.json" "$T/f.json")"
 printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured_output":{"schema_version":1,' \
   '"command":"diff-audit","mode":"strict","verdict":"fail","threshold":7,"run":0,"stopped":"preflight",' \
   '"analyzers_run":[],"analyzers_not_run":[]}}' > "$T/v.json"
-expect "fail: a run that stopped at preflight, with no run directory" \
+same "fail: a run that stopped at preflight, with no run directory" \
   "auditor: verdict: fail (threshold 7, analyzers run: none; stopped: preflight)" "$(verdict "$T/v.json" /dev/null)"
 jq '.structured_output.stopped = "none"' "$T/v.json" > "$T/v2.json"
-expect "fail: a result with no run directory that stopped nowhere" \
+same "fail: a result with no run directory that stopped nowhere" \
   "auditor: verdict: fail (threshold 7, analyzers run: none; its result names no run directory)" "$(verdict "$T/v2.json" /dev/null)"
 jq '.structured_output.verdict = "pass"' "$T/v.json" > "$T/v2.json"
-expect "fail: a result that says pass for a run that stopped" \
+same "fail: a result that says pass for a run that stopped" \
   "auditor: verdict: fail (threshold 7, analyzers run: none; stopped: preflight; its result says pass for a run that stopped)" \
   "$(verdict "$T/v2.json" /dev/null)"
 # a result that steps outside the schema prints none of what it holds
@@ -337,7 +466,7 @@ for edit in '.structured_output.note = "Withdraw skips the owner check"' \
             '.structured_output.run = 3.5' '.structured_output.threshold = "7"' '.structured_output = "pass"' \
             '.structured_output.analyzers_not_run = ["audit-scan"]' 'del(.structured_output.stopped)'; do
   jq "$edit" "$T/pass-result.json" > "$T/v.json"
-  expect "fail, and nothing of the result shown: $edit" \
+  same "fail, and nothing of the result shown: $edit" \
     "auditor: verdict: fail (threshold 7, analyzers run: unknown; its result does not match templates/ci/verdict.schema.json)" \
     "$(verdict "$T/v.json" "$T/pass-findings.json")"
 done
@@ -389,12 +518,12 @@ done
 for n in $(jq -r '.["$defs"].analyzer.properties.name.enum[]' "$CI/findings.schema.json"); do
   jq --arg n "$n" '.analyzers = [{"name": $n, "status": "ran"}]' "$T/pass-findings.json" > "$T/f.json"
   jq --arg n "$n" '.structured_output.analyzers_run = [$n]' "$T/pass-result.json" > "$T/v.json"
-  expect "pass, with the analyzer $n" "auditor: verdict: pass (threshold 7, analyzers run: $n)" "$(verdict "$T/v.json" "$T/f.json")"
+  same "pass, with the analyzer $n" "auditor: verdict: pass (threshold 7, analyzers run: $n)" "$(verdict "$T/v.json" "$T/f.json")"
 done
 # quick-scan: one commit, its own report name
 jq 'del(.commits.base) | .command = "quick-scan" | .report = "audit_3/QUICK-SCAN.md"' "$T/pass-findings.json" > "$T/f.json"
 jq '.structured_output.command = "quick-scan"' "$T/pass-result.json" > "$T/v.json"
-expect "pass: a quick-scan run" "auditor: verdict: pass (threshold 7, $RAN)" "$(verdict "$T/v.json" "$T/f.json" 7 quick-scan)"
+same "pass: a quick-scan run" "auditor: verdict: pass (threshold 7, $RAN)" "$(verdict "$T/v.json" "$T/f.json" 7 quick-scan)"
 jq '.report = "audit_3/PR-REPORT.md"' "$T/f.json" > "$T/f2.json"
 case "$(verdict "$T/v.json" "$T/f2.json" 7 quick-scan)" in
   *"does not match templates/ci/findings.schema.json)") ok "verdict.jq refuses a quick-scan file that names diff-audit's report" ;;

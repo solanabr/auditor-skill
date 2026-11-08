@@ -87,16 +87,17 @@ jobs:
           analyze() {
             local name=$1 rc=0 why
             shift
-            k=$((k + 1))
-            "$@" > "$L/$k.out" 2> "$L/$k.err" || rc=$?
+            k=$((k + 1)) out="$L/$k.out"
+            "$@" < /dev/null > "$out" 2> "$L/$k.err" || rc=$?
             case "$rc" in
               0) ran="$ran $name" ;;
               1) ran="$ran $name"; results=1 ;;
               *) notrun="$notrun $name"
                  why=$(grep -E -m 1 '^(sast|deps): (blocker|refused): ' "$L/$k.err" | cut -c 1-200)
-                 echo "$name did not run (exit $rc): ${why:-no reason given}" ;;
+                 echo "$name did not run (exit $rc): $(shown "${why:-no reason given}")" ;;
             esac
           }
+          shown() { printf '%s' "${1//[[:cntrl:]]/?}"; }   # text as this log shows it, with no line break in it
           # words W...: the words once each, joined by ", ", or none
           words() {
             local seen=" " out="" w
@@ -114,7 +115,7 @@ jobs:
           }
           if ! R=$("$A/scripts/rundir.sh" new audit 2> "$L/rundir.err"); then
             why=$(grep -E -m 1 '^rundir: refused: ' "$L/rundir.err" | cut -c 1-200)
-            echo "the run directory could not be made: ${why:-no reason given}"
+            echo "the run directory could not be made: $(shown "${why:-no reason given}")"
             summary "auditor: tools: fail (analyzers run: none; stopped: run-directory)"
             exit 1
           fi
@@ -123,20 +124,27 @@ jobs:
           for s in $SEMGREP_RULESETS; do sets+=(--ruleset "$s"); done
           set +f
           analyze semgrep "$A/scripts/runner/sast.sh" semgrep --run "$R" --path . "${sets[@]}"
+          # sast.sh's notes, such as the .semgrepignore files that narrow the scan, name repository files, never a
+          # result; the rest of its last line, which counts the results, stays on the runner
+          sed -n '$p' "$out" | awk '{ gsub(/[[:cntrl:]]/, "?"); n = split($0, a, "; note: "); for (i = 2; i <= n; i++) print "semgrep: note: " a[i] }'
           # each Cargo.lock, and each package.json beside the lockfile npm audit reads, outside .git, the run
-          # directory and the build and install folders
+          # directory and the build and install folders. A link is handed on too, and deps.sh refuses it.
+          ncargo=0
           while IFS= read -r -d '' f; do
+            ncargo=$((ncargo + 1))
             analyze cargo-audit "$A/scripts/runner/deps.sh" cargo-audit --run "$R" --manifest "${f#./}"
-          done < <(find . \( -name .git -o -path "./$R" -o -name target -o -name node_modules \) -prune -o -type f -name Cargo.lock -print0)
+          done < <(find . \( -name .git -o -path "./$R" -o -name target -o -name node_modules \) -prune -o \( -type f -o -type l \) -name Cargo.lock -print0)
+          if [ "$ncargo" = 0 ] && [ -e Cargo.toml ]; then echo "cargo-audit: no Cargo.lock in the checkout, so its Rust dependencies are not audited"; fi
           while IFS= read -r -d '' f; do
             p=${f#./}
             d=${p%package.json}
-            if [ -f "${d}package-lock.json" ]; then lock=package-lock.json
-            elif [ -f "${d}npm-shrinkwrap.json" ]; then lock=npm-shrinkwrap.json
-            else echo "npm-audit: no package-lock.json or npm-shrinkwrap.json beside $p, so its dependencies are not audited"; continue
+            # npm reads npm-shrinkwrap.json before package-lock.json
+            if [ -e "${d}npm-shrinkwrap.json" ] || [ -L "${d}npm-shrinkwrap.json" ]; then lock=npm-shrinkwrap.json
+            elif [ -e "${d}package-lock.json" ] || [ -L "${d}package-lock.json" ]; then lock=package-lock.json
+            else echo "npm-audit: no package-lock.json or npm-shrinkwrap.json beside $(shown "$p"), so its dependencies are not audited"; continue
             fi
             analyze npm-audit "$A/scripts/runner/deps.sh" npm-audit --run "$R" --manifest "$p" --manifest "$d$lock"
-          done < <(find . \( -name .git -o -path "./$R" -o -name node_modules \) -prune -o -type f -name package.json -print0)
+          done < <(find . \( -name .git -o -path "./$R" -o -name node_modules \) -prune -o \( -type f -o -type l \) -name package.json -print0)
           if [ -z "$notrun" ] && [ "$results" = 0 ]; then v=pass; else v=fail; fi
           line="auditor: tools: $v (analyzers run: $(words $ran)"
           if [ -n "$notrun" ]; then line="$line; not run: $(words $notrun)"; fi
@@ -186,12 +194,13 @@ jobs:
           (cd "$A/tools/auditor-tools" && CARGO_TERM_COLOR=never cargo build --release --locked)
 
       # Under --setting-sources user and --strict-mcp-config none of this would load, but strict mode's preflight
-      # refuses a tree that ships it (OUTPUT-RULES.md Rule 11f). The diff the review reads still lists changes to
-      # these files.
+      # refuses a tree that ships .claude/ or .mcp.json (OUTPUT-RULES.md Rule 11f); the CLAUDE.md files go too. The
+      # diff the review reads still lists changes to all of them.
       - name: Remove the pull request's Claude Code config from this checkout
         run: |
           set -euo pipefail
-          find . -path ./.git -prune -o \( -iname .claude -o -iname .mcp.json -o -iname .claude.json \) -prune -exec rm -rf -- {} +
+          find . -path ./.git -prune -o \( -iname .claude -o -iname .mcp.json -o -iname .claude.json \
+            -o -iname CLAUDE.md -o -iname CLAUDE.local.md \) -prune -exec rm -rf -- {} +
 
       - name: Review the pull request with Claude Code (strict mode, nothing built)
         env:
@@ -211,6 +220,15 @@ jobs:
           git rev-parse --verify -q 'HEAD^2' > /dev/null || { echo "::error::HEAD is not the pull request's merge commit"; exit 1; }
           base=$(git rev-parse 'HEAD^1') && head=$(git rev-parse HEAD) || exit 1
           printf '%s\n%s\n' "$base" "$head" > "$O/range.txt"
+          # the analyzers this change calls for, whatever the review says (commands/diff-audit.md step 7):
+          # audit-scan for a changed .rs file, lock-delta for a changed lockfile it reads
+          git diff --no-ext-diff --no-textconv --name-only -z --diff-filter=d "$base" "$head" | tr '\0' '\n' > "$O/changed.txt" || exit 1
+          req=""
+          if [ "$(grep -c -E '[.]rs$' "$O/changed.txt")" -gt 0 ]; then req='"audit-scan"'; fi
+          if [ "$(grep -c -E '(^|/)(Cargo[.]lock|package-lock[.]json|npm-shrinkwrap[.]json|yarn[.]lock|bun[.]lock)$' "$O/changed.txt")" -gt 0 ]; then
+            req="${req:+$req,}\"lock-delta\""
+          fi
+          echo "[$req]" > "$O/required.json"
           # Rule 11f: preflight's first line must name strict mode. Checked here first, before anything costs money;
           # a refusal names the path it stopped at, which the pull request holds.
           "$A/scripts/preflight.sh" > "$O/preflight.out" 2> "$O/preflight.err"
@@ -268,9 +286,10 @@ jobs:
               fi
             fi
           fi
+          required=$(cat "$O/required.json" 2> /dev/null)
           line=$(jq -n -r --slurpfile result "$R" --slurpfile findings "$F" --argjson threshold "$T" \
-            --arg command diff-audit --arg mode strict --arg base "$base" --arg head "$head" --arg problem "$problem" \
-            -f "$A/templates/ci/verdict.jq" 2> /dev/null)
+            --arg command diff-audit --arg mode strict --arg base "$base" --arg head "$head" \
+            --argjson required "${required:-[]}" --arg problem "$problem" -f "$A/templates/ci/verdict.jq" 2> /dev/null)
           case "$line" in
             "auditor: verdict: "*) ;;
             *) line="auditor: verdict: fail (threshold $T, analyzers run: unknown; the review's result could not be read)" ;;
