@@ -1090,6 +1090,21 @@ if command -v jq >/dev/null 2>&1; then
 else
   skp "T-n late link: needs jq"
 fi
+# Default mode takes a run directory holding a link that ends inside it; strict mode refuses any link.
+# Either way the collector writes through none: a history.md that is such a link becomes a file.
+mkrun audit_11; mkdir "$RD/audit_11/bootstrap"; printf 'decoy\n' > "$RD/audit_11/decoy.md"
+ln -s ../decoy.md "$RD/audit_11/bootstrap/history.md"
+check "T-n (strict): a run directory holding a link that ends inside it is refused (exit 2)" \
+  test "$(cd "$RD" && AUDITOR_STRICT=1 "$COLLECT" --offline --repo . --out audit_11/bootstrap >/dev/null 2>"$T/rc.err"; echo $?)" = 2
+check "T-n (strict): ... saying it holds a symbolic link" refused_with "the run directory holds a symbolic link: audit_11"
+if api "$RD" 'confine_rundir audit_11 x'; then
+  check "T-n: in default mode that run directory is written to (exit 0)" test "$(rc_in "$RD" --offline --repo . --out audit_11/bootstrap)" = 0
+  check "T-n: ... the history.md link replaced by a file of its own" \
+    sh -c "[ ! -L '$RD/audit_11/bootstrap/history.md' ] && [ -s '$RD/audit_11/bootstrap/history.md' ]"
+  check "T-n: ... and nothing written through the link" test "$(cat "$RD/audit_11/decoy.md")" = decoy
+else
+  skp "T-n: a run directory holding a link that ends inside it, in default mode: waits for Lane 1's CONF-15 commit"
+fi
 
 # =================================================================================================
 # T-p: partial and shallow clones. A partial clone is read for what it holds, with a note, and never
