@@ -1269,9 +1269,13 @@ commands/deep-review.md	Run no `cd` in this session, not even before a plain `gr
 commands/diff-audit.md	If you start an agent, set no model for it
 commands/deep-review.md	If you start an agent, set no model for it
 commands/quick-scan.md	Judge no vector by its index row alone
-commands/quick-scan.md	Read every kept file before you give any vector verdict, several in one message where you can
-commands/quick-scan.md	Skip no kept file by choice; Coverage & Limitations names only a file the Read tool could not open.
-commands/diff-audit.md	Skip no selected file by choice; name there only one the Read tool could not open.
+commands/quick-scan.md	list the kept files in a message of your own; read every one whole, with no line limit, about ten in each message, before you give any vector verdict
+commands/quick-scan.md	before you start the report, check the list against the files you read and read any you missed
+commands/quick-scan.md	Skip no kept file and cut none short by choice, not even to save cost or time; Coverage & Limitations names only a file the Read tool could not open.
+commands/diff-audit.md	Read each vector file whole, with no line limit, several in each message. Read every selected file before you start the report
+commands/diff-audit.md	Skip no selected file and cut no vector file short by choice, not even to save cost or time; name there only one the Read tool could not open.
+commands/quick-scan.md	Never give a budget, turn or time limit as the reason a file went unread: a session that reaches one is stopped there
+commands/diff-audit.md	Never give a budget, turn or time limit as the reason a file went unread: a session that reaches one is stopped there
 commands/diff-audit.md	first, with the Read tool, before any verdict of this step, whatever the size of the change
 commands/diff-audit.md	Each verdict names the checklist item id or the vector step it rests on
 commands/deep-review.md	Each verdict names the checklist item id or the vector step it rests on
@@ -1291,6 +1295,15 @@ agents/context-builder.md	only into `grep`, `head`, `tail` or `wc`
 agents/economic-analyst.md	only into `grep`, `head`, `tail` or `wc`
 agents/peer-reviewer.md	only into `grep`, `head`, `tail` or `wc`
 PINS
+# quick-scan's step 3 tells the session its kept vector files fit in one session because most are under 4 KB,
+# which holds while most files of known-vectors/ are.
+small=0; nvec=0
+for v in known-vectors/[0-9]*.md; do
+  [ -f "$v" ] || continue
+  nvec=$((nvec + 1)); if [ "$(wc -c < "$v")" -lt 4096 ]; then small=$((small + 1)); fi
+done
+if [ "$nvec" -gt 0 ] && [ $((small * 2)) -gt "$nvec" ]; then ok "$small of $nvec known-vector files are under 4 KB, as quick-scan step 3 says most are"
+else bad "only $small of $nvec known-vector files are under 4 KB: quick-scan step 3 says most are"; fi
 
 # Wording that must not come back, file <TAB> text: an agent never hands run.sh the file's mode as --mode, which
 # stops every run a stricter AUDITOR_EXEC_MODE holds to isolated mode, and the older wording that copied a mode
