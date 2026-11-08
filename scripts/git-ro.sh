@@ -127,13 +127,17 @@
 # (src-2.git, src-3.git, ... once that exists) under the same hardened call, with protocol.file.allow
 # for that clone and no global config, from a scratch directory outside the working directory: a copy
 # never runs the repository's configured code, and the clone's upload-pack runs in <dir> without hgit's
-# -c pins, so git's ownership check must stay on. It refuses a
-# partial clone (exit 3). A git without the May-2024 clone fixes, CVE-2024-32004 and CVE-2024-32465
-# (accepted are 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, 2.46 and later in each line),
-# is refused in strict mode (exit 69). In default mode such a git, or a <dir> another user owns, gets the
-# same bare copy without clone: pack-objects in <dir>, index-pack in the copy, which checks each object's
-# hash, then the branches, tags and HEAD (a note says so for the old git, and every read on it notes the
-# git too). It writes <R>/src.git/auditor-copy; read the copy with --git-dir <R>/src.git.
+# -c pins, so git's ownership check must stay on. It refuses a <dir> whose git directory lies outside
+# with nothing tying it back, in both modes. A partial clone stops it in strict mode (exit 3); in default
+# mode it is copied when the object store holds HEAD's tree and every object in it, with a note and
+# nothing fetched, and the copy is marked a partial clone itself, as a blob only another revision names
+# may be missing; when an object of HEAD is missing, it stops (exit 3). A git without the May-2024 clone fixes,
+# CVE-2024-32004 and CVE-2024-32465 (accepted are 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1,
+# 2.46 and later in each line, judged by git --version alone), is refused in strict mode (exit 69). In
+# default mode such a git, a <dir> another user owns, or a partial clone gets the same bare copy without
+# clone: pack-objects in <dir>, index-pack in the copy, which checks each object's hash, then the
+# branches, tags and HEAD (a note says so for the old git, and every read on it notes the git too). It
+# writes <R>/src.git/auditor-copy; read the copy with --git-dir <R>/src.git.
 #
 # Exit: git's own status (0, 1, 128, ...) · 3 partial clone (partial, copy) · 64 refused · 69 git too
 # old to copy (strict mode). Needs bash >= 3.2 and git; env, find, tr, wc, cat, sort, mkdir, mktemp,
@@ -327,8 +331,19 @@ copy_git_ok() {
   return 1
 }
 
+# head_whole <repository>: status 0 when the object store holds HEAD's commit, its tree and every object in
+# that tree, or HEAD names no commit; 1 when one is missing or git cannot tell. rev-list prints a missing
+# object as ?<id> and fetches nothing with --missing; hgit adds GIT_NO_LAZY_FETCH and allows no transport.
+# --no-walk keeps it to HEAD, without the history behind it.
+head_whole() {
+  local out
+  hgit "$1" rev-parse --verify --quiet HEAD </dev/null >/dev/null 2>&1 || return 0
+  out=$(hgit "$1" rev-list --objects --no-walk --missing=print HEAD </dev/null 2>/dev/null) || return 1
+  case "$out" in '?'*|*$'\n?'*) return 1 ;; esac
+}
+
 run_copy() { # run_copy <dir> <R>
-  local src rel r dest k scratch rc fixed=1 how=clone
+  local src rel r dest k scratch rc fixed=1 how=clone partial=0
   [ $# -eq 2 ] || refuse "copy takes a repository and a run directory: copy <dir> <R>"
   # With no status: a source whose git directory nothing ties back to it is refused, so a copy that
   # cannot be made never reads as one made.
@@ -339,10 +354,21 @@ run_copy() { # run_copy <dir> <R>
   r=$CONFINE_RUN
   confine_partial_clone "$src" >/dev/null
   case $? in
-    0) printf 'git-ro: %s is a partial clone: a copy would lack the objects it never fetched, and nothing is fetched; make a full copy from a source you trust (Rule 11c)\n' "$(confine_text "$1")" >&2
-       exit 3 ;;
+    0) partial=1 ;;
     2) refuse "git cannot read the config of $(confine_text "$1"), so a partial clone cannot be ruled out" ;;
   esac
+  # A partial clone: strict mode stops; default mode copies what it holds, through plumbing, once every
+  # object of HEAD is there, and stops only when one is missing.
+  if [ "$partial" -eq 1 ]; then
+    if [ "$CONFINE_STRICT" = 1 ]; then
+      printf 'git-ro: %s is a partial clone: a copy would lack the objects it never fetched, and nothing is fetched; make a full copy from a source you trust (Rule 11c)\n' "$(confine_text "$1")" >&2
+      exit 3
+    fi
+    if ! head_whole "$src"; then
+      printf 'git-ro: %s is a partial clone, and HEAD names an object it never fetched: a copy would lack it, and nothing is fetched; make a full copy from a source you trust (Rule 11c)\n' "$(confine_text "$1")" >&2
+      exit 3
+    fi
+  fi
   copy_git_ok || fixed=0
   if [ "$fixed" -eq 0 ] && [ "$CONFINE_STRICT" = 1 ]; then
     printf 'git-ro: refused: copy needs git with the May-2024 clone fixes: 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, or 2.46 or later\n' >&2
@@ -351,10 +377,10 @@ run_copy() { # run_copy <dir> <R>
   # A copy never runs the source repository's configured code, in either mode (K). The clone's upload-pack
   # runs in the source with none of hgit's -c pins (git's local transport clears GIT_CONFIG_PARAMETERS for
   # it), so the clone keeps git's own ownership check: no global config. In default mode a git without the
-  # clone fixes, or a source another user owns, gets the copy through plumbing instead, which runs no
-  # upload-pack.
+  # clone fixes, a source another user owns, or a partial clone (which a clone of would fetch from its
+  # promisor) gets the copy through plumbing instead, which runs no upload-pack.
   # Owned as git's own check judges it: the work tree, the git directory, and a .git file naming it.
-  if [ "$CONFINE_STRICT" != 1 ] && { [ "$fixed" -eq 0 ] || [ ! -O "$src" ] || [ ! -O "$CONFINE_GIT_DIR" ] ||
+  if [ "$CONFINE_STRICT" != 1 ] && { [ "$fixed" -eq 0 ] || [ "$partial" -eq 1 ] || [ ! -O "$src" ] || [ ! -O "$CONFINE_GIT_DIR" ] ||
     [ ! -O "$CONFINE_COMMON_DIR" ] || { [ -f "$src/.git" ] && [ ! -O "$src/.git" ]; }; }; then
     how=plumbing
   fi
@@ -378,7 +404,7 @@ run_copy() { # run_copy <dir> <R>
       clone --no-local --bare --no-recurse-submodules --template= -- "$src" "$WT/$r/$dest" </dev/null
     rc=$?
   else
-    copy_plumbing "$src" "$WT/$r/$dest" "$scratch"
+    copy_plumbing "$src" "$WT/$r/$dest" "$scratch" "$partial"
     rc=$?
   fi
   rmdir "$scratch"
@@ -391,19 +417,25 @@ run_copy() { # run_copy <dir> <R>
     refuse "cannot write $r/$dest/auditor-copy"
   [ "$fixed" -eq 1 ] ||
     confine_note "$GIT_OLD, so copy made $r/$dest from git's plumbing instead of cloning (pack-objects in the source, index-pack in the copy); strict mode refuses this (Rule 11f)"
+  [ "$partial" -eq 0 ] ||
+    confine_note "$(confine_text "$1") is a partial clone, and every blob of HEAD is present: copy made $r/$dest from what it holds, with nothing fetched, so a blob only another revision names may be missing there (Rule 11c)"
   printf '%s\n' "$r/$dest"
   exit 0
 }
 
-# copy_plumbing <source top level> <empty destination> <scratch directory>: the bare copy clone --bare
-# would make, made without clone, a transport or upload-pack: git init --bare with no template in the
-# destination; the objects every branch and tag and HEAD reach, packed by pack-objects in the source and
-# indexed by index-pack in the copy, which checks each object's hash; then the branches, the tags, HEAD,
-# and the shallow file, when the source has one. Each call is hardened (hgit), none opens a work tree,
-# and each runs in the scratch directory, the source or the copy. Status: git's own when a step fails.
+# copy_plumbing <source top level> <empty destination> <scratch directory> [1, for a partial clone]: the
+# bare copy clone --bare would make, made without clone, a transport or upload-pack: git init --bare with
+# no template in the destination; the objects every branch and tag and HEAD reach, packed by pack-objects
+# in the source and indexed by index-pack in the copy, which checks each object's hash; then the
+# branches, the tags, HEAD, and the shallow file, when the source has one. Each call is hardened (hgit),
+# none opens a work tree, and each runs in the scratch directory, the source or the copy. Status: git's
+# own when a step fails.
 copy_plumbing() {
-  local src=$1 dest=$2 scratch=$3 fmt line ref head refs="" tips="" rc
-  local -a st=()
+  local src=$1 dest=$2 scratch=$3 partial=${4:-0} fmt line ref head refs="" tips="" rc p
+  local -a st=() missing=()
+  # From a partial clone, pack-objects passes over the objects it never fetched, and the copy is marked as
+  # a partial clone itself, so git takes a missing object there as one never fetched.
+  [ "$partial" -eq 0 ] || missing=(--missing=allow-promisor)
   fmt=$(hgit "$src" rev-parse --show-object-format </dev/null 2>/dev/null) || fmt=sha1
   case "$fmt" in sha256) ;; *) fmt=sha1 ;; esac
   if [ "$fmt" = sha1 ]; then
@@ -421,9 +453,16 @@ copy_plumbing() {
   IFS=$' \t\n'
   head=$(hgit "$src" rev-parse --verify --quiet HEAD </dev/null) && tips=$tips$head$'\n'
   if [ -n "$tips" ]; then
-    printf '%s' "$tips" | hgit "$src" pack-objects --revs --stdout -q | hgit "$dest" index-pack --stdin >/dev/null
+    printf '%s' "$tips" | hgit "$src" pack-objects --revs ${missing[@]+"${missing[@]}"} --stdout -q | hgit "$dest" index-pack --stdin >/dev/null
     st=("${PIPESTATUS[@]}")
     for rc in "${st[@]}"; do [ "$rc" -eq 0 ] || return "$rc"; done
+  fi
+  if [ "$partial" -eq 1 ]; then
+    hgit "$dest" config core.repositoryformatversion 1 </dev/null && hgit "$dest" config extensions.partialClone origin </dev/null || return
+    for p in "$dest"/objects/pack/*.pack; do
+      [ -f "$p" ] || continue
+      confine_new_file "${p%.pack}.promisor" '' || return 1
+    done
   fi
   if [ -e "$CONFINE_COMMON_DIR/shallow" ]; then
     confine_new_copy "$CONFINE_COMMON_DIR/shallow" "$dest/shallow" || return 1

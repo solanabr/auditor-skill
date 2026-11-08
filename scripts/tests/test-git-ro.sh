@@ -665,10 +665,36 @@ else
   run "$PC" show HEAD~1:f.txt
   check "an ext:: promisor is not run either" nomarks
   (cd "$PC" && "$RUNDIR" new audit) >/dev/null 2>&1
-  run_once "$PC" copy . audit_1
-  check "copy of a partial clone: exit 3" test "$RC" = 3
+  AUDITOR_STRICT=1 run_once "$PC" copy . audit_1
+  check "in strict mode copy of a partial clone: exit 3" test "$RC" = 3
   check "... with its one line" err_is "git-ro: . is a partial clone: a copy would lack the objects it never fetched, and nothing is fetched; make a full copy from a source you trust (Rule 11c)"
   check "... and nothing copied or fetched" sh -c "[ ! -e '$PC/audit_1/src.git' ] && [ -z \"\$(ls -A '$T/marks')\" ]"
+  # Default mode: every blob of HEAD is here (a blobless clone checks HEAD out), so copy makes the copy
+  # from what the clone holds, through plumbing, with a note; the copy is marked a partial clone itself.
+  run_once "$PC" copy . audit_1
+  check "in default mode copy of a partial clone holding every blob of HEAD makes a copy, with a note" \
+    test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|audit_1/src.git|git-ro: note: . is a partial clone, and every blob of HEAD is present: copy made audit_1/src.git from what it holds, with nothing fetched, so a blob only another revision names may be missing there (Rule 11c)"
+  check "... fetching nothing, through no helper" nomarks
+  run "$PC" --git-dir audit_1/src.git show HEAD:f.txt
+  check "... where HEAD's files read, after the partial-clone note" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|second|$NOTE"
+  run "$PC" --git-dir audit_1/src.git show HEAD~1:f.txt
+  check "... and an older blob is missing there, not fetched" sh -c "[ '$RC' = 128 ] && [ -z \"\$(ls -A '$T/marks')\" ]"
+  check "... and git finds the copy whole, as a partial clone" sh -c "git --git-dir='$PC/audit_1/src.git' fsck --no-dangling >/dev/null 2>&1"
+  # A partial clone that lacks an object of HEAD, cloned with no checkout: blobs, or (tree:0) its trees
+  # too. Default mode stops as well.
+  for f in blob:none tree:0; do
+    PCN="$T/partial-${f%%:*}"
+    if git clone -q --filter="$f" --no-local --no-checkout "file://$SRV" "$PCN" >/dev/null 2>&1; then
+      git -C "$PCN" config remote.origin.url "evil::$SRV"
+      (cd "$PCN" && "$RUNDIR" new audit) >/dev/null 2>&1
+      run_once "$PCN" copy . audit_1
+      check "in default mode copy of a partial clone ($f, no checkout) that lacks an object of HEAD: exit 3, saying so" \
+        test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "3||git-ro: . is a partial clone, and HEAD names an object it never fetched: a copy would lack it, and nothing is fetched; make a full copy from a source you trust (Rule 11c)"
+      check "... and nothing copied or fetched" sh -c "[ ! -e '$PCN/audit_1/src.git' ] && [ -z \"\$(ls -A '$T/marks')\" ]"
+    else
+      skp "this git could not make a partial clone ($f) with no checkout"
+    fi
+  done
 fi
 
 # =================================================================================================
