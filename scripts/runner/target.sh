@@ -11,11 +11,19 @@
 # copied; a blocker is one stderr line, "target: blocker: <reason>", with exit 3.
 #
 # The actions. Each runs a fixed command line in the copy, at --dir or at its top:
-#   anchor-build  anchor build --ignore-keys [-p <program>] -- --skip-tools-install --offline [--tools-version <v>]
+#   anchor-build  anchor build --ignore-keys --no-idl [--tools-version <v>] [-p <program>] -- --skip-tools-install
+#                 --offline, where this anchor builds its IDL with cargo test (anchor build --help lists --no-idl
+#                 and anchor idl build --help --out-ts: Anchor 0.30 and later); with an older one, without
+#                 --no-idl. <v> is anchor build's own --tools-version where it has one (Anchor 1.2 and later),
+#                 else it goes after --
 #   anchor-test   npm ci --ignore-scripts --no-audit --no-fund when that directory holds package-lock.json,
-#                 then the anchor-build command, then anchor test --skip-build --skip-deploy
-#                 --skip-local-validator --provider.cluster localnet --provider.wallet <the throwaway keypair>
-#                 [-p <program>]: the test script runs against no validator and nothing is deployed
+#                 then the anchor-build command, then, where --no-idl was used, anchor idl build -p <program> -o
+#                 target/idl/<program>.json -t target/types/<program>.ts for each program built, in a step with
+#                 no build-sbf options and no RUSTUP_TOOLCHAIN (the pin goes into a rust-toolchain.toml that
+#                 target.sh writes at the top of the copy, once the copy's own rust-toolchain files are
+#                 removed), then anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster
+#                 localnet --provider.wallet <the throwaway keypair> [-p <program>]: the test script runs against
+#                 no validator and nothing is deployed
 #   build-sbf     cargo build-sbf --skip-tools-install --offline --sbf-out-dir <scratch> [--tools-version <v>]
 #                 [--manifest-path <the Cargo.toml of --package>]
 #   cargo-test    cargo test --offline, with -p <package> or --workspace
@@ -24,7 +32,10 @@
 #   npm-ci        npm ci --ignore-scripts --no-audit --no-fund (checklist 11 SC-012)
 # --package names a cargo package (build-sbf, cargo-test, clippy) and --program an Anchor program
 # (anchor-build, anchor-test). <v> is TOOLS_VERSION from the environment, v<n>.<n> or v<n>.<n>.<n>; without
-# it cargo build-sbf uses its own default.
+# it cargo build-sbf uses its own default, except that for an anchor action target.sh installs the platform
+# tools that anchor asks cargo build-sbf for, learned from one anchor build --no-idl with a recording
+# cargo-build-sbf first on PATH (Anchor 1.2 asks for v1.57). A build that then finds no core crate for its
+# target stops (exit 3) and names TOOLS_VERSION.
 #
 # The mode is the stricter of <R>/exec-mode (one word, none, isolated or native, written when the human
 # answers Q46), AUDITOR_EXEC_MODE and strict mode (OUTPUT-RULES.md Rule 11f), which counts as isolated: none,
@@ -1084,6 +1095,62 @@ sbf_tools() {
   done
   finish 3 "$lacks, and ${kind:-platform-tools} $v is not there; install it once outside the audit (cargo build-sbf --tools-version $v in any program crate downloads it), then run this again"
 }
+# iso_value <NAME>: the value the cleaned environment gives NAME (its last entry), or nothing.
+iso_value() {
+  local e v=""
+  for e in ${ISO_ENV[@]+"${ISO_ENV[@]}"}; do case "$e" in "$1="*) v=${e#*=} ;; esac; done
+  printf '%s' "$v"
+}
+# anchor_options: what this anchor takes, from its own help (anchor, not the copy's code): ANCHOR_NOIDL=1 when
+# anchor build has --no-idl and anchor idl build has --out-ts (Anchor 0.30 and later, whose IDL build runs
+# cargo test), ANCHOR_TV=1 when anchor build has its own --tools-version (Anchor 1.2 and later).
+anchor_options() {
+  local h i
+  h=$(cd "$AD" && iso_run "${OFF[@]}" anchor build --help 2>/dev/null </dev/null) || h=""
+  i=$(cd "$AD" && iso_run "${OFF[@]}" anchor idl build --help 2>/dev/null </dev/null) || i=""
+  ANCHOR_NOIDL=0 ANCHOR_TV=0
+  case "$h" in *--no-idl*) case "$i" in *--out-ts*) ANCHOR_NOIDL=1 ;; esac ;; esac
+  case "$h" in *'--tools-version <'*) ANCHOR_TV=1 ;; esac
+  printf '>> anchor build --help: --no-idl and anchor idl build %s; its own --tools-version %s\n' \
+    "$([ "$ANCHOR_NOIDL" = 1 ] && echo yes || echo no)" "$([ "$ANCHOR_TV" = 1 ] && echo yes || echo no)" >&9
+}
+# anchor_tools: with no TOOLS_VERSION, the platform tools this anchor asks cargo build-sbf for (Anchor 1.2 asks
+# for v1.57 with --arch v3, past cargo build-sbf's own default), learned from one anchor build --no-idl with a
+# cargo-build-sbf first on PATH that records its options and builds nothing (it passes --version and --help to
+# the real one). INSTALL_TV then installs that version. Learning nothing leaves cargo build-sbf's default.
+anchor_tools() {
+  local real line rest v=""
+  [ -z "${TOOLS_VERSION:-}" ] && [ "$ANCHOR_NOIDL" = 1 ] || return 0
+  real=$(command -v cargo-build-sbf) || return 0
+  { mkdir "$S/rec" &&
+    printf '#!/bin/sh\ncase " $* " in *" --version "*|*" --help "*|*" -V "*|*" -h "*) exec "%s" "$@" ;; esac\nprintf "%%s\\n" "$*" >> "%s/rec/args"\nexit 0\n' \
+      "$real" "$S" > "$S/rec/cargo-build-sbf" && chmod +x "$S/rec/cargo-build-sbf"; } ||
+    finish 3 "cannot write the recording cargo-build-sbf in $S"
+  step "$AD" "${OFF[@]}" "PATH=$S/rec:$(iso_value PATH)" anchor build --ignore-keys --no-idl ${PKG[@]+"${PKG[@]}"} -- --skip-tools-install --offline
+  if [ -f "$S/rec/args" ]; then
+    while IFS= read -r line; do
+      case " $line " in *" --tools-version "*) rest=${line#*--tools-version }; v=${rest%% *}; break ;; esac
+    done < "$S/rec/args"
+  fi
+  if [[ "$v" =~ $TOOLS_SPEC ]]; then
+    INSTALL_TV=(--tools-version "$v")
+    printf '>> anchor asks cargo build-sbf for platform tools %s, so target.sh installs that version\n' "$v" >&9
+  else
+    printf '>> anchor named no platform tools version (%s), so cargo build-sbf installs its own default\n' "$STEP_END" >&9
+  fi
+}
+# avm's anchor shim looks for its releases in AVM_HOME (isolation.sh sets it), and avm releases that predate
+# it look in ~/.avm: the throwaway HOME links the real one.
+INSTALL_TV=(${TV[@]+"${TV[@]}"})
+PKG=()
+case "$ACTION" in
+  anchor-*)
+    if [ -d "$ISO_REAL_HOME/.avm" ]; then
+      ln -s "$ISO_REAL_HOME/.avm" "$ISO_HOME/.avm" || finish 3 "cannot link ~/.avm into the throwaway HOME $ISO_HOME"
+    fi
+    [ -z "$PROGRAM" ] || PKG=(-p "$PROGRAM")
+    anchor_options ;;
+esac
 SBF_SPLIT=1
 SBF_ENV=()
 case "$ACTION" in
@@ -1092,7 +1159,8 @@ case "$ACTION" in
     [[ "$sbf_help" == *--install-only* && "$sbf_help" == *--skip-tools-install* && "$sbf_help" == *--offline* ]] || SBF_SPLIT=0
     [ -n "$ISO_REAL_HOME" ] || finish 3 "HOME is not set, and cargo build-sbf keeps its platform tools there"
     if [ "$SBF_SPLIT" = 1 ]; then
-      step "$S" ${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME" cargo build-sbf --install-only ${TV[@]+"${TV[@]}"}
+      [ "$ACTION" = build-sbf ] || anchor_tools
+      step "$S" ${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME" cargo build-sbf --install-only ${INSTALL_TV[@]+"${INSTALL_TV[@]}"}
       fetched "cargo build-sbf --install-only, the install of the platform tools,"
       link_tools
     elif [ "$MODE" = native ]; then
@@ -1111,14 +1179,6 @@ case "$ACTION" in
       printf '>> no --install-only: the build runs with the real HOME and the proxy variables\n' >&9
     fi ;;
 esac
-# avm's anchor shim looks for its releases in AVM_HOME (isolation.sh sets it), and avm releases that predate
-# it look in ~/.avm: the throwaway HOME links the real one.
-case "$ACTION" in
-  anchor-*)
-    if [ -d "$ISO_REAL_HOME/.avm" ]; then
-      ln -s "$ISO_REAL_HOME/.avm" "$ISO_HOME/.avm" || finish 3 "cannot link ~/.avm into the throwaway HOME $ISO_HOME"
-    fi ;;
-esac
 if [ "$ACTION" = anchor-test ]; then
   if real_file "$AD/package-lock.json" || real_file "$AD/npm-shrinkwrap.json"; then
     command -v npm >/dev/null 2>&1 && command -v node >/dev/null 2>&1 || finish 3 "$at holds a package lock, and npm or node is not on PATH"
@@ -1130,8 +1190,40 @@ if [ "$ACTION" = anchor-test ]; then
   fi
 fi
 
+# idl_build: for anchor-test, the IDL of each program the build made, for test scripts that import
+# target/types: anchor idl build, in a step of its own, with no build-sbf options and no RUSTUP_TOOLCHAIN,
+# which anchor-cli 1.1 and 1.2 mishandle (they try to install the toolchain, then run "cargo +{toolchain}").
+# The pinned toolchain goes instead into a rust-toolchain.toml at the top of the copy, once every
+# rust-toolchain file the copy holds is removed, so that no toolchain path comes from the repository.
+idl_build() {
+  local so name pin e
+  local -a saved=() kept=()
+  [ "$ANCHOR_NOIDL" = 1 ] || return 0
+  saved=(${ISO_ENV[@]+"${ISO_ENV[@]}"})
+  for e in ${ISO_ENV[@]+"${ISO_ENV[@]}"}; do case "$e" in RUSTUP_TOOLCHAIN=*) ;; *) kept+=("$e") ;; esac; done
+  pin=$(iso_value RUSTUP_TOOLCHAIN)
+  if [ -n "$pin" ]; then
+    [[ "$pin" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$ ]] ||
+      finish 3 "the pinned toolchain $(confine_text "$pin") is no plain channel name, which a rust-toolchain.toml would need"
+    find "$S/src" -path "$S/src/.git" -prune -o \( -name rust-toolchain -o -name rust-toolchain.toml \) \( -type f -o -type l \) \
+      -exec rm -f -- {} + 2>&9 || finish 3 "cannot remove the copy's rust-toolchain files"
+    printf '[toolchain]\nchannel = "%s"\n' "$pin" > "$S/src/rust-toolchain.toml" ||
+      finish 3 "cannot write a rust-toolchain.toml at the top of the copy"
+    printf '>> the copy'"'"'s rust-toolchain files removed, and a rust-toolchain.toml at its top names %s\n' "$pin" >&9
+  fi
+  { mkdir -p "$AD/target/idl" && mkdir -p "$AD/target/types"; } 2>&9 || finish 3 "cannot create target/idl and target/types at $at"
+  ISO_ENV=(${kept[@]+"${kept[@]}"})
+  for so in "$AD/target/deploy/"*.so; do
+    [ -f "$so" ] || continue
+    name=${so##*/}
+    name=${name%.so}
+    step "$AD" "${OFF[@]}" anchor idl build -p "$name" -o "$AD/target/idl/$name.json" -t "$AD/target/types/$name.ts"
+    outcome "anchor idl build"
+  done
+  ISO_ENV=(${saved[@]+"${saved[@]}"})
+}
+
 # ---- the action ----------------------------------------------------------------------------------------
-PKG=()
 case "$ACTION" in
   build-sbf)
     MP=()
@@ -1178,17 +1270,31 @@ print(path)' "$S/metadata.json" "$PACKAGE" "$S/src") 2>/dev/null) && [ -n "$mp" 
     warnings=$(grep -c '^warning: ' "$S/log")
     finish 0 "ok (exit 0), ${warnings:-0} warning lines" ;;
   anchor-build|anchor-test)
-    [ -z "$PROGRAM" ] || PKG=(-p "$PROGRAM")
     SO_FROM=$AD/target/deploy
+    # --no-idl where this anchor builds its IDL with cargo test (anchor_options), which would get the build-sbf
+    # options after -- and the RUSTUP_TOOLCHAIN pin: anchor-test builds the IDL in a step of its own
+    # (idl_build). TOOLS_VERSION is anchor build's own --tools-version where it has one, else after --.
+    AB=(anchor build --ignore-keys)
+    [ "$ANCHOR_NOIDL" = 0 ] || AB+=(--no-idl)
+    SBF_ARGS=()
+    if [ -n "${TV[*]-}" ]; then
+      if [ "$ANCHOR_TV" = 1 ]; then AB+=("${TV[@]}"); else SBF_ARGS=("${TV[@]}"); fi
+    fi
     if [ "$SBF_SPLIT" = 1 ]; then
-      step "$AD" "${OFF[@]}" anchor build --ignore-keys ${PKG[@]+"${PKG[@]}"} -- --skip-tools-install --offline ${TV[@]+"${TV[@]}"}
+      step "$AD" "${OFF[@]}" "${AB[@]}" ${PKG[@]+"${PKG[@]}"} -- --skip-tools-install --offline ${SBF_ARGS[@]+"${SBF_ARGS[@]}"}
     else
-      SBF_ARGS=()
-      [ -z "${TV[*]-}" ] || SBF_ARGS=(-- "${TV[@]}")
-      step "$AD" ${SBF_ENV[@]+"${SBF_ENV[@]}"} anchor build --ignore-keys ${PKG[@]+"${PKG[@]}"} ${SBF_ARGS[@]+"${SBF_ARGS[@]}"}
+      [ "${#SBF_ARGS[@]}" = 0 ] || SBF_ARGS=(-- "${SBF_ARGS[@]}")
+      step "$AD" ${SBF_ENV[@]+"${SBF_ENV[@]}"} "${AB[@]}" ${PKG[@]+"${PKG[@]}"} ${SBF_ARGS[@]+"${SBF_ARGS[@]}"}
+    fi
+    # Platform tools that lack the program's target: rustc finds no core crate for it.
+    if [ "$STEP_END" != "exit 0" ] && grep -q "can't find crate for \`core\`" "$S/log"; then
+      tools=${INSTALL_TV[1]:-}
+      [ -n "$tools" ] || tools="the default of cargo build-sbf"
+      finish 3 "anchor build found no core crate for the program's target: the platform tools it built with ($tools) lack that target; set TOOLS_VERSION to the platform tools version this Anchor asks for (Anchor 1.2 asks for v1.57) and run this again"
     fi
     outcome "anchor build"
     [ "$ACTION" = anchor-test ] || finish 0 "ok (exit 0)"
+    idl_build
     step "$AD" "${OFF[@]}" anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet \
       --provider.wallet "$ISO_HOME/.config/solana/id.json" ${PKG[@]+"${PKG[@]}"}
     outcome "anchor test"

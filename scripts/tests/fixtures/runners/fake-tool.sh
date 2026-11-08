@@ -37,7 +37,11 @@ case "$name" in
     esac
     exit 0 ;;
   node) exit 0 ;;
-  cargo-build-sbf|cargo-audit|cargo-outdated) exit 0 ;;
+  cargo-build-sbf)
+    # FAKE_SBF_NOCORE: as platform tools that lack the program's target build.
+    [ -z "${FAKE_SBF_NOCORE:-}" ] || { echo "error[E0463]: can't find crate for \`core\`"; exit 1; }
+    exit 0 ;;
+  cargo-audit|cargo-outdated) exit 0 ;;
   curl)
     out=$(arg_after -o "$@"); url=""; dash=0
     for a in "$@"; do [ "$dash" = 1 ] && url=$a; [ "$a" = -- ] && dash=1; done
@@ -88,10 +92,41 @@ json.dump({"version": "2.1.0", "runs": [{"results": [{"ruleId": "r%d" % i} for i
     say "avm-link: $( [ -L "$HOME/.avm" ] && ls -l "$HOME/.avm" | sed 's/.* -> //')"
     say "tools: $( [ -L "$HOME/.cache/solana" ] && ls -l "$HOME/.cache/solana" | sed 's/.* -> //')"
     say "tool-links: $(for l in "$HOME/.cache/solana"/*; do [ -L "$l" ] && printf '%s -> %s ' "${l##*/}" "$(ls -l "$l" | sed 's/.* -> //')"; done)"
+    # --help as anchor-cli FAKE_ANCHOR lists its options: 1.2 (build's --no-idl and --tools-version, idl build's
+    # --out-ts), 1.1 (--no-idl and --out-ts), or 0.29, the default (neither).
+    case " $* " in
+      *" --help "*)
+        case "$1 ${FAKE_ANCHOR:-0.29}" in
+          "build 1.2") printf '      --no-idl\n      --tools-version <TOOLS_VERSION>\n' ;;
+          "build 1.1") printf '      --no-idl\n' ;;
+          "build 0.29") printf '      --skip-lint\n' ;;
+          "idl 1.2"|"idl 1.1") printf '  -t, --out-ts <OUT_TS>\n' ;;
+        esac
+        exit 0 ;;
+    esac
     case "$1" in
       build)
+        # FAKE_ANCHOR_TOOLS: as anchor-cli 1.2 builds, through the cargo-build-sbf on PATH, with its own
+        # --tools-version (anchor build's, when given) and --arch v3, then the options after --.
+        if [ -n "${FAKE_ANCHOR_TOOLS:-}" ]; then
+          tv=$FAKE_ANCHOR_TOOLS dash=0
+          set -- "$@" --
+          while [ "$1" != -- ]; do [ "$1" = --tools-version ] && tv=$2; shift; done
+          shift
+          rest=""
+          while [ $# -gt 0 ] && [ "$1" != -- ]; do rest="$rest $1"; shift; done
+          cargo-build-sbf build-sbf --tools-version "$tv" --arch v3$rest || exit $?
+        fi
         mkdir -p target/deploy && printf '\177ELFanchor' > target/deploy/demo.so
         exit "${FAKE_ANCHOR_BUILD_RC:-0}" ;;
+      idl)
+        # idl build -p <program> -o <json> -t <ts>: writes both, and shows the toolchain files rustup would read.
+        say "idl: $(arg_after -p "$@") $(arg_after -o "$@") $(arg_after -t "$@")"
+        say "toolchain-files: $(find . -name .git -prune -o \( -name rust-toolchain -o -name rust-toolchain.toml \) -print | LC_ALL=C sort | tr '\n' ' ')"
+        say "toolchain-top: $(tr '\n' ' ' < rust-toolchain.toml 2>/dev/null)"
+        printf '{"metadata":{"name":"%s"}}\n' "$(arg_after -p "$@")" > "$(arg_after -o "$@")" &&
+          printf 'export type Demo = {};\n' > "$(arg_after -t "$@")" || exit 1
+        exit "${FAKE_ANCHOR_IDL_RC:-0}" ;;
       test) exit "${FAKE_ANCHOR_TEST_RC:-0}" ;;
     esac
     exit 0 ;;
