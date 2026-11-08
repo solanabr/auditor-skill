@@ -4,7 +4,7 @@ These are measured runs, not estimates. On 2026-11-08 each audit depth ran on tw
 
 The dollar figures are what Claude Code reports as `total_cost_usd`, at Anthropic's list prices. On a Claude subscription, a run uses your plan's allowance instead.
 
-Each figure comes from a single run, so read it as a size, not a quote. Runs of the same command vary, mostly in whether the session starts review agents. On the medium program, one quick-scan session started three agents on Sonnet and another started two on Opus.
+Each figure comes from a single run, so read it as a size, not a quote. What moved the cost most was whether the session started review agents. A command that names none, like quick-scan, leaves that to the session.
 
 ## Cost and time by depth
 
@@ -32,11 +32,11 @@ No run reached its cap: $3 for diff-audit, $5 for quick-scan, $25 for Standard a
 
 ## What drives the cost
 
-- **Re-sent context, more than output.** Every turn sends the conversation again, mostly from the prompt cache. Cache reads were 89% to 94% of all tokens in every run, and output was 1% to 2%. In the Opus part of the spend, writing context to the cache took about 35% to 50%, reading it back about 20% to 30%, and output, thinking included, about 25% to 40%.
-- **Agents.** Standard starts four agents: `context-builder` and `audit-reporter` on Sonnet, and `vuln-hunter` and `economic-analyst` on Opus. Each one reads the rules and its share of the code again. Opus took 76% to 86% of the Standard and Full spend. Full adds `threat-modeler` and `peer-reviewer` on Opus, a triage pass, and a second reporting pass.
-- **Code size, less than you might expect.** Going from 3K to 12K lines of program, Standard cost 1.4 times as much and took 1.5 times as long. Both runs gave a verdict on the same 604 checklist items.
+- **Re-sent context, more than output.** Every turn sends the conversation again, mostly from the prompt cache. Cache reads were 89% to 94% of all tokens in every run, and output was under 3%. In the Opus part of the spend, writing context to the cache took about 36% to 52%, reading it back about 18% to 28%, and output, thinking included, about 25% to 39%.
+- **Agents.** Standard starts four agents: `context-builder` and `audit-reporter` on Sonnet, and `vuln-hunter` and `economic-analyst` on Opus. Each one reads the rules and its share of the code again. Opus took 76% to 86% of the Standard and Full spend. Full adds `threat-modeler` and `peer-reviewer` on Opus, and a triage pass.
+- **Code size, less than you might expect.** Going from 3K to 12K lines of program, Standard cost 1.4 times as much and took 1.5 times as long. Both runs covered the same 604 checklist items.
 - **Depth.** On the small program, Full cost 1.5 times what Standard did and took 1.7 times as long.
-- **quick-scan names no agents.** The session decides whether to start any, and on which model. diff-audit started none in either run.
+- **quick-scan names no agents.** The session decides whether to start any, and on which model: two on the medium program, none on the small one. diff-audit started none in either run.
 
 ## What a run reads
 
