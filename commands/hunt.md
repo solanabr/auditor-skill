@@ -208,8 +208,8 @@ Code asks about a shell read outside the working directory.
    into the working tree, such as a `.claude/` or a `.mcp.json` in the export. In
    default mode each thing they find is a note for the report, and the run goes on:
    the tools still refuse the whole run directory when a link in it leads out of it
-   (Rule 11d), and then the run stops with their line: tell the human to delete the
-   copy and copy the export again without that link. In strict mode, when either
+   or to nothing (Rule 11d), and then the run stops with their line: tell the human
+   to delete the copy and copy the export again without that link. In strict mode, when either
    finds something, stop: show what it printed, and tell the human to delete the
    copy and copy the export again without it. Pass the analysis the `--logs` copies
    in `incident_<n>/logs/`, never the export's own path.
