@@ -161,8 +161,8 @@ Next steps:
     set AUDITOR_EXEC_MODE=isolated (or none) in that file's "env", or keep the rules in a file
     you pass with claude --settings when you audit. Details: $DEST/docs/permissions-and-isolation.md
   • For a repository you do not trust, start Claude Code in strict mode (OUTPUT-RULES.md Rule 11f):
-      cp "$DEST/templates/strict-settings.json" ~/auditor-strict.json
-      claude --setting-sources user --strict-mcp-config --settings ~/auditor-strict.json
+      claude --setting-sources "" --strict-mcp-config --plugin-dir "$DEST" --settings "$DEST/templates/strict-settings.json"
+    It loads none of your settings or plugins; the template carries the resume rules it needs.
   • Optional token-efficiency tools (Rust):
       cd "$DEST/tools/auditor-tools" && cargo build --release
     Build them only from an install outside any repository you audit, or under

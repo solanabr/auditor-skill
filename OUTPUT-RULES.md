@@ -483,20 +483,19 @@ It only turns on. A `strict` file keeps strict mode on for this and every later 
 - an archive's `.claude/settings.local.json`: outside a repository nothing is tracked, so default mode takes the file for the user's own, and in either mode its hooks and `env` have applied by the time preflight runs;
 - `--strict` and intake's "Untrusted source" answer travel through the agent, so text the repository loads, such as its `CLAUDE.md`, can talk the agent out of them. Only `AUDITOR_STRICT=1` set through the launch line holds.
 
-Only `--setting-sources user`, which the launch line passes, or a clean copy keeps the first three out.
+The launch line keeps the first three out, since its `--setting-sources ""` loads no settings file, and so does a clean copy.
 
 **The launch line**, for a repository you do not trust:
 
 ```bash
-# example: what you type; <auditor-skill root> is where auditor-skill is installed
-# once, and again after each update of auditor-skill:
-cp "<auditor-skill root>/templates/strict-settings.json" ~/auditor-strict.json
-# then start each session on that repository with:
-claude --setting-sources user --strict-mcp-config --settings ~/auditor-strict.json
+# example: what you type; <auditor-skill root> is the folder auditor-skill is installed in
+claude --setting-sources "" --strict-mcp-config --plugin-dir "<auditor-skill root>" --settings "<auditor-skill root>/templates/strict-settings.json"
 ```
 
-- `--settings` loads the copy of the template: `AUDITOR_STRICT=1`, `AUDITOR_EXEC_MODE=isolated`, the Claude Code sandbox block of `docs/permissions-and-isolation.md`, and the rules that let a flow resume without a prompt. Command-line settings outrank the repository's settings.
-- `--setting-sources user` keeps out the repository's own config: its `.claude/settings.json` and `.claude/settings.local.json`, with their hooks, `env` and permissions, its skills, commands and agents (a command file that would replace one of the plugin's included), and its `CLAUDE.md`, `CLAUDE.local.md` and `.claude/rules/` ([Claude Code's features in the Agent SDK](https://code.claude.com/docs/en/agent-sdk/claude-code-features), [debug your config](https://code.claude.com/docs/en/debug-your-config)). It also leaves out plugins enabled at project or local scope: enable the plugin at user scope, or add `--plugin-dir "<auditor-skill root>"`.
+- `<auditor-skill root>` is the folder that holds auditor-skill's `.claude-plugin/plugin.json`. For a clone or an `install.sh` install, it is that folder (`~/.claude/skills/auditor-skill` in the README's examples, and `install.sh`'s default). For the plugin installed from the marketplace, it is the plugin's folder in Claude Code's cache, `~/.claude/plugins/cache/auditor/auditor/<version>`: `~/.claude/plugins/installed_plugins.json` records it as the `installPath` of `auditor@auditor`, and it changes with each update.
+- `--setting-sources ""` loads no settings file. So the repository's own config stays out: its `.claude/settings.json` and `.claude/settings.local.json`, with their hooks, `env` and permissions, its skills, commands and agents (a command file that would replace one of the plugin's included), and its `CLAUDE.md`, `CLAUDE.local.md` and `.claude/rules/` ([Claude Code's features in the Agent SDK](https://code.claude.com/docs/en/agent-sdk/claude-code-features), [debug your config](https://code.claude.com/docs/en/debug-your-config)). The user's settings stay out too, and with them every plugin the user enabled. That is why the line passes `""` and not `user`: under `user`, the plugins enabled at user scope load, with their hooks and language servers, and a language-server plugin such as `rust-analyzer-lsp` runs the repository's build scripts and proc-macros on the user's machine, outside the runners and the execution mode.
+- `--plugin-dir` loads auditor-skill itself, which `""` leaves out with the other plugins. Its root skill is then `auditor:auditor-skill`, in the `install.sh` layout too.
+- `--settings` loads the template, which still applies under `--setting-sources ""` (measured with Claude Code 2.1.304: preflight printed `mode: strict (AUDITOR_STRICT=1)` with the variable set only in that file). It holds `AUDITOR_STRICT=1`, `AUDITOR_EXEC_MODE=isolated`, the Claude Code sandbox block of `docs/permissions-and-isolation.md`, and the rules that let a flow resume without a prompt, which the user's settings no longer supply. Command-line settings outrank the repository's settings.
 - `--strict-mcp-config` uses only the MCP servers `--mcp-config` names, so the servers of the repository's `.mcp.json` stay out. With no `--mcp-config` beside it, it drops your own MCP servers too, such as the Surfpool server `/auditor:economic-sim` looks for; where an organization deploys a `managed-mcp.json`, Claude Code does not start with this flag.
 
 Under the launch line the repository's own config does not load. Strict mode still refuses a tree that ships it, because preflight cannot see how Claude Code was started: for such a repository, audit a copy with every `.claude/` and `.mcp.json` deleted (clone it to a new directory, delete them in the copy, and start Claude Code there with the launch line). For a repository that ships none, that copy is an optional extra. An archive, or any copy without its `.git`, is a clean copy only once you have deleted every `.claude/` and `.mcp.json` in it, and any `audit_*/strict` or `incident_*/strict` it came with that you do not want.
