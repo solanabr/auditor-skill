@@ -42,19 +42,19 @@ The Standard depth: a scope-gated, item-by-item audit end-to-end in one session.
 Runs SAST with `sast.sh` (semgrep) and the ToB tooling if present, else the grep scanners (noting the gap).
 
 ### `/auditor:quick-scan`
-**Arg:** `[--strict]`
-Fast triage: discovery + scope + static analysis (`sast.sh` semgrep with the rulesets in scope; ToB `static-analysis` when semgrep is missing and the plugins are present; else `discovery/grep-commands.md`) + only CRITICAL/HIGH known-vectors for the detected domains — not the full set.
-**When:** first look, CI gate (on a public repo: pass/fail only, no counts — Rule 11d). As a CI gate it runs non-interactively, so the run must be able to run its analyzers: an analyzer that did not run is reported as not run, and the gate fails. **Emits:** findings with severity + `file:line`; explicitly states it is a triage pass and points to `/auditor:audit`.
+**Arg:** `[--ci] [--fail-on <N>] [--strict]`
+Fast triage: discovery + scope + static analysis (`sast.sh` semgrep with the rulesets in scope; ToB `static-analysis` when semgrep is missing and the plugins are present; else `discovery/grep-commands.md`) + dependency advisories (`deps.sh` cargo-audit and npm-audit) + only CRITICAL/HIGH known-vectors for the detected domains — not the full set.
+**When:** a first look at a whole repository (Quick), or a scheduled scan of the default branch with `--ci`. An analyzer that did not run is reported as not run, never counted as clean. **Emits:** `audit_<n>/QUICK-SCAN.md`, from `templates/pr-report.md` with its summary block first: findings with severity + `file:line`, stated as a triage pass that points to `/auditor:audit`. `--fail-on <N>` (1 to 10, default 7) sets the summary's verdict threshold. With `--ci` it asks nothing, also writes `audit_<n>/findings.json`, names only the report in its reply, and ends with the closing line `auditor: verdict: pass|fail (threshold N, analyzers run: …)`: fail when a counted finding reaches N, when an analyzer it called for did not run, or when the run stopped early. On a public repository, CI publishes that line only, and the details stay on the runner (Rule 11d). Detail: [ci.md](ci.md#what-the-verdict-means).
 
 ### `/auditor:deep-review`
 **Arg:** `<file> [function|instruction] [--strict]`
 Deep single-unit review: read the file, run Phase 0.5 context reconstruction on the target (purpose, inputs, ≥3 invariants, ≥5 assumptions, ≥3 external-interaction risks, each cited to `L#`), fill the instruction worksheet, cross-reference shared-state code, adversarially model exploitation.
-**When:** one handler/endpoint/function needs depth. **Emits:** per-item verdicts + findings for that unit only. N≥6 findings pass Rule 5b.
+**When:** one handler/endpoint/function needs depth (Quick). **Emits:** `audit_<n>/DEEP-REVIEW-<unit>.md`, from `templates/pr-report.md`, and the worksheets: per-item verdicts + findings for that unit only. `<unit>` is the function or instruction name, else the file's name without its extension. N≥6 findings pass Rule 5b.
 
 ### `/auditor:diff-audit`
-**Arg:** `[base..head] [--strict]`
+**Arg:** `[base..head] [--ci] [--fail-on <N>] [--strict]`
 Differential audit (Mode 4). Changed set via read-only git, `git-ro.sh diff --name-only base..head` (default `main..HEAD`); Phase 0.5 on changed functions + 1-hop callers/callees; risk-classify (auth/crypto/value-transfer/validation-removal = HIGH); git-blame removed security code (deletion in a "fix"/"CVE" commit = CRITICAL regression); run only the matching checklist items + vectors through Rule 5b. When a manifest or lockfile changed, a **dependency lane** runs checklist 11 §11.11 (the published artifact's code delta, SC-059..062) and adds a Dependency delta section.
-**When:** a PR / commit range, not the whole tree. **Emits:** `audit_<n>/PR-REPORT.md` — changed-surface verdicts only; skips whole-repo discovery.
+**When:** a branch, a PR or another commit range, not the whole tree (Quick); in CI, the review job of `templates/ci/auditor-pr.yml` runs it with `--ci` on the pull request's two commits ([ci.md](ci.md)). It reviews commits: with no argument it compares the tip of `main` with HEAD, so rebase on `main` first. **Emits:** `audit_<n>/PR-REPORT.md`, from `templates/pr-report.md` with its summary block first — changed-surface verdicts only; skips whole-repo discovery. `--fail-on` and `--ci` work as for `quick-scan`, with `audit_<n>/findings.json` and the same closing line.
 
 ### `/auditor:spec-audit`
 **Arg:** `<spec-file> [program-path] [--strict]`

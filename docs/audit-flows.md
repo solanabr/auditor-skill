@@ -32,11 +32,11 @@ PR / commit-scoped. Computes the changed set with read-only git (`git-ro.sh diff
 
 ### `/auditor:quick-scan`
 
-A first look at a whole repository: discovery and scope, static analysis of every in-scope directory (`sast.sh` semgrep; ToB `static-analysis` when semgrep is missing and the plugins are present; else grep scanners), dependency advisories (`deps.sh` cargo-audit and npm-audit), and only the CRITICAL/HIGH known-vectors for the detected domains. Reports findings with severity + `file:line`, states plainly it is a triage pass, and points to `/auditor:audit` for full coverage. An analyzer that did not run is reported as not run, never counted as clean. It scans the whole repository each time, so for each pull request diff-audit is the smaller run.
+A first look at a whole repository: discovery and scope, static analysis of every in-scope directory (`sast.sh` semgrep; ToB `static-analysis` when semgrep is missing and the plugins are present; else grep scanners), dependency advisories (`deps.sh` cargo-audit and npm-audit), and only the CRITICAL/HIGH known-vectors for the detected domains. Writes `audit_<n>/QUICK-SCAN.md`: findings with severity + `file:line`, stated plainly as a triage pass that points to `/auditor:audit` for full coverage. An analyzer that did not run is reported as not run, never counted as clean. It scans the whole repository each time, so for each pull request diff-audit is the smaller run.
 
 ### `/auditor:deep-review`
 
-One instruction / function, deeply. Reads the file, runs Phase 0.5 context reconstruction on the target, fills the instruction worksheet, adversarially models exploitation, reports verdicts for that unit only.
+One instruction / function, deeply. Reads the file, runs Phase 0.5 context reconstruction on the target, fills the instruction worksheet, adversarially models exploitation, and writes the verdicts for that unit only to `audit_<n>/DEEP-REVIEW-<unit>.md`.
 
 ```
 /auditor:deep-review programs/vault/src/instructions/withdraw.rs withdraw
