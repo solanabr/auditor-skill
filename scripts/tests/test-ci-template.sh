@@ -183,7 +183,7 @@ check "the review job waits for the tools job" [ "$n" -eq 1 ]
 launch=$(printf '%s\n' "$review" | awk '/^ *claude -p / && !done { on = 1 }
   on { sub(/^ +/, ""); line = line $0 " "; if ($0 !~ /\\$/) { on = 0; done = 1 } } END { print line }')
 for want in '-p "/auditor:diff-audit $base..$head --ci --fail-on $AUDITOR_FAIL_ON"' '--plugin-dir "$A"' \
-            '--setting-sources user' '--strict-mcp-config' '--max-budget-usd "$AUDITOR_MAX_BUDGET_USD"' \
+            '--setting-sources ""' '--strict-mcp-config' '--max-budget-usd "$AUDITOR_MAX_BUDGET_USD"' \
             '--output-format json' '--json-schema "$(cat "$A/templates/ci/verdict.schema.json")"'; do
   case "$launch" in *" $want "*) ok "the launch line passes $want" ;; *) bad "the launch line lacks $want: $launch" ;; esac
 done

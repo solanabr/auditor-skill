@@ -193,7 +193,7 @@ jobs:
           (cd claude-code && npm ci --ignore-scripts --no-audit --no-fund)
           (cd "$A/tools/auditor-tools" && CARGO_TERM_COLOR=never cargo build --release --locked)
 
-      # Under --setting-sources user and --strict-mcp-config none of this would load, but strict mode's preflight
+      # Under --setting-sources "" and --strict-mcp-config none of this would load, but strict mode's preflight
       # refuses a tree that ships .claude/ or .mcp.json (OUTPUT-RULES.md Rule 11f); the CLAUDE.md files go too. The
       # diff the review reads still lists changes to all of them.
       - name: Remove the pull request's Claude Code config from this checkout
@@ -251,7 +251,7 @@ jobs:
           mkdir -p "$CLAUDE_CONFIG_DIR"
           # its exit status is not the verdict: the next step reads what it returned
           claude -p "/auditor:diff-audit $base..$head --ci --fail-on $AUDITOR_FAIL_ON" \
-            --plugin-dir "$A" --setting-sources user --strict-mcp-config \
+            --plugin-dir "$A" --setting-sources "" --strict-mcp-config \
             --max-budget-usd "$AUDITOR_MAX_BUDGET_USD" --output-format json \
             --json-schema "$(cat "$A/templates/ci/verdict.schema.json")" \
             < /dev/null > "$O/result.json" 2> "$O/claude.log"

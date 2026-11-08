@@ -42,7 +42,7 @@ It passes only when every analyzer ran and none found anything. An analyzer that
 ```bash
 # example: the review job's command, with the pull request's base commit and merge commit filled in
 claude -p "/auditor:diff-audit <base>..<head> --ci --fail-on 7" \
-  --plugin-dir "<auditor-skill root>" --setting-sources user --strict-mcp-config \
+  --plugin-dir "<auditor-skill root>" --setting-sources "" --strict-mcp-config \
   --max-budget-usd 5 --output-format json --json-schema "<the text of templates/ci/verdict.schema.json>"
 ```
 
@@ -53,7 +53,7 @@ Every install and build runs from the runner's temp folder, outside the checkout
 ## The launch-line flags
 
 - `--plugin-dir "<auditor-skill root>"` loads the plugin from the pinned copy, for this one session. The copy sits in the runner's temp folder: the bundled tools refuse an installation inside the tree they audit.
-- `--setting-sources user` loads only the runner's own user settings, and it has none. A pull request's `.claude/settings.json` hooks and `env`, its `CLAUDE.md`, rules, skills, commands and agents do not load. Without it, `claude -p` runs a repository's hooks before preflight does anything.
+- `--setting-sources ""` loads no settings file at all. A pull request's `.claude/settings.json` hooks and `env`, its `CLAUDE.md`, rules, skills, commands and agents do not load, and neither do user settings or the plugins enabled there, with their language servers; `--plugin-dir` still loads this one. It is the setting front A's strict launch line uses. Without it, `claude -p` runs a repository's hooks before preflight does anything.
 - `--strict-mcp-config`, with no `--mcp-config` beside it, starts no MCP server, so a `.mcp.json` in the pull request starts nothing.
 - `--max-budget-usd` caps what the review spends. A review that reaches the cap stops, and the job fails.
 - `--output-format json` prints one JSON result, which the job keeps on the runner and never prints.
