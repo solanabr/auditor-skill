@@ -672,8 +672,8 @@ else
   # Default mode: every blob of HEAD is here (a blobless clone checks HEAD out), so copy makes the copy
   # from what the clone holds, through plumbing, with a note; the copy is marked a partial clone itself.
   run_once "$PC" copy . audit_1
-  check "in default mode copy of a partial clone holding every blob of HEAD makes a copy, with a note" \
-    test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|audit_1/src.git|git-ro: note: . is a partial clone, and every blob of HEAD is present: copy made audit_1/src.git from what it holds, with nothing fetched, so a blob only another revision names may be missing there (Rule 11c)"
+  check "in default mode copy of a partial clone holding every file of HEAD makes a copy, with a note" \
+    test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|audit_1/src.git|git-ro: note: . is a partial clone, and every file of HEAD is in it, so copy made audit_1/src.git from what it holds, fetching nothing: a file that only another revision names may be missing there; strict mode stops here (Rule 11f)"
   check "... fetching nothing, through no helper" nomarks
   run "$PC" --git-dir audit_1/src.git show HEAD:f.txt
   check "... where HEAD's files read, after the partial-clone note" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|second|$NOTE"
@@ -689,7 +689,7 @@ else
       (cd "$PCN" && "$RUNDIR" new audit) >/dev/null 2>&1
       run_once "$PCN" copy . audit_1
       check "in default mode copy of a partial clone ($f, no checkout) that lacks an object of HEAD: exit 3, saying so" \
-        test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "3||git-ro: . is a partial clone, and HEAD names an object it never fetched: a copy would lack it, and nothing is fetched; make a full copy from a source you trust (Rule 11c)"
+        test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "3||git-ro: . is a partial clone that lacks files of HEAD it never fetched, and nothing is fetched; make a full copy from a source you trust (Rule 11c)"
       check "... and nothing copied or fetched" sh -c "[ ! -e '$PCN/audit_1/src.git' ] && [ -z \"\$(ls -A '$T/marks')\" ]"
       AUDITOR_STRICT=1 run_once "$PCN" copy . audit_1
       check "... while strict mode stops there with its own line" \
@@ -745,7 +745,7 @@ old_git() { # old_git <version>: how the notes word that git (from git --version
     2.39.3) printf 'this git reports 2.39.3, older than 2.39.4, that line'"'"'s May-2024 fixed release' ;;
     2.43.0) printf 'this git reports 2.43.0, older than 2.43.4, that line'"'"'s May-2024 fixed release' ;;
     2.34.1) printf 'this git reports 2.34.1, older than 2.39.4, the oldest May-2024 fixed release' ;;
-    garbage) printf "this git reports 'garbage', which is no version these checks can read" ;;
+    garbage) printf 'this git reports no version number' ;;
   esac
 }
 for v in 2.39.3 2.40.1 2.41.0 2.42.1 2.43.3 2.44.0 2.45.0 2.38.9 1.9.9 'garbage' '2'; do

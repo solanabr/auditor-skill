@@ -130,7 +130,7 @@
 # -c pins, so git's ownership check must stay on. It refuses a <dir> whose git directory lies outside
 # with nothing tying it back, in both modes. A partial clone stops it in strict mode (exit 3); in default
 # mode it is copied when the object store holds HEAD's tree and every object in it, with a note and
-# nothing fetched, and the copy is marked a partial clone itself, as a blob only another revision names
+# nothing fetched, and the copy is marked a partial clone itself, as a file only another revision names
 # may be missing; when an object of HEAD is missing, it stops (exit 3). A git without the May-2024 clone fixes,
 # CVE-2024-32004 and CVE-2024-32465 (accepted are 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1,
 # 2.46 and later in each line, judged by git --version alone), is refused in strict mode (exit 69). In
@@ -304,12 +304,11 @@ open_copy() { # open_copy <R>/src[-<k>].git: a copy that copy made
 # the fixes backported under the old number is taken for an old git.
 copy_git_ok() {
   local v word maj min pat fix
-  GIT_OLD="this git reports no version these checks can read"
+  GIT_OLD="this git reports no version number"
   v=$(hgit / --version </dev/null 2>/dev/null) || return 1
   v=${v#git version }
   word=${v%% *}
   confine_shown "$word"
-  GIT_OLD="this git reports '$CONFINE_SHOWN', which is no version these checks can read"
   v=$word
   maj=${v%%.*}; v=${v#"$maj"}; v=${v#.}
   min=${v%%.*}; v=${v#"$min"}; v=${v#.}
@@ -365,7 +364,7 @@ run_copy() { # run_copy <dir> <R>
       exit 3
     fi
     if ! head_whole "$src"; then
-      printf 'git-ro: %s is a partial clone, and HEAD names an object it never fetched: a copy would lack it, and nothing is fetched; make a full copy from a source you trust (Rule 11c)\n' "$(confine_text "$1")" >&2
+      printf 'git-ro: %s is a partial clone that lacks files of HEAD it never fetched, and nothing is fetched; make a full copy from a source you trust (Rule 11c)\n' "$(confine_text "$1")" >&2
       exit 3
     fi
   fi
@@ -418,7 +417,7 @@ run_copy() { # run_copy <dir> <R>
   [ "$fixed" -eq 1 ] ||
     confine_note "$GIT_OLD, so copy made $r/$dest from git's plumbing instead of cloning (pack-objects in the source, index-pack in the copy); strict mode refuses this (Rule 11f)"
   [ "$partial" -eq 0 ] ||
-    confine_note "$(confine_text "$1") is a partial clone, and every blob of HEAD is present: copy made $r/$dest from what it holds, with nothing fetched, so a blob only another revision names may be missing there (Rule 11c)"
+    confine_note "$(confine_text "$1") is a partial clone, and every file of HEAD is in it, so copy made $r/$dest from what it holds, fetching nothing: a file that only another revision names may be missing there; strict mode stops here (Rule 11f)"
   printf '%s\n' "$r/$dest"
   exit 0
 }
