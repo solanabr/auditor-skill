@@ -452,7 +452,12 @@ ACTIONS:
   # 3 = blocker (the line says why), 64 = refused. If they cannot run in that mode,
   # keep the source-level verdicts and add a Rule 10 confidence note.
 
-  # Verify build (--program <name> for one program)
+  # Verify build (--program <name> for one program). On Anchor 0.30 and later it
+  # builds without the IDL (anchor build --no-idl); anchor-test builds each program's
+  # IDL into target/idl and target/types in a step of its own, before the test script.
+  # target.sh installs the platform tools that Anchor version asks for (v1.57 for
+  # Anchor 1.2); a blocker that says "found no core crate" names TOOLS_VERSION, the
+  # variable to set to the version the program needs.
   "<auditor-skill root>/scripts/runner/target.sh" anchor-build --run audit_<n> --src .
   # Check its log for warnings, errors
 
