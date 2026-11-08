@@ -665,7 +665,8 @@ if [ -n "$gtop" ] && [ "$gtop" != "$WT" ]; then
     up=..${up:+/$up}
     d=${d%/*}
   done
-  if [ -n "$(CONFINE_CEILING='' hgit "$WT" ls-files -z -- . 2>/dev/null | head -c 1)" ]; then
+  if [ -n "$(CONFINE_CEILING='' hgit "$WT" ls-files -z -- . 2>/dev/null |
+    head -c 1)" ]; then   # pipefail-ok: only the output is read, and its first byte answers
     if [ "$STRICT" = 1 ]; then
       info "the working directory is $(confine_text "$prefix") in the repository at $up; in strict mode the git tools read a" \
         "repository only from its top level (Rule 11f)"
