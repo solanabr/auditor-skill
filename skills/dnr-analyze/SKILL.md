@@ -9,7 +9,7 @@ allowed-tools:
   - Read
   - Grep
   - Glob
-  - Edit(incident_*/**)
+  - Edit(/incident_*/**)
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" *)'

@@ -7,8 +7,8 @@ allowed-tools:
   - Grep
   - Glob
   - Task
-  - Edit(audit_*/**)
-  - Edit(incident_*/**)
+  - Edit(/audit_*/**)
+  - Edit(/incident_*/**)
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" *)'

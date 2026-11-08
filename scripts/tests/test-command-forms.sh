@@ -77,11 +77,14 @@
 #       failing record, the Rule 5b statuses that count, a reply without finding text, and the closing line;
 #       each of the three Quick commands names the report it writes from templates/pr-report.md, writes it in
 #       its own session (quick-scan and diff-audit start no agent at all, so their cost holds still, and
-#       deep-review leaves an agent's model to its definition), runs no cd, which would lose the run
-#       directory's write rule, and reads the corpus from the root: known-vectors/INDEX.md and each vector file
-#       it keeps, and the checklists SKILL.md's scope table names, each verdict naming what it rests on;
-#       diff-audit's PR-number form, quick-scan's "fail the job" without a private channel, its vector step
-#       that named no file, and the Task grant of both stays gone (docs/ci.md).
+#       deep-review leaves an agent's model to its definition), runs no cd, after which the bundled tools would
+#       look for the run directory in the wrong folder, and reads the corpus from the root:
+#       known-vectors/INDEX.md and each vector file it keeps, and the checklists SKILL.md's scope table names,
+#       each verdict naming what it rests on; diff-audit's PR-number form, quick-scan's "fail the job" without
+#       a private channel, its vector step that named no file, the Task grant of both, and the write-rule
+#       reason for no cd stay gone (docs/ci.md). Every command, skill and the root SKILL.md grants its
+#       run-directory edit with a leading /, Edit(/audit_*/**) or Edit(/incident_*/**), and none the bare form,
+#       which a cd moves to another folder's audit_*.
 #   G   The lines agents/poc-engineer.md gives a runner it writes, run as the first lines of such a runner in a
 #       crate, from the working directory and from the crate, find <R> from the runner's path and take the
 #       stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT, or a strict entry in their
@@ -825,7 +828,7 @@ cmd() {
 }
 cmd good "'Bash(\"$R/scripts/rec.py\" *)'" "'Bash(\"$B/audit-scan\" --contract=1 *)'" \
   "'Bash(\"$B/audit-mem\" warm --contract=1 *)'" "'Bash(\"$R/templates/poc/run.sh\" *)'" \
-  "'Bash(test -x \"$B/audit-mem\")'" "Edit(audit_*/**)" -- \
+  "'Bash(test -x \"$B/audit-mem\")'" "Edit(/audit_*/**)" -- \
   "1. Run \`\"$R/scripts/ok.sh\" new audit\` and \`\"$R/scripts/rec.py\" tokens|lamports [--by owner,mint|mint] incident_<n>/corpus*/x.jsonl > incident_<n>/out.txt\`." \
   "2. When built (\`test -x \"$B/audit-scan\"\`), \`\"$B/audit-scan\" --contract=1 . --out audit_<n>/prescan.json\` and" \
   "   \`\"$B/audit-mem\" warm --contract=1 --program-id <id>\`; \`audit-mem warm --contract=1 --program-id <id>\`, \`audit-mem init\`." \
@@ -1294,7 +1297,36 @@ SKILL.md	only into `grep`, `head`, `tail` or `wc`
 agents/context-builder.md	only into `grep`, `head`, `tail` or `wc`
 agents/economic-analyst.md	only into `grep`, `head`, `tail` or `wc`
 agents/peer-reviewer.md	only into `grep`, `head`, `tail` or `wc`
+commands/audit-assist.md	  - Edit(/audit_*/**)
+commands/audit-cycle.md	  - Edit(/audit_*/**)
+commands/audit-report.md	  - Edit(/audit_*/**)
+commands/audit.md	  - Edit(/audit_*/**)
+commands/deep-review.md	  - Edit(/audit_*/**)
+commands/diff-audit.md	  - Edit(/audit_*/**)
+commands/economic-sim.md	  - Edit(/audit_*/**)
+commands/hunt.md	  - Edit(/incident_*/**)
+commands/intake.md	  - Edit(/audit_*/**)
+commands/patch.md	  - Edit(/audit_*/**)
+commands/patch.md	  - Edit(/incident_*/**)
+commands/poc.md	  - Edit(/audit_*/**)
+commands/poc.md	  - Edit(/incident_*/**)
+commands/quick-scan.md	  - Edit(/audit_*/**)
+commands/re-audit.md	  - Edit(/audit_*/**)
+commands/respond.md	  - Edit(/incident_*/**)
+commands/spec-audit.md	  - Edit(/audit_*/**)
+commands/threat-model.md	  - Edit(/audit_*/**)
+commands/triage.md	  - Edit(/audit_*/**)
+skills/dnr-analyze/SKILL.md	  - Edit(/incident_*/**)
+SKILL.md	  - Edit(/audit_*/**)
 PINS
+# A run-directory edit stays anchored at the folder the session started in, Edit(/audit_*/**) or
+# Edit(/incident_*/**): after a cd, the bare form matches the new folder's audit_*, not the run directory.
+for f in commands/*.md skills/*/SKILL.md SKILL.md; do
+  [ -f "$f" ] || continue
+  n=$(sed -n '2,/^---$/p' "$f" | grep -c -x -e '  - Edit(audit_\*/\*\*)' -e '  - Edit(incident_\*/\*\*)')
+  if [ "$n" = 0 ]; then ok "$f grants no run-directory edit in the bare form"
+  else bad "$f grants Edit(audit_*/**) or Edit(incident_*/**): write it with a leading /, as every command does"; fi
+done
 # quick-scan's step 3 tells the session its kept vector files fit in one session because most are under 4 KB,
 # which holds while most files of known-vectors/ are.
 small=0; nvec=0
@@ -1351,6 +1383,9 @@ commands/quick-scan.md	spawn every agent in the foreground
 commands/diff-audit.md	  - Task
 commands/diff-audit.md	spawn every agent in the foreground
 commands/diff-audit.md	If you start an agent
+commands/quick-scan.md	no longer matches the write rule for `audit_*/`
+commands/diff-audit.md	no longer matches the write rule for `audit_*/`
+commands/deep-review.md	no longer matches the write rule for `audit_*/`
 GONE
 
 # respond's step 5 and hunt's step 6 settle the mode as poc's step 5 does, each step read as one line so wording

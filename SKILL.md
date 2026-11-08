@@ -6,7 +6,7 @@ allowed-tools:
   - Grep
   - Glob
   - Task
-  - Edit(audit_*/**)
+  - Edit(/audit_*/**)
   - 'Bash("${CLAUDE_SKILL_DIR}/scripts/preflight.sh" *)'
   - 'Bash("${CLAUDE_SKILL_DIR}/scripts/rundir.sh" *)'
   - 'Bash("${CLAUDE_SKILL_DIR}/scripts/git-ro.sh" *)'

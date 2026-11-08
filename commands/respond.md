@@ -7,7 +7,7 @@ allowed-tools:
   - Grep
   - Glob
   - Task
-  - Edit(incident_*/**)
+  - Edit(/incident_*/**)
   - Skill(auditor:dnr-analyze *)
   - Skill(auditor:respond *)
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" *)'

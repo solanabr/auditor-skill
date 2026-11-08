@@ -6,7 +6,7 @@ allowed-tools:
   - Read
   - Glob
   - Grep
-  - Edit(audit_*/**)
+  - Edit(/audit_*/**)
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" *)'

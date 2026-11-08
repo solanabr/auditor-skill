@@ -5,7 +5,7 @@ argument-hint: "[audit-dir] [--strict]"
 allowed-tools:
   - Read
   - Glob
-  - Edit(audit_*/**)
+  - Edit(/audit_*/**)
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" *)'
 ---
 
