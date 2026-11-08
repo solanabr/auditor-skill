@@ -332,7 +332,7 @@ while IFS= read -r line; do
       else ko "case: git-ro.sh ${args[*]} -> status $RC, stderr: $(cat "$T/err")"; fi ;;
   esac
 done < "$CASES"
-check "the case file has cases ($ncase), $nstrict of them strict mode's alone" test "$ncase" -gt 200 -a "$nstrict" -ge 4
+check "the case file has cases ($ncase), $nstrict of them strict mode's alone" test "$ncase" -gt 200 -a "$nstrict" -ge 3
 UNREAD="git-ro: note: --repo keeps its git directory outside the working directory, and nothing there ties it back to this working tree, so its history is not read; strict mode refuses this (Rule 11f)"
 run "$WT" --repo escape log
 check "... where a git directory outside that nothing ties back is noted, and its history not read" \
@@ -340,10 +340,12 @@ check "... where a git directory outside that nothing ties back is noted, and it
 run "$WT" --repo alt log --format=%s
 check "... and a repository with alternates is read, after its note" \
   test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|alt|git-ro: note: --repo borrows objects from another repository (objects/info/alternates), so its history is read from there too; strict mode refuses this (Rule 11f)"
+# copy makes no copy of such a repository, and says so as a refusal in both modes: a copy that cannot be
+# made never reads as one made (the case file's copy escape row).
 before=$(ls "$WT/audit_1" | tr '\n' ' ')
 run_once "$WT" copy escape audit_1
-check "... and copy of a repository whose git directory nothing ties back copies nothing" \
-  test "$RC|$(cat "$T/out")|$(ls "$WT/audit_1" | tr '\n' ' ')" = "0||$before"
+check "... while copy of a repository whose git directory nothing ties back is refused, and copies nothing" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")|$(ls "$WT/audit_1" | tr '\n' ' ')" = "64||git-ro: refused: copy's repository keeps its git directory outside the working directory: escape|$before"
 # cdir, whose commondir names a repository outside, is this suite's alone: the case file is shared with
 # test-preapproved-entrypoints.sh, whose fixture has no cdir.
 AUDITOR_STRICT=1 run "$WT" --repo cdir log

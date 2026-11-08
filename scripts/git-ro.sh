@@ -323,7 +323,9 @@ copy_git_ok() { # status 0 when git has the May-2024 clone fixes; sets GIT_VERSI
 run_copy() { # run_copy <dir> <R>
   local src rel r dest k scratch rc fixed=1 how=clone
   [ $# -eq 2 ] || refuse "copy takes a repository and a run directory: copy <dir> <R>"
-  confine_repo "$1" "copy's repository" 0
+  # With no status: a source whose git directory nothing ties back to it is refused, so a copy that
+  # cannot be made never reads as one made.
+  confine_repo "$1" "copy's repository"
   src=$CONFINE_REPO
   rel=$CONFINE_REL
   confine_rundir "$2" "copy's run directory"

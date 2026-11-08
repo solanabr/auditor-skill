@@ -328,7 +328,7 @@
 64	git-ro: refused: copy's run directory must be a run directory named audit_<n> or incident_<n> in the working directory: /tmp/audit_1	copy	.	/tmp/audit_1
 64	git-ro: refused: copy's run directory is not an existing directory: audit_99	copy	.	audit_99
 64	git-ro: refused: copy's repository is not the top level of its repository: programs	copy	programs	audit_1
-64s	git-ro: refused: copy's repository keeps its git directory outside the working directory: escape	copy	escape	audit_1
+64	git-ro: refused: copy's repository keeps its git directory outside the working directory: escape	copy	escape	audit_1
 64	git-ro: refused: usage: partial [--repo <dir>]	partial	x
 64	git-ro: refused: usage: partial [--repo <dir>]	--repo	.	partial	--repo	.
 64	git-ro: refused: tracked takes one path	tracked
