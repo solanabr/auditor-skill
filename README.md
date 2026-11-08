@@ -298,6 +298,17 @@ The client report follows professional firm convention — executive summary, co
 
 ---
 
+## After an incident
+
+`/auditor:hunt` and `/auditor:respond` start from what already happened on chain: transaction history, program logs, and Geyser or indexer exports. They are a track of their own, never part of an audit, and they only propose.
+
+- **`/auditor:hunt [<address> …]`** — no alert to start from. It snapshots the deployed programs, baselines the transaction history, records each hypothesis and its query in a ledger, checks each suspect against the source deployed at the incident slot, and reproduces it on the program's real bytes → `incident_<n>/INCIDENT_REPORT.md` and `INCIDENTS.json`.
+- **`/auditor:respond <lead>`** — one lead: a signature, an address, an alert or an `INC-<n>.<k>` from a hunt. It settles whether it landed, the damage per mint and the root cause, and drafts containment, remediation and recovery steps for people to carry out → `RESPONSE-INC-<n>.<k>.md`.
+
+Neither command signs, sends, pauses or freezes anything. Run them after the pause or freeze runbook and a SEAL 911 ticket, never instead of them. Guide: [docs/detection-response.md](docs/detection-response.md).
+
+---
+
 ## Output Format
 
 The audit produces a structured markdown report with:
