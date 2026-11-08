@@ -8,8 +8,9 @@
 #   2. auditor-pr.yml keeps the decided shape: on pull_request only, and no privileged trigger anywhere outside
 #      a comment; permissions contents: read, and no job widens it; every action pinned by a full commit id with
 #      its version comment, each one the repository's own workflows pin; credentials dropped at every checkout;
-#      no secret in the tools job and exactly one, the API key, in the review job; the review job gated to
-#      same-repository pull requests, after the tools job, started with the decided launch line; AUDITOR_STRICT=1
+#      no secret in the tools job and exactly one, the API key, in the review job; no path or branch filter,
+#      which would leave a required check Pending; the review job gated by their author to same-repository pull
+#      requests other than Dependabot's, after the tools job, started with the decided launch line; AUDITOR_STRICT=1
 #      and AUDITOR_EXEC_MODE=none for both; the verdict step last, run unless the job is cancelled, deciding
 #      through verdict.jq. The workflow checker of test-ci-checks.sh (wfcheck) passes it too;
 #   2b. the steps' own scripts, run here: the tools step on stub analyzers hands a linked lockfile on, reads
@@ -130,6 +131,8 @@ top_on=$(block on 0 | grep -v '^[[:space:]]*#' | grep .)
 check "on: holds pull_request alone" [ "$top_on" = "  pull_request:" ]
 n=$(printf '%s\n' "$code" | grep -c -E 'pull_request_target|workflow_run')
 check "no privileged trigger outside a comment" [ "$n" -eq 0 ]
+n=$(printf '%s\n' "$code" | grep -c -E '^[[:space:]]+(paths|paths-ignore|branches|branches-ignore):')
+check "no path or branch filter, which would leave a required check Pending" [ "$n" -eq 0 ]
 top_perm=$(block permissions 0 | grep -v '^[[:space:]]*#' | grep .)
 check "permissions is contents: read alone" [ "$top_perm" = "  contents: read" ]
 n=$(printf '%s\n' "$code" | grep -c -E '^ +permissions:')
@@ -174,9 +177,11 @@ m=$(printf '%s\n' "$review" | grep -c -x -F '          ANTHROPIC_API_KEY: ${{ se
 check "the one secret is the API key, in a review step's env" [ "$n:$m" = 1:1 ]
 n=$(printf '%s\n' "$tools" | grep -c -E '^    if:')
 check "the tools job runs for every pull request" [ "$n" -eq 0 ]
-n=$(printf '%s\n' "$review" | grep -c -x -F '    if: github.event.pull_request.head.repo.full_name == github.repository')
+n=$(printf '%s\n' "$review" | grep -c -x -F "    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'")
 m=$(printf '%s\n' "$review" | grep -c -E '^    if:')
-check "the review job runs for same-repository pull requests only" [ "$n:$m" = 1:1 ]
+check "the review job runs for same-repository pull requests only, not Dependabot's, by their author" [ "$n:$m" = 1:1 ]
+n=$(printf '%s\n' "$code" | grep -c -E 'github[.](actor|triggering_actor)')
+check "no gate reads github.actor or github.triggering_actor, which a re-run changes" [ "$n" -eq 0 ]
 n=$(printf '%s\n' "$review" | grep -c -x -F '    needs: tools')
 check "the review job waits for the tools job" [ "$n" -eq 1 ]
 # the launch line: the claude call and its continuation lines, joined

@@ -8,9 +8,10 @@ This is the Quick depth, run unattended. It is not a full audit: `/auditor:audit
 
 1. Copy `templates/ci/auditor-pr.yml`, from the auditor-skill release you use, to `.github/workflows/auditor-pr.yml` in your repository.
 2. Pin auditor-skill. Set `AUDITOR_SKILL_COMMIT`, near the top of the file, to the full commit id of that release's tag; `git ls-remote https://github.com/solanabr/auditor-skill refs/tags/<tag>` prints it. Both jobs fetch exactly that commit and stop when it does not match, so a tag that moves later changes nothing. Until you set it, both jobs fail and say so. The file's `actions/checkout` is pinned by commit id as well; Dependabot's `github-actions` updates keep such pins current.
-3. Add a repository secret named `ANTHROPIC_API_KEY` (Settings, Secrets and variables, Actions). Only the review job reads it, and only in the step that starts Claude Code. Pull requests that Dependabot opens see Dependabot secrets only: add the key there too, or the review fails on them with "no ANTHROPIC_API_KEY".
-4. Make both jobs required checks in your branch protection: `auditor tools (no secrets)` and `auditor review (same-repository pull requests)`. Require both. When the tools job fails, GitHub skips the review, and a skipped required check counts as passed.
+3. Add a repository secret named `ANTHROPIC_API_KEY` (Settings, Secrets and variables, Actions). Only the review job reads it, and only in the step that starts Claude Code. GitHub gives a pull request Dependabot opens its Dependabot secrets only, never the repository's Actions secrets, so the review job skips those pull requests (the `dependabot[bot]` condition in its `if:`); they get the tools job, whose dependency audits are the check that matters for a version bump. To review them too, add the key as a Dependabot secret (Settings, Secrets and variables, Dependabot) and drop that condition.
+4. Make the tools job, `auditor tools (no secrets)`, a required check in your branch protection. A job its `if:` skips reports Success and does not block a merge, even as a required check. So you may require the review job, `auditor review (same-repository pull requests)`, as well, but it passes with no review on a fork's pull request, on Dependabot's, and after the tools job fails (which blocks the merge itself). Before you merge a fork's or Dependabot's pull request, review it yourself ([Reading the details](#reading-the-details)).
 5. Protect the workflow itself. On `pull_request`, GitHub runs the workflow file as the pull request's merge commit has it, so a pull request that edits `.github/workflows/auditor-pr.yml` runs its own copy, and that copy can pass whatever it likes. List `.github/` in a `CODEOWNERS` file and turn on "Require review from Code Owners", so no such change merges without a maintainer reading it, and read the workflow's diff before you trust a green check on a pull request that changes it.
+6. Add no `paths:` or `paths-ignore:` filter to the workflow. GitHub leaves a workflow its path filters skip as Pending, which blocks a pull request that requires one of its checks.
 
 The settings you may change are in the file's top-level `env:` block:
 
@@ -37,7 +38,7 @@ The tools job fails on any semgrep result, and on any vulnerability that cargo a
 
 It passes only when every analyzer ran and none found anything. An analyzer that could not run is named in the log with its one-line reason, which is about the tool, never about a finding. A lockfile that is a symbolic link is handed on too, and `deps.sh` refuses it, so that audit did not run. The log also names a `Cargo.toml` with no `Cargo.lock`, a `package.json` with no npm lockfile, and semgrep's own notes, such as the `.semgrepignore` files that narrow its scan; none of them names a result.
 
-**review** runs only for pull requests from branches of your repository. It installs Claude Code at the exact version that auditor-skill's own `plugin-validate` workflow pins, from the lockfile there, with each package's integrity checked and no install script run. It builds the bundled Rust tools, removes every `.claude/`, `.mcp.json`, `.claude.json`, `CLAUDE.md` and `CLAUDE.local.md` from its checkout, checks that preflight names strict mode, and then runs:
+**review** runs only for pull requests from branches of your repository, other than Dependabot's. It installs Claude Code at the exact version that auditor-skill's own `plugin-validate` workflow pins, from the lockfile there, with each package's integrity checked and no install script run. It builds the bundled Rust tools, removes every `.claude/`, `.mcp.json`, `.claude.json`, `CLAUDE.md` and `CLAUDE.local.md` from its checkout, checks that preflight names strict mode, and then runs:
 
 ```bash
 # example: the review job's command, with the pull request's base commit and merge commit filled in
@@ -96,7 +97,7 @@ What a pass does not tell you:
 
 ## Fork pull requests
 
-On `pull_request`, GitHub gives a fork's pull request no secrets, so the review job does not run for it. GitHub shows the job as skipped, and a skipped required check counts as passed. A fork's pull request gets the tools job only, so review it yourself before you merge it ([Reading the details](#reading-the-details)).
+On `pull_request`, GitHub gives a fork's pull request no secrets, so the review job does not run for it, and it skips Dependabot's the same way ([Setup](#setup), step 3). GitHub shows the job as skipped, and a job its `if:` skips reports Success, so a required review check passes there with no review. Such a pull request gets the tools job only: review it yourself before you merge it ([Reading the details](#reading-the-details)).
 
 Never switch the trigger to `pull_request_target`, or to `workflow_run`, to get the review on forks: both run the fork's changes with your secrets ([github-actions.md](../references/vuln-classes/github-actions.md) §5).
 

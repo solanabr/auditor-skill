@@ -153,9 +153,10 @@ jobs:
 
   review:
     name: auditor review (same-repository pull requests)
-    # A fork's pull request gets no secret on this trigger, so this job runs for this repository's branches only.
-    # GitHub then shows it as skipped, which a required check counts as passed (docs/ci.md, Fork pull requests).
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # This trigger gives a fork's pull request no secret, and Dependabot's its Dependabot secrets only, so this job
+    # runs for the other pull requests from this repository's branches; the author decides, never github.actor,
+    # which a re-run changes. A job its if: skips reports Success, even as a required check (docs/ci.md, Setup).
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'
     needs: tools
     runs-on: ubuntu-24.04
     timeout-minutes: 60
