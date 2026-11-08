@@ -17,7 +17,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 **It is not a SaaS product.** It's a folder of markdown files you install for your AI agent — outside any repository you audit — or send to an LLM API.
 
-> **Adaptation required before use.** This skill was originally developed for a specific Solana/Anchor DeFi project and then generalized. `discovery/file-map.md` assumes that project's layout (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`). If yours differs, record where your code lives at intake instead: the in-scope paths under `QUESTIONS.md` Q39 ("Specific files/modules") and the exclusions under Q44, which `/auditor:intake` writes to the Layout table of `audit_<n>/intake.md` §1. The next interactive intake in the same checkout offers that table again and reuses it only on your yes. An edited `discovery/file-map.md` in a shared or plugin install is lost on the next update. The questionnaire in `QUESTIONS.md` is a blank template — fill it out (or run `/auditor:intake`) for your project before invoking the auditor. Everything else (checklists, known vectors, output rules) is fully portable as-is.
+> **If your layout differs.** This skill was originally developed for a specific Solana/Anchor DeFi project and then generalized. `discovery/file-map.md` assumes that project's layout (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`). Quick and Standard review what you point them at: a commit range, the whole repository or a path. For Full, record where your code lives at intake instead: the in-scope paths under `QUESTIONS.md` Q39 ("Specific files/modules") and the exclusions under Q44, which `/auditor:intake` writes to the Layout table of `audit_<n>/intake.md` §1. The next interactive intake in the same checkout offers that table again and reuses it only on your yes. An edited `discovery/file-map.md` in a shared or plugin install is lost on the next update. Intake is part of Full only: `/auditor:audit-cycle` runs it with the `QUESTIONS.md` defaults and lists each one in the report, and `/auditor:audit-assist` asks its questions at the first checkpoint. Everything else (checklists, known vectors, output rules) is portable as-is.
 
 ---
 
@@ -170,7 +170,7 @@ The `/auditor:*` commands run their bundled steps without asking: the working-tr
 
 ## Before Running an Audit
 
-### Scope-Gated Intake (v5.0)
+### Scope-gated loading
 
 auditor-skill does not bulk-read its whole corpus. It discovers the repo, declares an audit scope ([OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 0), and loads only the in-scope checklists and vectors on demand:
 
@@ -181,7 +181,7 @@ auditor-skill does not bulk-read its whole corpus. It discovers the repo, declar
 
 The audit is complete when every **in-scope** item has an explicit verdict; out-of-scope items render `[N/A — out of scope]` from the gate.
 
-1. **Fill out the questionnaire:** Copy [QUESTIONS.md](QUESTIONS.md) and answer all questions. This tells the auditor what checklists to apply, what severity calibration to use, and what compliance frameworks matter.
+1. **Intake, for Full only.** Full runs it for you: `/auditor:audit-cycle` with the [QUESTIONS.md](QUESTIONS.md) defaults, each listed in the report, and `/auditor:audit-assist` by asking at its first checkpoint. The answers set the severity calibration, the trust model and which compliance checklists apply. With an agent that has no commands, fill a copy of QUESTIONS.md first. Quick and Standard need no intake.
 
 2. **Review estimated costs:** Check [COSTS.md](COSTS.md) for token/dollar estimates based on your repo size and chosen model.
 

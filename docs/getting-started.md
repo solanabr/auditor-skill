@@ -68,14 +68,12 @@ Build them again after every update of auditor-skill, with `cargo build --releas
 
 If `cargo` is absent, skip both — the audit proceeds on the grep walk. Full detail: [power-tools.md](power-tools.md).
 
-## 4. Adapt to your repo (required)
+## 4. Adapt to your repo
 
-> auditor-skill was originally built for one Solana/Anchor DeFi project and then generalized. Two things must be set before a serious run:
+> auditor-skill was originally built for one Solana/Anchor DeFi project and then generalized. Quick and Standard need nothing set: they review a commit range, the whole repository or the path you pass. Before a Full run, two things matter:
 
 1. **Your layout** — `discovery/file-map.md` maps each checklist to the globs it scans, and its defaults assume `programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`. If your code lives elsewhere, record it at intake (next item): the in-scope paths under `QUESTIONS.md` Q39 ("Specific files/modules") and the exclusions under Q44 go into the Layout table of `audit_<n>/intake.md` §1. The next `/auditor:intake` in the same checkout shows you that table and reuses it only when you answer yes; `--auto` never reuses it, since a layout found in the audited tree could exclude that tree's own code. Do not edit the file-map in a shared or plugin install: an update overwrites it, and the edit is lost. Wrong paths mean the walk looks in the wrong place.
-2. **Intake** — the questionnaire drives scope, severity calibration, and which compliance checklists apply. Either:
-   - fill a copy of [`QUESTIONS.md`](../QUESTIONS.md) (47 questions) by hand, or
-   - run `/auditor:intake` (alias `/scope`) to walk the questions interactively and persist the answers to `audit_<n>/intake.md` — the durable artifact both `/auditor:audit-cycle` and `/auditor:audit-assist` read. Use `/auditor:intake --auto` for no-human pipelines (it records the applied default for every unanswered question).
+2. **Intake** — the questionnaire drives scope, severity calibration, the trust model and which compliance checklists apply. Full runs it for you: `/auditor:audit-cycle` runs `/auditor:intake --auto`, which records the applied default for every unanswered question, and `/auditor:audit-assist` asks the questions at its first checkpoint. Either way the answers land in `audit_<n>/intake.md`, the durable artifact both flows read. With an agent that reads the skill directly, fill a copy of [`QUESTIONS.md`](../QUESTIONS.md) (47 questions) by hand.
 
 Everything else — checklists, known vectors, output rules — is portable as-is.
 
