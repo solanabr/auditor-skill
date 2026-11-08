@@ -48,19 +48,22 @@
 # The copy, in a scratch directory outside the working directory. A --src that is the top level of a git
 # repository (its git directory inside the working directory, holding no symbolic link, borrowing no objects
 # and rewriting no parents, and not a partial clone), or a copy git-ro.sh copy made in <R>, is cloned with
-# --no-local, no hooks and no submodules, system and global git config dropped. Outside strict mode, --src .
-# in a session started below the top level of a repository takes that repository, as scripts/lib/confine.sh's
-# confine_repo accepts it, and --dir is then a path from its top. --rev (HEAD when absent) must name a commit,
-# which is checked out; --patch, a file in <R>/patches/ of at most 16 MiB, is applied with git apply --index.
-# With a git that lacks the May-2024 clone fixes, target.sh never clones: outside strict mode it writes the
-# tracked files of that commit itself, from git ls-tree and git cat-file --batch through hgit_tree (no path
-# with an empty, . or .. component or a .git, none written through a symbolic link), into a new repository
-# that holds no commit, and applies --patch with git apply, and a note says so; strict mode stops (exit 3). A
-# revision that has submodules stops the run in strict mode, since target.sh never fetches them; outside it,
-# a note says so and the build sees them as empty directories. Any other directory --src names is copied file
-# by file, symbolic links kept as links, without audit_*, incident_* and .audit-memory at its top, and without
-# target/ or node_modules/ directories, each name in any letter case; --rev and --patch need a repository.
-# --dir is a path inside the copy with no symbolic link on the way.
+# --no-local, no hooks and no submodules, system and global git config dropped, so git's ownership check stays
+# on in both modes. Outside strict mode, --src . in a session started below the top level of a repository
+# takes that repository, as scripts/lib/confine.sh's confine_repo accepts it, and --dir is then a path from
+# its top. --rev (HEAD when absent) must name a commit, which is checked out; --patch, a file in <R>/patches/
+# of at most 16 MiB, is applied with git apply --index. With a git that lacks the May-2024 clone fixes, or a
+# source another user owns (which that check refuses), target.sh never clones: outside strict mode it writes
+# the tracked files of that commit itself, from git ls-tree and git cat-file --batch through hgit_tree (no
+# path with an empty, . or .. component or a .git, none written through a symbolic link), into a new
+# repository that holds no commit, and applies --patch with git apply, and a note says so, since a copy never
+# runs the source repository's configured code; strict mode stops (exit 3) at the old git, and refuses a
+# source another user owns (exit 64). A revision that has submodules stops the run in strict mode, since
+# target.sh never fetches them; outside it, a note says so and the build sees them as empty directories. Any
+# other directory --src names is copied file by file, symbolic links kept as links, without audit_*,
+# incident_* and .audit-memory at its top, and without target/ or node_modules/ directories, each name in any
+# letter case; --rev and --patch need a repository. --dir is a path inside the copy with no symbolic link on
+# the way.
 #
 # The environment of every step is the cleaned one of scripts/lib/isolation.sh: env -i, a throwaway HOME
 # holding a fresh Solana keypair, TMPDIR in the scratch directory, the cleaned PATH, the user's CARGO_HOME,
@@ -455,7 +458,7 @@ case "$ACTION" in
   npm-ci) need npm; need node ;;
 esac
 GIT=$(command -v git)
-CLONE=1
+CLONE=1 EXPORT_WHY=""
 if [ "$SRC_KIND" = repo ]; then
   # The May-2024 clone fixes (CVE-2024-32004, CVE-2024-32465), as git-ro.sh copy requires them. Without them
   # target.sh never clones: strict mode stops, and otherwise the copy is written from git's read-only
@@ -485,7 +488,18 @@ if [ "$SRC_KIND" = repo ]; then
     [ "$CONFINE_STRICT" = 0 ] ||
       blocker "cloning --src needs git with the May-2024 clone fixes: 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, or 2.46 or later — nothing was copied or built."
     CLONE=0
+    EXPORT_WHY="this git has none of the May-2024 clone fixes"
     echo ">> note: this git ($gvs) has none of the May-2024 clone fixes for its release line (2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, 2.46 and later), so target.sh copies the tracked files of the commit with git's read-only plumbing instead of cloning; strict mode stops here (Rule 11f)"
+  fi
+  # The clone runs upload-pack in the source with none of hgit's -c pins (git's local transport clears
+  # GIT_CONFIG_PARAMETERS for it), so it keeps git's ownership check on: no global config. A source git
+  # reads here only through the safe-directory file of default mode is one that check refuses, as another
+  # user's: it is copied through the plumbing as well. Strict mode never reads it (src_arg refuses).
+  if [ "$CLONE" = 1 ] && [ "$CONFINE_STRICT" = 0 ] &&
+    ! CONFINE_GIT_GLOBAL=/dev/null hgit "$SRC_ABS" rev-parse --git-dir </dev/null >/dev/null 2>&1; then
+    CLONE=0
+    EXPORT_WHY="another user owns it"
+    echo ">> note: --src $SRC_SHOWN belongs to another user, so git would not clone it with its ownership check on; target.sh copies the tracked files of the commit with git's read-only plumbing instead, which runs nothing the repository's config names; strict mode refuses it (Rule 11f)"
   fi
   confine_partial_clone "$SRC_ABS" >/dev/null
   case $? in
@@ -798,9 +812,9 @@ submodules() {
   echo ">> note: $SHA has submodules ($(confine_text "$1")), which target.sh never fetches: the build sees them as empty directories; strict mode stops here (Rule 11f)"
   printf '>> submodules, not fetched: %s\n' "$(confine_text "$1")" >&9
 }
-# export_tree: the copy for a git without the May-2024 clone fixes, outside strict mode: the tracked files of
-# SHA, read through hgit_tree and written by EXPORT_PY into S/src, which becomes a repository with no commit,
-# so that git stops there and finds no other above it.
+# export_tree: the copy for a git without the May-2024 clone fixes, or of a source another user owns, outside
+# strict mode: the tracked files of SHA, read through hgit_tree and written by EXPORT_PY into S/src, which
+# becomes a repository with no commit, so that git stops there and finds no other above it.
 export_tree() {
   local why
   hgit_tree "$SRC_ABS" ls-tree -r -z --full-tree "$SHA" > "$S/tree.z" 2>&9 || finish 3 "git could not list the files of $SHA"
@@ -816,7 +830,7 @@ export_tree() {
 if [ "$SRC_KIND" = repo ]; then
   if [ "$CLONE" = 1 ]; then
     printf '>> git clone --no-local --no-checkout --no-recurse-submodules --template= %s\n' "$SRC_SHOWN" >&9
-    CONFINE_ALLOW_PROTOCOL=file CONFINE_CEILING=${S%/*} hgit "$S" -c protocol.file.allow=always \
+    CONFINE_GIT_GLOBAL=/dev/null CONFINE_ALLOW_PROTOCOL=file CONFINE_CEILING=${S%/*} hgit "$S" -c protocol.file.allow=always \
       clone --no-local --no-checkout --no-recurse-submodules --template= -- "$SRC_ABS" "$S/src" </dev/null >&9 2>&9 ||
       finish 3 "git could not clone $SRC_SHOWN"
     SHA=$(hgit "$S/src" rev-parse --verify --quiet --end-of-options "${REV:-HEAD}^{commit}" 2>&9) && [ -n "$SHA" ] ||
@@ -835,7 +849,7 @@ if [ "$SRC_KIND" = repo ]; then
     APPLY=(apply --index)
     how=""
   else
-    printf '>> git ls-tree -r and git cat-file --batch of %s, not git clone: this git has none of the May-2024 clone fixes\n' "$SRC_SHOWN" >&9
+    printf '>> git ls-tree -r and git cat-file --batch of %s, not git clone: %s\n' "$SRC_SHOWN" "$EXPORT_WHY" >&9
     SHA=$(hgit_tree "$SRC_ABS" rev-parse --verify --quiet --end-of-options "${REV:-HEAD}^{commit}" 2>&9) && [ -n "$SHA" ] ||
       finish 3 "$(confine_text "${REV:-HEAD}") is not a commit in $SRC_SHOWN"
     export_tree

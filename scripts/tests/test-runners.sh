@@ -967,6 +967,36 @@ if [ "$ISOLATED_OK" = 1 ]; then
 fi
 run "$TARGET" "$P" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src .
 check "... while a source that is copied file by file needs no clone" sh -c "[ '$RC' = 0 ] && ! grep -q 'May-2024' '$T/out'"
+# A source another user owns (git's own test knob stands for the other user): the clone keeps git's ownership
+# check on (no global config, in both modes), so in default mode target.sh copies such a source through the
+# plumbing instead, with a note, since a copy never runs the source repository's configured code, and strict
+# mode refuses it. A source this user owns is cloned as before. Each stand-in logs every git command it runs.
+REALGIT=$(command -v git)
+mkdir -p "$T/owngit" "$T/othergit"
+printf '#!/bin/sh\nprintf "%%s|%%s\\n" "${GIT_CONFIG_GLOBAL-unset}" "$*" >> "%s/owngit.log"\nexec "%s" "$@"\n' "$T" "$REALGIT" > "$T/owngit/git"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/othergit.log"\nGIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec "%s" "$@"\n' "$T" "$REALGIT" > "$T/othergit/git"
+chmod +x "$T/owngit/git" "$T/othergit/git"
+OWNNOTE=">> note: --src . belongs to another user, so git would not clone it with its ownership check on; target.sh copies the tracked files of the commit with git's read-only plumbing instead, which runs nothing the repository's config names; strict mode refuses it (Rule 11f)"
+: > "$T/owngit.log"
+settings FAKE_SHOW=programs/demo/src/lib.rs
+run "$TARGET" "$WT" PATH="$T/owngit:$FPATH" -- cargo-test --run audit_1 --src .
+check "a source this user owns: cloned as before, the clone with no global config, so git's ownership check stays on" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF 'show: // v2' '$T/calls' && grep -q '^/dev/null|.* clone --no-local --no-checkout ' '$T/owngit.log' && ! grep -q 'another user' '$T/out'"
+check "... while target.sh's own reads in default mode take the safe-directory file" \
+  grep -q '/scripts/lib/safe-directory[.]gitconfig|.* rev-parse ' "$T/owngit.log"
+: > "$T/othergit.log"
+run "$TARGET" "$WT" PATH="$T/othergit:$FPATH" -- cargo-test --run audit_1 --src .
+check "a source another user owns: exit 0, the note, and the build sees the committed HEAD (v2)" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF \"$OWNNOTE\" '$T/out' && grep -qxF 'show: // v2' '$T/calls'"
+check "... git ran ls-tree and cat-file --batch, and never clone" \
+  sh -c "grep -q ' ls-tree -r -z --full-tree ' '$T/othergit.log' && grep -q ' cat-file --batch\$' '$T/othergit.log' && ! grep -qw clone '$T/othergit.log'"
+check "... and no program or hook the repository's config names ran" test -z "$(ls -A "$T/marks")"
+# Strict mode reads nothing of a checkout another user owns, so today's refusal comes at its first read, the
+# check that git tracks nothing under the run directory.
+run "$TARGET" "$WT" PATH="$T/othergit:$FPATH" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+check "strict mode, a source another user owns: refused, as today, before anything is copied" \
+  sh -c "[ '$RC' = 64 ] && [ \"\$(cat '$T/err')\" = 'target: refused: git cannot tell whether --run is tracked: audit_1' ] && [ -z \"\$(ls -A '$NT')\" ] && ! grep -qw clone '$T/othergit.log'"
+settings
 # Tools.
 for pair in "cargo-test:cargo" "build-sbf:cargo" "anchor-build:anchor" "npm-ci:npm"; do
   run "$TARGET" "$WT" PATH="$SPATH" -- "${pair%%:*}" --run audit_1 --src .
