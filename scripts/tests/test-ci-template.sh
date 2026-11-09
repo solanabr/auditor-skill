@@ -154,6 +154,7 @@ check "nothing else sets AUDITOR_STRICT or AUDITOR_EXEC_MODE" [ "$n" -eq 2 ]
 envval() { printf '%s\n' "$top_env" | sed -n "s/^  $1: \"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p"; }
 for row in "| \`AUDITOR_FAIL_ON\` | \`$(envval AUDITOR_FAIL_ON)\` |" \
            "| \`AUDITOR_MAX_BUDGET_USD\` | \`$(envval AUDITOR_MAX_BUDGET_USD)\` |" \
+           "| \`AUDITOR_OVER_BUDGET\` | \`$(envval AUDITOR_OVER_BUDGET)\` |" \
            "| \`SEMGREP_RULESETS\` | \`$(envval SEMGREP_RULESETS)\` |" \
            "| \`SEMGREP_VERSION\`, \`CARGO_AUDIT_VERSION\` | \`$(envval SEMGREP_VERSION)\`, \`$(envval CARGO_AUDIT_VERSION)\` |"; do
   n=$(grep -c -F -- "$row" docs/ci.md)
@@ -196,7 +197,7 @@ check "the review job waits for the tools job" [ "$n" -eq 1 ]
 # the launch line: the claude call and its continuation lines, joined
 launch=$(printf '%s\n' "$review" | awk '/^ *claude -p / && !done { on = 1 }
   on { sub(/^ +/, ""); line = line $0 " "; if ($0 !~ /\\$/) { on = 0; done = 1 } } END { print line }')
-for want in '-p "/auditor:diff-audit $base..$head --ci --fail-on $AUDITOR_FAIL_ON"' '--plugin-dir "$A"' \
+for want in '-p "/auditor:diff-audit $base..$head --ci --fail-on $AUDITOR_FAIL_ON$over"' '--plugin-dir "$A"' \
             '--setting-sources ""' '--strict-mcp-config' '--max-budget-usd "$AUDITOR_MAX_BUDGET_USD"' \
             '--output-format json' '--json-schema "$(cat "$A/templates/ci/verdict.schema.json")"'; do
   case "$launch" in *" $want "*) ok "the launch line passes $want" ;; *) bad "the launch line lacks $want: $launch" ;; esac
@@ -311,11 +312,14 @@ if gitq init -q -b main && printf 'fn a() {}\n' > "$G/a.rs" && : > "$G/Cargo.loc
   left=$(cd "$G" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort | tr '\n' ' ')
   same "the clean step removes .claude/, .mcp.json and CLAUDE.md in any letter case, and nothing else" \
     "./Cargo.lock ./a.rs ./b.rs " "$left"
-  review_run() { # review_run: the review step in $G, with no API key, so it stops before Claude Code
+  review_run() { # review_run [<over-budget>]: the review step in $G, with no API key, so it stops before Claude Code
     rm -rf "$RT2/auditor-review"
     (cd "$G" && env RUNNER_TEMP="$RT2" AUDITOR_STRICT=1 AUDITOR_EXEC_MODE=none AUDITOR_FAIL_ON=7 \
-      AUDITOR_MAX_BUDGET_USD=5 ANTHROPIC_API_KEY= "$BASH" "$T/review.sh") > "$T/review.out" 2>&1
+      AUDITOR_MAX_BUDGET_USD=15 AUDITOR_OVER_BUDGET="${1:-count}" ANTHROPIC_API_KEY= "$BASH" "$T/review.sh") > "$T/review.out" 2>&1
   }
+  review_run maybe; rc=$?
+  n=$(grep -c -F 'AUDITOR_OVER_BUDGET must be count or fail' "$T/review.out")
+  check "an AUDITOR_OVER_BUDGET other than count or fail stops the review step, exit 1" [ "$rc:$n" = 1:1 ]
   review_run; rc=$?
   O="$RT2/auditor-review"
   want="$(git -C "$G" rev-parse 'HEAD^1') $(git -C "$G" rev-parse HEAD)"

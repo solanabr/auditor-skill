@@ -34,8 +34,11 @@ env:
   AUDITOR_SKILL_COMMIT: "0000000000000000000000000000000000000000"
   # The review fails on a finding of this severity or more, 1 to 10.
   AUDITOR_FAIL_ON: "7"
-  # The most one review may spend, in US dollars. A review that reaches it fails.
-  AUDITOR_MAX_BUDGET_USD: "5"
+  # The most one review may spend, in US dollars: a ceiling, not a charge. A review that reaches it fails.
+  AUDITOR_MAX_BUDGET_USD: "15"
+  # A change over 5,000 changed lines (references/depth-scope.md §6): "count" reviews the riskiest 5,000 and
+  # counts the rest in PR-REPORT.md; "fail" fails the review instead.
+  AUDITOR_OVER_BUDGET: "count"
   # The tools job: the semgrep rulesets it runs, and the analyzer releases it installs. Pin a release that has
   # been out two weeks or more, so a broken one has had time to be pulled.
   SEMGREP_RULESETS: "p/rust p/trailofbits"
@@ -216,6 +219,7 @@ jobs:
           mkdir -p "$O" || exit 1
           case "$AUDITOR_FAIL_ON" in [1-9]|10) ;; *) echo "::error::AUDITOR_FAIL_ON must be a whole number from 1 to 10"; exit 1 ;; esac
           [[ $AUDITOR_MAX_BUDGET_USD =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "::error::AUDITOR_MAX_BUDGET_USD must be a number of dollars"; exit 1; }
+          case "$AUDITOR_OVER_BUDGET" in count) over="" ;; fail) over=" --over-budget fail" ;; *) echo "::error::AUDITOR_OVER_BUDGET must be count or fail"; exit 1 ;; esac
           # the run directories already here, which the review's result may not name
           for d in audit_*; do if [ -e "$d" ] || [ -L "$d" ]; then printf '%s\n' "$d"; fi; done > "$O/before.txt"
           # HEAD is the merge commit; its first parent is the base the pull request merges into
@@ -252,7 +256,7 @@ jobs:
           export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/claude-config"
           mkdir -p "$CLAUDE_CONFIG_DIR"
           # its exit status is not the verdict: the next step reads what it returned
-          claude -p "/auditor:diff-audit $base..$head --ci --fail-on $AUDITOR_FAIL_ON" \
+          claude -p "/auditor:diff-audit $base..$head --ci --fail-on $AUDITOR_FAIL_ON$over" \
             --plugin-dir "$A" --setting-sources "" --strict-mcp-config \
             --max-budget-usd "$AUDITOR_MAX_BUDGET_USD" --output-format json \
             --json-schema "$(cat "$A/templates/ci/verdict.schema.json")" \

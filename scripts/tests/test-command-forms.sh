@@ -1306,7 +1306,7 @@ commands/quick-scan.md	A USD budget Claude Code shows you is a backstop, not a p
 commands/diff-audit.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
 commands/quick-scan.md	never stop reading early to save spend, and never give a budget, turn or time limit as the reason a file went unread
 commands/diff-audit.md	never stop reading early to save spend, and never give a budget, turn or time limit as the reason a file went unread
-docs/ci.md	Give a quick-scan in CI `--max-budget-usd 10`.
+docs/ci.md	Give a quick-scan in CI `--max-budget-usd 15`, a backstop, not a budget to plan by.
 docs/ci.md	a section or vector file its selection lists was left unread (`stopped: corpus-pass`)
 docs/ci.md	It reads the checklist sections and known-vector rows that `references/depth-scope.md` selects for the kinds of file the change holds
 commands/diff-audit.md	first, with the Read tool, before any verdict of this step, whatever the size of the change

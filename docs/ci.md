@@ -18,7 +18,8 @@ The settings you may change are in the file's top-level `env:` block:
 | Variable | Default | What it sets |
 |---|---|---|
 | `AUDITOR_FAIL_ON` | `7` | the review fails on a finding of this severity or more, from 1 to 10 (`OUTPUT-RULES.md` Rule 1: 7 and 8 are HIGH, 9 and 10 CRITICAL) |
-| `AUDITOR_MAX_BUDGET_USD` | `5` | the most one review may spend, in US dollars |
+| `AUDITOR_MAX_BUDGET_USD` | `15` | the most one review may spend, in US dollars: a ceiling, not a charge |
+| `AUDITOR_OVER_BUDGET` | `count` | a change over 5,000 changed lines (`references/depth-scope.md` §6): `count` reviews the riskiest 5,000 lines and counts the rest in PR-REPORT.md, giving the verdict on what was reviewed; `fail` fails the review instead (`stopped: line-budget`) |
 | `SEMGREP_RULESETS` | `p/rust p/trailofbits` | the semgrep rulesets the tools job runs, any of `p/rust`, `p/trailofbits`, `p/typescript`, `p/javascript`, `p/python`, `p/golang`, `p/solidity`, `p/github-actions` and `p/secrets` |
 | `SEMGREP_VERSION`, `CARGO_AUDIT_VERSION` | `1.182.1`, `0.22.2` | the releases of semgrep and cargo-audit the tools job installs. Move them to releases at least two weeks old, so a broken one has had time to be pulled. |
 
@@ -26,7 +27,7 @@ Leave `AUDITOR_STRICT` and `AUDITOR_EXEC_MODE` as they are ([below](#strict-mode
 
 The tools job fails on any semgrep result, and on any vulnerability that cargo audit or npm audit reports, in the whole checkout, not only in what a pull request changes. It goes by their own exit status, so a warning such as an unmaintained or yanked crate does not fail it. If your default branch already has results, every pull request fails until they are fixed, or marked with a `nosemgrep` comment that says why; choose `SEMGREP_RULESETS` with that in mind.
 
-**Cost.** The tools job uses no model, so it costs runner minutes only. A review costs what a Quick review of that change costs, up to `AUDITOR_MAX_BUDGET_USD`; a review that reaches the cap stops and fails, and never passes. A newer push to the same pull request cancels the run still going for it, which stops its spending; a cancelled review still costs what it had spent.
+**Cost.** The tools job uses no model, so it costs runner minutes only. A review costs what a Quick review of that change costs, up to `AUDITOR_MAX_BUDGET_USD`, which is a ceiling, not a charge. In measured runs (`claude-opus-5-5`, November 2026) a diff-audit cost $1.68 to $4.84; the top figure is a range that adds a 787-package lockfile, under a $10 cap, which named no budget, where under a $5 cap the same review named the cap as its reason for leaving its checklists unread. The selection of `references/depth-scope.md` is estimated at $2–7 a review. A review that reaches the cap stops and fails, and never passes. A newer push to the same pull request cancels the run still going for it, which stops its spending; a cancelled review still costs what it had spent.
 
 ## What each job does
 
@@ -44,7 +45,7 @@ It passes only when every analyzer ran and none found anything. An analyzer that
 # example: the review job's command, with the pull request's base commit and merge commit filled in
 claude -p "/auditor:diff-audit <base>..<head> --ci --fail-on 7" \
   --plugin-dir "<auditor-skill root>" --setting-sources "" --strict-mcp-config \
-  --max-budget-usd 5 --output-format json --json-schema "<the text of templates/ci/verdict.schema.json>"
+  --max-budget-usd 15 --output-format json --json-schema "<the text of templates/ci/verdict.schema.json>"
 ```
 
 `<base>` is the commit the pull request merges into and `<head>` GitHub's merge commit, both as full commit ids. Its last step checks what the review returned and exits on it ([What the verdict means](#what-the-verdict-means)).
@@ -136,7 +137,7 @@ The template keeps details out of a private repository's logs too. Anyone who ca
 
 `--ci` works outside this workflow too: in another CI system, or at a terminal. `/auditor:diff-audit <base>..<head> --ci` and `/auditor:quick-scan --ci` take `--fail-on <N>`, ask nothing, write `audit_<n>/findings.json` (`templates/ci/findings.schema.json`), keep finding text out of their reply, and end with the closing line above. Without `--ci`, `--fail-on` only sets the threshold of the verdict at the top of the report. For a scheduled scan of your default branch, `/auditor:quick-scan --ci` is the one to run: it scans the whole repository, while diff-audit reads one range.
 
-Give a quick-scan in CI `--max-budget-usd 10`. In measured runs (`claude-opus-5-5`, November 2026) a quick-scan that read every kept vector file cost $2.84 with the 55 of a 12K-line program, and $6.78 with the 98 of a repository holding a 3K-line program and its tooling. The session sees the cap Claude Code gives it: under a $5 cap that repository's scan stopped reading early, with 64 of its 78 kept files unread, to stay under it, and under $10 it read all 98. A run that reaches the cap ends there, and fails.
+Give a quick-scan in CI `--max-budget-usd 15`, a backstop, not a budget to plan by. In measured runs (`claude-opus-5-5`, November 2026), before `references/depth-scope.md`, a quick-scan that read every kept vector file cost $2.84 with the 55 of a 12K-line program, and $6.78 with the 98 of a repository holding a 3K-line program and its tooling; the depth-scope selection is estimated at $3–8. The session sees the cap Claude Code gives it: under a $5 cap that repository's scan stopped reading early, with 64 of its 78 kept files unread, to stay under it, and under $10 it read all 98. A run that reaches the cap ends there, and fails.
 
 ## The files
 
