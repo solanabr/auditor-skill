@@ -1,28 +1,39 @@
 # What an audit costs
 
-These are measured runs, not estimates. On 2026-11-08 each audit depth ran on three Solana repositories, two public and one private, named here by size only.
+These are measured runs, not estimates. On 2026-11-08 and 9, each audit depth ran on three Solana repositories, two public and one private, named here by size only.
 
 - **Claude Code and model:** Claude Code 2.1.304, with `claude-opus-5-5`, the account's default model, at Claude Code's default effort.
 - **Plugin, Standard and Full:** auditor-skill 7.7.0 at commit `2be77c4` for the first two repositories, and 7.7.2 at `531a076` for the third. For these commands the two versions differ only in wording, and `OUTPUT-RULES.md` is 1.8 KB longer in 7.7.2.
-- **Plugin, Quick and CI:** 7.7.2 with the reworked Quick commands, which point quick-scan and diff-audit at the known-vector index. diff-audit and the CI review ran at `15b2de8`, and quick-scan at `7914ac1`, where it starts no agent. The table gives those runs.
+- **Plugin, Quick and CI:** 7.7.2 with front B's Quick commands, which read the known-vector index and every vector file they keep. Each Quick figure below names the commit and the `--max-budget-usd` cap it ran with.
 
 The dollar figures are what Claude Code reports as `total_cost_usd`, at Anthropic's list prices. On a Claude subscription, a run uses your plan's allowance instead.
 
-Each figure comes from a single run, so read it as a size, not a quote. Before quick-scan was told to start no agent, what moved its cost most was whether the session started review agents, and on which model.
+Each figure comes from a single run, so read it as a size, not a quote.
 
 ## Cost and time by depth
 
 | Depth | Command | 3K-line program | 7K-line program | 12K-line program |
 |---|---|---|---|---|
-| Quick | `/auditor:diff-audit <base>..<head>` | $1.29 · 4.5 min | not run (the repository has one commit, so there is no range) | $0.83 · 2.3 min |
-| Quick | `/auditor:quick-scan` | $2.67 · 10.6 min | $2.91 · 6.9 min | $2.19 · 5.3 min |
+| Quick | `/auditor:diff-audit <base>..<head>` | $2.94 · 7.7 min (`f9cfe33`, $5 cap) | not run (the repository has one commit, so there is no range) | $1.68 · 3.7 min (`d623bd3`, $3 cap); $1.77 · 3.9 min (`3eebe7c`, $3 cap) |
+| Quick | `/auditor:quick-scan` | $6.78 · 16.4 min (`f9cfe33`, $10 cap) | $7.14 · 11.9 min (`f9cfe33`, $10 cap) | $2.84 · 5.5 min (`d623bd3`, $5 cap) |
 | Standard | `/auditor:audit <path> --scope program` | $13.07 · 36 min | $14.70 · 36 min | $18.83 · 56 min |
 | Full | `/auditor:audit-cycle <path> --scope program` | $19.52 · 61 min | not run | not run |
-| CI | the tools tier, then the review job's `diff-audit --ci` | tools tier $0; review job $1.72 · 4.9 min | | |
+| CI | the tools tier, then the review job's `diff-audit --ci` | tools tier $0; review job $1.72 · 4.9 min (`15b2de8`, $5 cap) | | |
 
-- **quick-scan's coverage:** the whole repository for the 3K- and 7K-line programs, and only the program's directory for the 12K-line one.
-- **Before the Quick rework:** diff-audit cost $1.23 and $0.84, and quick-scan $1.46, $2.20 and $3.62. On `15b2de8`, with agents as each session chose, quick-scan cost $2.96, $3.71 and $2.11.
-- **The CI figure:** one dry run of the CI template's review step, `--json-schema` and strict mode included, on the 3K-line program's range.
+- **quick-scan's coverage:** the whole repository for the 3K- and 7K-line programs, and only the program's directory for the 12K-line one. It kept and read 98, 95 and 55 vector files.
+- **diff-audit's coverage:** the 3K-line range selected and read 48 vector files. The 12K-line range read 21 and 16.
+- **The CI figure** is one dry run of the CI template's review step, `--json-schema` and strict mode included, on the 3K-line program's range. It ran before diff-audit read the vector corpus. On the current commands the review job costs what diff-audit costs.
+- **Before the Quick commands read the corpus:**
+  - diff-audit cost $1.23 and $0.84, then $1.29 and $0.83.
+  - quick-scan cost $1.46, $2.20 and $3.62, with agents as each session chose. Starting no agent and reading no vector file, it cost $2.67, $2.91 and $2.19.
+
+**Two named limits.**
+
+- **When a session states its selection.** A session names its kept vectors in the report's Coverage & Limitations, and may not list them before reading.
+- **A cap close to the run's cost.** Claude Code shows the session its budget ("USD budget: $spent/$max; $remaining remaining"). When the cap sits close to what a complete pass costs, the session may stop reading early to stay under it, and its report says what it skipped.
+  - At a $5 cap, two whole-repository quick-scans each kept about 80 vector files and read only 14 and 15 of them.
+  - The 3K-line diff-audit, whose range adds a large lockfile, left its checklists unread. Its figure above is for that run, so a complete one costs more.
+  - At a $10 cap, quick-scan read every kept file.
 
 **A fuller setup may cost somewhat more.** Two things kept these runs lighter than a full one:
 
@@ -31,12 +42,12 @@ Each figure comes from a single run, so read it as a size, not a quote. Before q
 
 In short:
 
-- **Quick** costs about $1 to $3 and takes 2 to 11 minutes.
+- **Quick** costs about $2 to $7 and takes 4 to 16 minutes. diff-audit costs $2 to $3, more when its range adds a large lockfile. quick-scan costs about $3 on one program and about $7 on a whole repository.
 - **Standard** costs about $13 to $19 and takes 35 to 60 minutes.
 - **Full** cost $19.52 and took an hour on the 3K-line program. It ran once, on that program only, without `--with-poc`.
-- **CI** runs Quick on each pull request, for about $1 to $2. Its review job cost $1.72 in its dry run, and `diff-audit` on a pull-request-sized range cost about $1, so a `--max-budget-usd` cap of $3 to $5 covers it.
+- **CI** runs Quick on each pull request, at what diff-audit costs, about $2 to $3. Give quick-scan a `--max-budget-usd` of $10 and diff-audit at least $5. A tighter cap invites the early stop above.
 
-No run reached its cap: $3 for diff-audit, $5 for quick-scan and for the CI review, $25 for Standard and $60 for Full.
+No run reached its cap: $3 and $5 for diff-audit, $5 and $10 for quick-scan, $5 for the CI review, $25 for Standard and $60 for Full.
 
 ## The three repositories
 
@@ -47,21 +58,19 @@ No run reached its cap: $3 for diff-audit, $5 for quick-scan and for the CI revi
 ## What drives the cost
 
 - **Re-sent context, more than output.** Every turn sends the conversation again, mostly from the prompt cache. Cache reads were 86% to 96% of all tokens in every run, and output was under 3%. In the Opus part of the spend, writing context to the cache took about 33% to 57%, reading it back 14% to 34%, and output, thinking included, 24% to 39%.
-- **Agents.** Standard starts four agents: `context-builder` and `audit-reporter` on Sonnet, and `vuln-hunter` and `economic-analyst` on Opus. Each one reads the rules and its share of the code again. Opus took 76% to 86% of the Standard and Full spend. Full adds `threat-modeler` and `peer-reviewer` on Opus, and a triage pass.
-- **Code size, less than you might expect.** Standard cost $13.07, $14.70 and $18.83 for the 3K-, 7K- and 12K-line programs, and each run covered the same 604 checklist items.
+- **Agents.** Standard starts four agents: `context-builder` and `audit-reporter` on Sonnet, and `vuln-hunter` and `economic-analyst` on Opus. Each one reads the rules and its share of the code again. Opus took 76% to 86% of the Standard and Full spend. Full adds `threat-modeler` and `peer-reviewer` on Opus, and a triage pass. Quick starts none.
+- **Vector files, in Quick.** quick-scan's cost follows how many vector rows it keeps: 55 cost $2.84, and 95 and 98 cost $7.14 and $6.78. A whole repository with an app, tools and CI keeps the most.
+- **Code size, less than you might expect, in Standard.** Standard cost $13.07, $14.70 and $18.83 for the 3K-, 7K- and 12K-line programs, and each run covered the same 604 checklist items.
 - **Depth.** On the 3K-line program, Full cost 1.5 times what Standard did and took 1.7 times as long.
-- **Agents in Quick.** quick-scan now starts none, and diff-audit started none in any run. Before that, quick-scan sessions chose for themselves, from none to three agents, some on Sonnet. That moved its cost between $1.46 and $3.71.
 
 ## What a run reads
 
 | Corpus | Size, at about 4 characters a token | What the measured runs read |
 |---|---|---|
-| `SKILL.md`, `OUTPUT-RULES.md`, `FULL-AUDIT.md` | ~33K tokens | **Standard and Full:** `OUTPUT-RULES.md` 6 to 9 times a run, once for each agent and once for the session. **quick-scan:** `OUTPUT-RULES.md` twice. **diff-audit:** none of them. |
-| Checklists (20 files, 1,465 items) | ~74K tokens | **Standard and Full:** the in-scope ones only. For a Rust program, Standard took 604 items (checklists 01–07 and 16) and Full took 531 (01–07). **Quick:** none. |
-| Known vectors (141 procedures) | ~125K tokens | **Standard:** 57 to 59 of the 140 for a Rust program. **Full:** all 140. Both judged them mostly from `known-vectors/INDEX.md`, and no run read more than two vector files in full. **quick-scan:** `INDEX.md` once a run, and no vector file. **diff-audit:** none. |
+| `SKILL.md`, `OUTPUT-RULES.md`, `FULL-AUDIT.md` | ~33K tokens | **Standard and Full:** `OUTPUT-RULES.md` 6 to 9 times a run, once for each agent and once for the session. **Quick:** diff-audit reads `SKILL.md`'s scope table, and quick-scan `OUTPUT-RULES.md`. |
+| Checklists (20 files, 1,465 items) | ~74K tokens | **Standard and Full:** the in-scope ones only. For a Rust program, Standard took 604 items (checklists 01–07 and 16) and Full took 531 (01–07). **diff-audit:** the scope table's checklists for the changed code. **quick-scan:** none. |
+| Known vectors (141 procedures) | ~125K tokens | **Quick:** `INDEX.md`, then every vector file it keeps, whole. quick-scan read 55 to 98, and diff-audit 16 to 48. **Standard and Full:** 57 to 59 of the 140 for a Rust program, and all 140 for Full, judged mostly from `INDEX.md`. |
 | `references/` | ~160K tokens | **Standard and Full:** 2 to 10 files a run, when a marker in the code calls for one. |
-
-So the Quick figures are for sessions that judged the vectors from their index lines and the code, not from the vectors' own procedures. A Quick run that reads each vector it keeps, as quick-scan now asks, will cost more.
 
 ## How the runs were set up
 
@@ -76,14 +85,15 @@ So the Quick figures are for sessions that judged the vectors from their index l
   - The bundled Rust tools in `tools/auditor-tools` were built, so `audit-scan` mapped each program.
   - cargo-audit read a local copy of the RustSec database.
   - For the private repository, the npm, crates.io and GitHub hosts were blocked, so no dependency list left the machine, and npm-audit did not run there.
-  - A run can read a program's on-chain account through a public Solana RPC with `rpc-read.sh`, which sends that program's address there; one Standard run did. The Solana RPC hosts were blocked too for the private repository's Quick runs.
+  - A run can read a program's on-chain account through a public Solana RPC with `rpc-read.sh`, which sends that program's address there; one Standard run did. The Solana RPC hosts were blocked for every later Quick run.
   - No LaTeX engine was installed, so `audit-cycle` wrote no PDF.
 
 ## Keeping the cost down
 
 - **Match the depth to the question.** Use Quick for each change or pull request, Standard for one module before it merges, and Full before a release.
-- **Cap every unattended run.** With `claude -p`, `--max-budget-usd` stops the session after the turn that crosses the cap.
-- **Name the path and the scope.** `/auditor:audit programs/<name> --scope program` reads one program, not the whole repository.
+- **Prefer diff-audit to quick-scan for a pull request.** It reads the vectors its change calls for, not every one a whole repository keeps.
+- **Cap every unattended run, with room.** With `claude -p`, `--max-budget-usd` stops the session after the turn that crosses the cap. Set the cap well above the figures here, since a session that sees its cap close may cut its pass short.
+- **Name the path and the scope.** `/auditor:audit programs/<name> --scope program` reads one program, not the whole repository, and quick-scan on one program keeps fewer vectors.
 - **Build the bundled tools.** `audit-scan`'s map of instructions, constraints and PDAs replaces part of the reading.
 
 ## Track your own runs
@@ -95,5 +105,6 @@ So the Quick figures are for sessions that judged the vectors from their index l
 - These depths on a large program of 50K lines or more.
 - Sonnet as the session's model, and a higher effort.
 - quick-scan and the audits with semgrep installed.
-- Repeat runs of Standard and Full, to see how far they vary.
+- diff-audit on a range with a large lockfile under a cap that lets it finish.
+- Repeat runs, to see how far each figure varies.
 - `deep-review`, `audit-assist`, `re-audit`, `audit-cycle --with-poc`, `spec-audit`, and the incident commands `hunt` and `respond`.
