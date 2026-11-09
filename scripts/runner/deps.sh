@@ -45,8 +45,10 @@
 #                   scripts/recipes/lock-delta.sh set wrote, in one run. First the publish age: one request
 #                   for each distinct name of the set from a public registry (the npm registry's record of
 #                   the package, crates.io's of the crate, PyPI's of the project), in the budget's order,
-#                   at most 1000 requests and 300 seconds (the rest "not checked"), crates.io's at most one
-#                   a second; for each new version its publish time, its publisher and the publishers of
+#                   at most 8 at a time, 1000 requests and 300 seconds, crates.io's at most one a second; a
+#                   lookup that still fails after one retry, the rest past those bounds and a version with
+#                   no publish time are "not checked", which fails nothing. For each new version: its
+#                   publish time, its publisher and the publishers of
 #                   earlier versions, flagging one under 14 days old, a first release under 14 days old, a
 #                   publisher that published no earlier version, a yanked version and one the registry does not
 #                   list (a package it has no record of included).
@@ -1162,6 +1164,8 @@ MARKS = (("key", 0),) + CATEGORY
 # One call stays inside the 600 seconds a Bash tool call may take: the publish ages stop at 300 seconds, and the
 # whole call at 540.
 BUDGET, ASK_CAP, ASK_SECONDS, CALL_SECONDS, CRATES_GAP, QUARANTINE = 40, 1000, 300, 540, 1.0, 14
+# At most this many publish-age requests in flight; crates.io takes one a second whatever the number.
+IN_FLIGHT = 8
 
 
 def clean(text):
@@ -1218,22 +1222,28 @@ def services(path, age):
 
 
 class Fetcher:
+    # curl, one request at a time per thread; safe to call from several threads
     def __init__(self, scratch, deadline, maxsize, agent, log):
+        import threading
         self.scratch, self.deadline, self.maxsize, self.agent, self.log = scratch, deadline, maxsize, agent, log
         self.count, self.last_crates, self.k = 0, 0.0, 0
+        self.lock, self.crates_lock = threading.Lock(), threading.Lock()
 
     def get(self, url, accept_json=False, compressed=False, most=120):
         import subprocess, time
         if url.startswith("https://crates.io/"):
-            wait = self.last_crates + CRATES_GAP - time.time()
-            if wait > 0:
-                time.sleep(wait)
-            self.last_crates = time.time()
+            with self.crates_lock:
+                wait = self.last_crates + CRATES_GAP - time.time()
+                if wait > 0:
+                    time.sleep(wait)
+                self.last_crates = time.time()
         left = int(self.deadline - time.time())
         if left < 5:
             return None, "the call reached its time limit (%d seconds, or AUDITOR_RUN_TIMEOUT when that is less)" % CALL_SECONDS
-        self.k += 1
-        out = os.path.join(self.scratch, "get-%d" % self.k)
+        with self.lock:
+            self.k += 1
+            self.count += 1
+            out = os.path.join(self.scratch, "get-%d" % self.k)
         args = ["curl", "-q", "--proto", "=https", "--proto-redir", "=https", "--tlsv1.2", "-sS", "--connect-timeout", "30",
                 "--max-time", str(min(left - 2, most)), "--max-filesize", str(self.maxsize), "-A", self.agent]
         if accept_json:
@@ -1241,10 +1251,10 @@ class Fetcher:
         if compressed:
             args += ["--compressed"]
         args += ["-o", out, "-w", "%{http_code}", "--", url]
-        self.count += 1
         p = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         code = p.stdout.decode("ascii", "replace")[-3:]
-        self.log.write("GET %s -> %s\n" % (url, code if p.returncode == 0 else "curl exit %d" % p.returncode))
+        with self.lock:
+            self.log.write("GET %s -> %s\n" % (url, code if p.returncode == 0 else "curl exit %d" % p.returncode))
         if p.returncode != 0:
             return None, "the request to %s did not finish (curl exit %d: %s)" % (url, p.returncode, shown(p.stderr.decode("utf-8", "replace").strip())[:200])
         if not re.match(r"^[0-9]{3}$", code):
@@ -1305,6 +1315,7 @@ def npm_url_path(name):
 
 def age_check(rows, fetcher, now, log):
     import time
+    from concurrent.futures import ThreadPoolExecutor
     names, seen = [], set()
     for r in sorted((r for r in rows if r["public"]), key=lambda r: (rank(r), r["i"])):
         k = (r["eco"], r["name"])
@@ -1315,34 +1326,47 @@ def age_check(rows, fetcher, now, log):
     for r in rows:
         wanted.setdefault((r["eco"], r["name"]), set()).update((r["new"], r["old"]))
     start = time.time()
-    results, records, asked, not_checked = {}, {}, 0, {}
-    for eco, name in names:
+
+    def ask(eco, name):
+        # one registry record, with one retry: (history, records, why not checked)
+        url = {"npm": "https://registry.npmjs.org/" + npm_url_path(name), "crates": "https://crates.io/api/v1/crates/" + name,
+               "pypi": "https://pypi.org/pypi/%s/json" % name}[eco]
         why = ""
-        if asked >= ASK_CAP:
-            why = "the 1,000-request cap"
-        elif time.time() - start > ASK_SECONDS:
-            why = "the 300-second bound"
-        if not why:
-            url = {"npm": "https://registry.npmjs.org/" + npm_url_path(name), "crates": "https://crates.io/api/v1/crates/" + name,
-                   "pypi": "https://pypi.org/pypi/%s/json" % name}[eco]
-            asked += 1
+        for attempt in (1, 2):
+            if time.time() - start > ASK_SECONDS:
+                return None, None, why or "the 300-second bound"
             got, why = fetcher.get(url, True, eco == "npm", 60)
             if not got and why.startswith("HTTP 404 "):
                 # the registry has no such package: every version of it is one the registry does not list
-                results[(eco, name)], why = {}, ""
+                return {}, {}, ""
             if got:
                 try:
                     hist, recs = history(eco, name, got, wanted.get((eco, name), set()))
+                    return hist, recs, ""
                 except BaseException as e:
                     why = "the answer cannot be read: %s" % (str(e) or type(e).__name__)
-                else:
-                    results[(eco, name)] = hist
-                    for v, rec in recs.items():
-                        records[(eco, name, v)] = rec
                 finally:
                     os.remove(got)
+            if "time limit" in why:
+                break
+            if attempt == 1:
+                time.sleep(1)
+        return None, None, why
+
+    results, records, not_checked = {}, {}, {}
+    asking = names[:ASK_CAP]
+    for k in names[ASK_CAP:]:
+        not_checked[k] = "the 1,000-request cap"
+    with ThreadPoolExecutor(max_workers=IN_FLIGHT) as pool:
+        answers = list(pool.map(lambda k: ask(*k), asking))
+    for k, (hist, recs, why) in zip(asking, answers):
         if why:
-            not_checked[(eco, name)] = why
+            not_checked[k] = why
+            continue
+        results[k] = hist
+        for v, rec in recs.items():
+            records[(k[0], k[1], v)] = rec
+    asked = len(asking)
     out = {}
     for r in rows:
         if not r["public"]:
@@ -1356,6 +1380,9 @@ def age_check(rows, fetcher, now, log):
             out[r["i"]] = {"flags": ["unlisted"], "why": "the registry does not list %s" % r["new"]}
             continue
         published, publisher, yanked = hist[r["new"]]
+        if published is None:
+            out[r["i"]] = {"why": "no publish time"}
+            continue
         flags = []
         earlier = sorted({p for v, (t, p, y) in hist.items() if p and t is not None and published is not None and t < published})
         older = [v for v, (t, p, y) in hist.items() if t is not None and published is not None and t < published]
@@ -1515,7 +1542,7 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
     public = [r for r in rows if r["public"]]
     if age == "on":
         line = ("publish age: %d names asked in %d s; not checked: %d of %d rows%s; under %d days: %d; first releases: %d; publisher changes: %d; yanked: %d; not listed by the registry: %d"
-                % (asked, took, unchecked, len(public), (" (" + ", ".join(sorted({w for w in not_checked.values()})) + ")") if unchecked else "",
+                % (asked, took, unchecked, len(public), (" (" + ", ".join(sorted({a["why"] for a in ages.values() if "why" in a and "flags" not in a})[:5]) + ")") if unchecked else "",
                    QUARANTINE, len(flagged["young"]), len(flagged["first-release"]), len(flagged["publisher-change"]), len(flagged["yanked"]), len(flagged["unlisted"])))
     else:
         line = "publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: %d of %d rows" % (len(public), len(public))

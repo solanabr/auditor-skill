@@ -2263,8 +2263,8 @@ r0=$(rows)
 run "$DEPS" "$WT" HTTPS_PROXY="$PROXY" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
 LB=$WT/audit_1/deps/lock-budget-$n
-check "lock-budget: one record per public name, in the budget's order (direct, then pins, then the rest), none for a git source" \
-  sh -c "[ '$RC' = 1 ] && lb=\$(sed -n 's/^url: //p' '$T/calls' | sed -n 1,5p | tr '\n' ' ') && [ \"\$lb\" = 'https://registry.npmjs.org/lb-direct https://pypi.org/pypi/lb-py/json https://crates.io/api/v1/crates/lb_crate https://registry.npmjs.org/lb-meta https://registry.npmjs.org/lb-young ' ] && ! grep -q 'lb-git' '$T/calls'"
+check "lock-budget: one record per public name, eight at a time, before any artifact; none for a git source" \
+  sh -c "[ '$RC' = 1 ] && lb=\$(sed -n 's/^url: //p' '$T/calls' | sed -n 1,5p | LC_ALL=C sort | tr '\n' ' ') && [ \"\$lb\" = 'https://crates.io/api/v1/crates/lb_crate https://pypi.org/pypi/lb-py/json https://registry.npmjs.org/lb-direct https://registry.npmjs.org/lb-meta https://registry.npmjs.org/lb-young ' ] && ! grep -q 'lb-git' '$T/calls'"
 check "... the npm record asked compressed, with the proxy" \
   sh -c "grep -q '^== curl -q --proto =https --proto-redir =https --tlsv1.2 -sS --connect-timeout 30 --max-time [0-9]* --max-filesize 104857600 -A .* -H Accept: application/json --compressed -o .* -- https://registry.npmjs.org/lb-direct\$' '$T/calls' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/calls'"
 check "... the publish ages: three under 14 days, two first releases, a publisher who published no earlier version" \
@@ -2345,6 +2345,9 @@ put(url, data)
 rec = {"name": "lb-twotop", "version": "1.0.0", "_npmUser": {"name": "eve"},
        "dist": {"tarball": url, "integrity": "sha512-" + base64.b64encode(hashlib.sha512(data).digest()).decode()}}
 put("https://registry.npmjs.org/lb-twotop", json.dumps({"name": "lb-twotop", "time": {"1.0.0": "2020-01-01T00:00:00.000Z"}, "versions": {"1.0.0": rec}}))
+put("https://registry.npmjs.org/lb-flaky", "{}")
+open(os.path.join(fix, "https___registry.npmjs.org_lb-flaky.status"), "w").write("500")
+put("https://registry.npmjs.org/lb-notime", json.dumps({"name": "lb-notime", "time": {}, "versions": {"1.0.0": {"name": "lb-notime", "version": "1.0.0", "_npmUser": {"name": "gus"}}}}))
 PY
 LBN=106
 lb_set "$LBN" 'npm	package-lock.json	lb-twotop	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-gone	-	3.0.0	-	public	-'
@@ -2356,6 +2359,11 @@ check "lock-budget: two first folders in one tarball: the shared path and the fo
 check "... an entry whose name is not UTF-8 does not stop the report" sh -c "[ '$RC' = 1 ] && grep -q '^1. npm lb-twotop - -> 1.0.0 \[direct\] SC-059 0, SC-060 ' '$LBR'"
 check "lock-budget: a package the registry has no record of is flagged as not listed, not left unchecked" \
   sh -c "grep -q '; not listed by the registry: 1\$' '$T/out' && grep -q '^  not listed by the registry: npm lb-gone 3.0.0 (package-lock.json)\$' '$LBR'"
+LBN=109
+lb_set "$LBN" 'npm	package-lock.json	lb-flaky	-	1.0.0	-	public	-' 'npm	package-lock.json	lb-notime	-	1.0.0	-	public	-'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget: a lookup that fails twice, and a version with no publish time, count as not checked, and the call goes on" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^>> publish age: 2 names asked in [0-9]* s; not checked: 2 of 2 rows (HTTP 500 from https://registry.npmjs.org/lb-flaky, no publish time);' '$T/out' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-flaky\$' '$T/calls') = 2 ]"
 LBN=107
 lb_set "$LBN" 'npm	package-lock.json	lb-young	-	0.1.0	-	public	direct'
 run "$DEPS" "$WT" AUDITOR_RUN_TIMEOUT=3 -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
