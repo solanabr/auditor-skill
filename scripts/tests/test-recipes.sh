@@ -7,7 +7,9 @@
 #     the notes for a partial and a shallow clone; git's status for a revision it cannot find; the same output
 #     under a checkout config and attributes that set colour, context, inter-hunk context and prefixes and name
 #     a textconv driver, an external diff, a pager and an fsmonitor hook, none of which runs; above 64 KiB,
-#     whole, and cut early by head;
+#     whole, and cut early by head; set: the name@version rows and marks of every lockfile kind it reads, the ones
+#     it names as not compared, control characters as ?, the table kept in the run directory, which still passes
+#     its check, and the same rows under that config;
 #   - web3js-history.sh: both headings and both searches; --repo and --git-dir; the notes; git's status for a
 #     missing object, with both searches run; the same output under that config, decorations and a pretty
 #     format too, with no program it names started;
