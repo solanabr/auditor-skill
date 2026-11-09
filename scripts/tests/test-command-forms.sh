@@ -1364,6 +1364,7 @@ OUTPUT-RULES.md	outside <depth>'s scope; /auditor:audit gives their verdicts
 OUTPUT-RULES.md	an item that needs a call the depth does not make gets `[N/A at this depth — needs <call>]`
 checklists/06-program-economic-logic.md	A Quick or CI run reads only the sections `references/depth-scope.md` selects
 known-vectors/INDEX.md	A Quick or CI run's declared scope (`references/depth-scope.md`) may leave an `always` row out
+known-vectors/INDEX.md	its report lists the row once, as outside that depth's scope (`OUTPUT-RULES.md` Rule 4's depth exception).
 PINS
 # Claude Code fills $ARGUMENTS and a $ followed by digits and then no letter, digit or _ (its pattern,
 # \$ARGUMENTS\[\d+\]|\$ARGUMENTS|\$\d+(?!\w)) with the invocation's arguments, in a command's or a skill's
