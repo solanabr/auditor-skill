@@ -374,13 +374,15 @@ Both read committed content only, never the work tree, through the hardened git 
 # examples of what you type; <auditor-skill root> is where auditor-skill is installed
 "<auditor-skill root>/scripts/recipes/lock-delta.sh" cargo main..HEAD
 "<auditor-skill root>/scripts/recipes/lock-delta.sh" --git-dir audit_1/src.git npm v1.2.0..v1.3.0
+"<auditor-skill root>/scripts/recipes/lock-delta.sh" --run audit_1 set main..HEAD
 ```
 
 Each version, source and checksum line that changed in the lockfiles of one kind between two commits, with the name of its package, below each file's `+++ b/<path>` line (`+++ /dev/null` for a file the range deletes).
 
 - **`npm`:** `package-lock.json`, `npm-shrinkwrap.json` and `yarn.lock` (v1 and berry): each changed `version`, `resolved`, `resolution`, `integrity` or `checksum` line after the key of its entry, `?` for a key outside the hunk. **`bun`:** the text `bun.lock`: each changed entry as `-` or `+` and `<name>@<version>`. **`cargo`:** `Cargo.lock`: each changed `version`, `source` or `checksum` line after its package name.
-- **Arguments:** `[--repo <dir> | --git-dir <R>/src.git] npm|bun|cargo <base>..<head>`, where `<base>` and `<head>` name commits: letters, digits and `._/~^+-`, starting with a letter or a digit, with no `..`, at most 255 bytes each.
-- **Exit:** 0 done, whether or not a line printed · 64 refused, with one line, `lock-delta: refused: <reason>` · git's own status when git fails (128: a revision it cannot find). **Network:** none. **Writes:** nothing. **Needs:** git.
+- **`set`**, for checklist 11 §11.11's CI budget: the name@version set difference of every `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` (v1), `bun.lock`, `Cargo.lock`, `uv.lock` and `poetry.lock` the range changes, each read whole at both commits with the manifest beside it at `<head>`. One row per new name@version, and per version whose checksum changed, goes to `<R>/deps/lock-set-<n>.tsv`: its ecosystem, lockfile, name, old and new version, old and new source (`public`, `git`, `url`, `file` or `registry:<host>`) and its marks (`direct`, `pin`, `key`, `install`, `source-change`, `integrity`, `new-dep=<names>`, `url-mismatch`, `close=<name>`, `known-bad`). It prints a summary and the rows to read first, and the file last. A `pnpm-lock.yaml`, a yarn berry `yarn.lock`, a `bun.lockb` and a `go.sum` are named as not compared, with the reason.
+- **Arguments:** `[--repo <dir> | --git-dir <R>/src.git] npm|bun|cargo <base>..<head>`, or `[--repo <dir> | --git-dir <R>/src.git] --run <R> set <base>..<head>`, where `<base>` and `<head>` name commits: letters, digits and `._/~^+-`, starting with a letter or a digit, with no `..`, at most 255 bytes each, and `<R>` is the run directory, `audit_<n>` or `incident_<n>`.
+- **Exit:** 0 done, whether or not a line printed · 3 `set` could not compute or keep its table · 64 refused, with one line, `lock-delta: refused: <reason>` · git's own status when git fails (128: a revision it cannot find). **Network:** none. **Writes:** nothing, but `set`'s table in the run directory. **Needs:** git, and python3 for `set`.
 
 #### `web3js-history.sh`
 
