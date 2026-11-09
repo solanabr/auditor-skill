@@ -1318,8 +1318,10 @@ templates/pr-report.md	`Loaded … security advisories (from <folder>)`, names a
 commands/diff-audit.md	(`deps.sh` adds a row to `audit_<n>/disclosures.tsv` before its first request to each service)
 commands/quick-scan.md	Skip nothing scope.md lists and cut nothing short by choice, not even to save cost or time; Coverage & Limitations names only a file the Read tool could not open
 commands/diff-audit.md	Skip nothing scope.md lists and cut nothing short by choice, not even to save cost or time; name there only one the Read tool could not open.
-commands/quick-scan.md	A whole quick-scan of this selection is estimated at USD 3–8; measured scans that read 55 to 98 vector files cost USD 2.84 to 7.14 in all.
-commands/diff-audit.md	A review of this selection is estimated at USD 2–7; measured reviews cost USD 1.68 to 4.84 in all.
+commands/quick-scan.md	Measured scans cost USD 2.84 to 7.14 in all; this selection cost USD 6.98 on a whole repository, reading 38 vector files and 49 sections.
+commands/diff-audit.md	Measured reviews cost USD 1.68 to 8.10 in all; this selection cost USD 8.10 on a range of 7,830 changed lines that adds a 787-package lockfile.
+docs/ci.md	The top figure is the selection of `references/depth-scope.md` on a range of 7,830 changed lines that adds a 787-package lockfile, under a $15 cap: it read every file its selection lists and named no budget.
+docs/ci.md	Under a $10 cap, the depth-scope selection read 38 vector files and 49 checklist sections in that repository, for $6.98.
 commands/quick-scan.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
 commands/diff-audit.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
 commands/quick-scan.md	never stop reading early to save spend, and never give a budget, turn or time limit as the reason a file went unread
