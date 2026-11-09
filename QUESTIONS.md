@@ -453,7 +453,7 @@ DEP-072 (public cloud storage buckets) and DEP-073 (a `.git/` directory a web se
 | Q32 = No tests | Auto-flags testing gaps, enables checklist 16 recommendations |
 | Q35 = MiCA/GDPR | Enables compliance checklist (18) |
 | Q39 = Specific scope | Skips irrelevant checklists, reduces cost/time |
-| Q41 = Quick | No full checklist walk: SAST, dependency advisories and the checklist sections and vectors `references/depth-scope.md` selects (as quick-scan does), or the changed code and one hop against its matching items and vectors (as diff-audit does); the report states it as a coverage limit |
+| Q41 = Quick | No full checklist walk: SAST, dependency advisories and the checklist sections and vectors `references/depth-scope.md` selects (as quick-scan does), or the changed code and one hop, against the sections and vectors selected for the kinds of file the change holds (as diff-audit does); the report states it as a coverage limit |
 | Q46 = Isolated | Builds, tests, installs and every PoC build run in a container / VM / sandbox (`OUTPUT-RULES.md` Rule 11a); a step that cannot run there keeps its source-level verdict, and a PoC records `[PoC-ATTEMPTED]` |
 | Q46 = Native, or unanswered | Target-controlled code runs on the auditor's machine; the report's Coverage & Limitations states it |
 | Q46 = Untrusted source | Strict mode (`OUTPUT-RULES.md` Rule 11f) for this and every later audit in this directory: the runners build in isolated mode only, and the bundled tools refuse what Rule 11f lists |
