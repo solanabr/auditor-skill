@@ -87,7 +87,7 @@ Start with the cheapest depth that answers your question ([Pick a depth](audit-f
 /auditor:diff-audit
 ```
 
-For a first look at a whole repository, with no checklist walk, run `/auditor:quick-scan`.
+For a first look at a whole repository, with no full checklist walk, run `/auditor:quick-scan`.
 
 **Standard** — one program, every in-scope item:
 

@@ -147,7 +147,7 @@ Record the concrete calibration rule applied, not just the answer.
 - {Q8 = mainnet-live → +1 severity on all fund-related findings.}
 - {Q10 > $1M → critical findings double-weighted in risk score.}
 - {Q11 = single wallet → upgrade authority auto-flagged Severity 8+.}
-- {Q41 = quick → no checklist walk: SAST, advisories and the severity 7+ known vectors only (state as coverage limit).}
+- {Q41 = quick → no full checklist walk: SAST, advisories and the sections and vectors references/depth-scope.md selects only (state as coverage limit).}
 
 ---
 

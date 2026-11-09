@@ -8,12 +8,12 @@ auditor-skill has three depths and a CI mode. Pick by what you want checked: wha
 
 | Depth | When | Run | Reads | Writes | [Cost](../COSTS.md#cost-and-time-by-depth) |
 |-------|------|-----|-------|--------|------|
-| **Quick** | a branch or pull request, a first look at a repository, one function | `/auditor:diff-audit` · `/auditor:quick-scan` (whole repository) · `/auditor:deep-review <file> <fn>` | the changed code + one hop of callers and callees · SAST, dependency advisories and the severity 7+ known vectors · one function | `PR-REPORT.md` · `QUICK-SCAN.md` · `DEEP-REVIEW-<unit>.md` | $2–7 · 4–16 min |
+| **Quick** | a branch or pull request, a first look at a repository, one function | `/auditor:diff-audit` · `/auditor:quick-scan` (whole repository) · `/auditor:deep-review <file> <fn>` | the changed code + one hop, read against the sections and vectors `references/depth-scope.md` selects · SAST, dependency advisories, and the sections and vectors `references/depth-scope.md` selects · one function | `PR-REPORT.md` · `QUICK-SCAN.md` · `DEEP-REVIEW-<unit>.md` | $2–7 · 4–23 min |
 | **Standard** | one module or program before it merges | `/auditor:audit <path> --scope …` | every in-scope item for that path | `REPORT.md`, internal: a risk score and a deploy verdict | $13–19 · 35–60 min |
 | **Full** | a release, or a report for someone outside the team | `/auditor:audit-cycle` (unattended) · `/auditor:audit-assist` (you steer) · `/auditor:re-audit` after fixes | everything in scope, a threat model, peer review (re-audit: the fix delta) | `REPORT.md`, client style: no deploy guarantee (audit-cycle adds a PDF, and PoCs with `--with-poc`) · `RE-AUDIT.md`, with an updated deploy verdict | about $20 · about 1 h, on a 3K-line program |
 | **[CI](ci.md)** | every pull request | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | as Quick | `findings.json` and SARIF on the runner, one pass/fail line in the log | tools job $0; review $2–5 a pull request |
 
-Costs and times were measured on 2026-11-08 with `claude-opus-5-5`, on 3K-, 7K- and 12K-line programs; Full ran once, on the 3K-line one ([COSTS.md](../COSTS.md#cost-and-time-by-depth)). Outside the depths: `poc`, `patch`, `economic-sim` and `triage` work on one finding; `intake` and `threat-model` are Full's building blocks; `audit-report` assembles the internal report from a walk run in pieces; `spec-audit` checks code against a spec; `hunt` and `respond` are for after an incident ([detection-response.md](detection-response.md)).
+Costs and times were measured on 2026-11-08 and 2026-11-09 with `claude-opus-5-5`, on 3K-, 7K- and 12K-line programs. Quick's range covers diff-audit runs of $1.68–2.94 and quick-scan runs of $2.84–7.14; the latest, trial t1, scanned the 3K-line repository with the depth-scope selection for $6.98 in 23 minutes. Full ran once, on the 3K-line program ([COSTS.md](../COSTS.md#cost-and-time-by-depth)). Outside the depths: `poc`, `patch`, `economic-sim` and `triage` work on one finding; `intake` and `threat-model` are Full's building blocks; `audit-report` assembles the internal report from a walk run in pieces; `spec-audit` checks code against a spec; `hunt` and `respond` are for after an incident ([detection-response.md](detection-response.md)).
 
 Every flow first runs `preflight.sh` on the working tree. Its first line names the mode: in default mode it notes what it finds and the flow goes on; in strict mode, for a repository you do not trust, it refuses project config and the rest [Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode) lists. Then the flow runs its bundled steps without asking: run directories, read-only git, the Rust tools, and the runners that build and test in the execution mode in force, native unless intake, `AUDITOR_EXEC_MODE` or strict mode says otherwise. What still asks, and how to run in strict mode, isolated or in `claude -p`: [permissions-and-isolation.md](permissions-and-isolation.md).
 
@@ -32,7 +32,7 @@ PR / commit-scoped. Computes the changed set with read-only git (`git-ro.sh diff
 
 ### `/auditor:quick-scan`
 
-A first look at a whole repository: discovery and scope, static analysis of every in-scope directory (`sast.sh` semgrep; ToB `static-analysis` when semgrep is missing and the plugins are present; else grep scanners), dependency advisories (`deps.sh` cargo-audit and npm-audit), and the high-severity vector pass: the CRITICAL and HIGH known vectors (severity 7 or more) for the detected domains, leaving out those whose markers never occur. Writes `audit_<n>/QUICK-SCAN.md`: findings with severity + `file:line`, stated plainly as a triage pass that points to `/auditor:audit` for full coverage. An analyzer that did not run is reported as not run, never counted as clean. It scans the whole repository each time, so for each pull request diff-audit is the smaller run.
+A first look at a whole repository, or at the path you pass: discovery and scope, static analysis of every in-scope directory (`sast.sh` semgrep; ToB `static-analysis` when semgrep is missing and the plugins are present; else grep scanners), dependency advisories (`deps.sh` cargo-audit and npm-audit), and a reading pass over the checklist sections and known-vector rows `references/depth-scope.md` selects for the detected domains, written to `audit_<n>/scope.md` before any is read: each domain's core sections, the gated ones whose markers occur, the severity 7+ always vectors, and the 9+ marker vectors whose markers occur. In a repository with more than two on-chain programs, it scans the two largest and names a `/auditor:quick-scan <path>` for each of the others. Writes `audit_<n>/QUICK-SCAN.md`: findings with severity + `file:line`, stated plainly as a triage pass that points to `/auditor:audit` for full coverage. An analyzer that did not run is reported as not run, never counted as clean. It scans the whole repository each time, so for each pull request diff-audit is the smaller run.
 
 ### `/auditor:deep-review`
 
@@ -42,7 +42,7 @@ One instruction / function, deeply. Reads the file, runs Phase 0.5 context recon
 /auditor:deep-review programs/vault/src/instructions/withdraw.rs withdraw
 ```
 
-Quick costs less than a full walk because it reads less: diff-audit what changed and one hop around it, quick-scan no checklists, deep-review one unit.
+Quick costs less than a full walk because it reads less: diff-audit what changed and one hop around it, quick-scan the sections and vectors depth-scope.md selects, deep-review one unit.
 
 ## Standard
 
