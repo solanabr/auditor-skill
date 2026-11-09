@@ -1,0 +1,27 @@
+# Hostile argument vectors for scripts/runner/probe.sh. test-dnr-poc-runner.sh runs each one under each
+# bash on the machine, from the same working directory as the run.sh cases.
+# One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each
+# case prints nothing on stdout, makes no scratch directory and changes nothing in the working directory.
+64	probe: refused: usage: probe.sh [--only <name>[,<name>...]], with names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation	-x
+64	probe: refused: usage: probe.sh [--only <name>[,<name>...]], with names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation	--help
+64	probe: refused: usage: probe.sh [--only <name>[,<name>...]], with names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation	--only
+64	probe: refused: usage: probe.sh [--only <name>[,<name>...]], with names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation	--only	cargo	extra
+64	probe: refused: usage: probe.sh [--only <name>[,<name>...]], with names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation	--all	cargo
+64	probe: refused: usage: probe.sh [--only <name>[,<name>...]], with names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation	cargo
+64	probe: refused: usage: probe.sh [--only <name>[,<name>...]], with names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation	--only=cargo
+64	probe: refused: usage: probe.sh [--only <name>[,<name>...]], with names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation	--ONLY	cargo
+64	probe: refused: usage: probe.sh [--only <name>[,<name>...]], with names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation	--only	cargo	--only	rustup
+64	probe: refused: --only takes names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation, not git	--only	git
+64	probe: refused: --only takes names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation, not CARGO	--only	CARGO
+64	probe: refused: --only takes names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation, not --only	--only	--only
+64	probe: refused: --only takes names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation, not cargo rustup	--only	cargo rustup
+64	probe: refused: --only takes names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation, not cargo;rm	--only	cargo;rm
+64	probe: refused: --only takes names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation, not *	--only	*
+64	probe: refused: --only takes names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation, not ../x	--only	../x
+64	probe: refused: --only takes names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation, not cargo-build	--only	cargo-build
+64	probe: refused: --only takes names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation, not isolation2	--only	cargo,isolation2
+64	probe: refused: --only takes names from: cargo, rustup, cargo-build-sbf, cargo-fuzz, trident, anchor, solana, surfpool, semgrep, pandoc, python3, isolation, not $HOME	--only	$HOME
+64	probe: refused: --only has an empty name: cargo,	--only	cargo,
+64	probe: refused: --only has an empty name: ,cargo	--only	,cargo
+64	probe: refused: --only has an empty name: cargo,,rustup	--only	cargo,,rustup
+64	probe: refused: --only has an empty name: ,	--only	,

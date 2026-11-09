@@ -6,27 +6,29 @@ patch) and its verdict updates the finding's **Auditor Verification** line in th
 report.
 
 Verification is by **execution**, on a throwaway copy. Never write to the client's
-real tree: apply the patch to a **scratch git worktree**, build there, run there,
+real tree: apply the patch in a **scratch clone** (the bundled `target.sh` makes it outside the tree), build there, run there,
 discard it.
 
-## 1. Apply (scratch worktree — never the client checkout)
+## 1. Apply (scratch clone — never the client checkout)
 
 The rebuild runs target-controlled code (build scripts, proc-macros, toolchain files), so it follows the
 execution mode recorded at intake — `OUTPUT-RULES.md` Rule 11a (isolated recommended; native allowed and
-stated in the report). If it cannot run in that mode, stop at `[FIX-PROPOSED]`. Create the worktree in a
-copy you made yourself, `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>` (Rule 11c),
-never in a checkout the client supplied: every git command below runs from the scratch directory and on the
-copy (`git -C`), none in the client checkout. `{CHECKOUT}` and `{PATH_TO}` are absolute paths.
+stated in the report). If it cannot run in that mode, stop at `[FIX-PROPOSED]`. The bundled runner builds in
+a scratch clone it makes outside the target tree (Rule 11c): no git command runs in the client checkout, and
+nothing is written in it but the run directory. `{PATH_TO}` is the run directory, `audit_<n>` or
+`incident_<n>`, relative to the working directory; `{COMMIT}` is the audited commit. Run each line from the
+working directory, with no `cd` first.
 
 ```bash
-SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/fix-{FINDING_ID}.XXXXXX")" &&  # a fresh directory at an unpredictable path
-  cd "$SCRATCH" &&                                                # out of the client checkout before any git
-  GIT_NO_LAZY_FETCH=1 git clone --no-local {CHECKOUT} "$SCRATCH/copy" &&  # the Rule 11c copy
-  git -C "$SCRATCH/copy" worktree add "$SCRATCH/fix" {COMMIT} &&  # the audited commit the patch targets
-  cd "$SCRATCH/fix" &&
-  git apply {PATH_TO}/{FINDING_ID}.patch &&                       # or: git am < ... for format-patch
-  cargo build-sbf --tools-version v1.54                           # rebuild the patched program
+# the unpatched build, then the patched one; each keeps its .so in {PATH_TO}/exec/build-sbf-<k>/
+"<auditor-skill root>/scripts/runner/target.sh" build-sbf --run {PATH_TO} --src . --rev {COMMIT}
+"<auditor-skill root>/scripts/runner/target.sh" build-sbf --run {PATH_TO} --src . --rev {COMMIT} --patch {PATH_TO}/patches/{FINDING_ID}.patch
 ```
+
+Exit 3 with a `target: blocker:` line saying `<patch> does not apply to <commit>` means the patch does not
+apply; exit 1 means the patched program does not build. The last line names the log,
+`{PATH_TO}/exec/build-sbf-<k>.log`, and the `.so`. If the unpatched build fails too, the platform tools may be
+too old: set `TOOLS_VERSION=v1.54` where Claude Code runs.
 
 - [ ] Patch applied cleanly against `{COMMIT}` (no fuzz, no reject `.rej` files).
 - [ ] Patched program builds.
@@ -39,16 +41,19 @@ first, so the run is the installation's `run.sh` and assertions, and run the cra
 through that `run.sh`.
 
 ```bash
-cp "<auditor-skill root>/templates/poc/run.sh" {PATH_TO}/poc/{FINDING_ID}/run.sh
 cp "<auditor-skill root>/templates/poc/shared-test-utils/src/lib.rs" {PATH_TO}/poc/{FINDING_ID}/shared-test-utils/src/lib.rs
-# {MODE}: the execution mode recorded at intake, isolated | native (OUTPUT-RULES.md Rule 11a)
-AUDITOR_EXEC_MODE={MODE} {PATH_TO}/poc/{FINDING_ID}/run.sh                    # minimized model (src/fixed.rs: the patch on src/vulnerable.rs)
-AUDITOR_EXEC_MODE={MODE} VULNERABLE_SO={UNPATCHED_SO} FIXED_SO={PATCHED_SO} \
-  {PATH_TO}/poc/{FINDING_ID}/run.sh                                           # patched target build
+# {PATH_TO}: the run directory, audit_<n> or incident_<n>, relative to the working directory; its
+# exec-mode file holds the execution mode recorded at intake (OUTPUT-RULES.md Rule 11a)
+"<auditor-skill root>/templates/poc/run.sh" --crate {PATH_TO}/poc/{FINDING_ID}    # minimized model (src/fixed.rs: the patch on src/vulnerable.rs)
+"<auditor-skill root>/templates/poc/run.sh" --crate {PATH_TO}/poc/{FINDING_ID} --vulnerable-so {UNPATCHED_SO} --fixed-so {PATCHED_SO}   # patched target build: files under {PATH_TO}/exec/
 ```
 
-**Re-detonated against:** {patched target build (`VULNERABLE_SO` / `FIXED_SO` overrides — `templates/poc/run.sh`) | minimized model}
-— a *patched target build* runs `run.sh` with `VULNERABLE_SO` = the unpatched build and `FIXED_SO` = the
+The `cp` asks for approval: it reads the installation, outside the working directory, and no bundled tool
+copies the harness. A non-interactive run denies it: then compare the copy with the installation's as
+`/auditor:poc` step 6 does, and record a mismatch as "PoC re-run needed".
+
+**Re-detonated against:** {patched target build (`--vulnerable-so` / `--fixed-so` — `templates/poc/run.sh`) | minimized model}
+— a *patched target build* runs `run.sh` with `--vulnerable-so` = the unpatched build and `--fixed-so` = the
 patched build of the target itself. That is `run.sh`'s prebuilt mode: it exits 3 unless both files are ELF
 programs and each arm's contract assertion ran and held on the bytes `run.sh` placed (loaded through
 `mollusk_for` or `litesvm_for!`) — `assert_exploit_effect!` in `tests/exploit.rs` on the unpatched bytes,
@@ -67,7 +72,7 @@ the `fixed` arm `patch.md` describes): `run.sh` with no overrides must exit 0, e
 - **Pre-fix (recorded when the PoC was built):** `tests/exploit.rs` SUCCEEDED on the
   `vulnerable` arm — the attack went through. → `[PoC-REPRODUCED]`
 - **Post-fix (this step):** with the patch transplanted onto `src/vulnerable.rs` as
-  `src/fixed.rs`, or with the patched target build as `FIXED_SO`, the same attack in
+  `src/fixed.rs`, or with the patched target build as `--fixed-so`, the same attack in
   `tests/fixed_blocked.rs` must now be **rejected** on the fixed arm: `run.sh` exits 0 —
   the previously-open path is closed.
 
@@ -94,6 +99,10 @@ exploit earns `[FIX-VERIFIED]`. If there is no executable PoC to run, stop at
   ```
   Interface as documented by the vendored `mutation-testing` skill (mewt 4.x); `mewt --help`
   is authoritative. A mutation run executes the target's tests, so it follows Rule 11a too.
+  No bundled runner wraps mewt, so each call asks for approval. It needs a tree with the patch applied, which §1
+  no longer leaves: make one by hand outside the working directory, in the recorded mode, or record the mutation
+  step as not run. Never run it in the client checkout: `mewt init` writes `mewt.toml` and `mewt.sqlite` where it
+  runs.
   - [ ] No surviving mutant on the patched line(s) — or the survivor is recorded and
         the verdict is not overstated.
 
@@ -104,19 +113,128 @@ exploit earns `[FIX-VERIFIED]`. If there is no executable PoC to run, stop at
   `/auditor:re-audit` step 4b.
   - [ ] No adjacent path regressed.
 
-## 4. Verdict → report's Auditor Verification field
+## 4. Post-patch validation (opt-in, isolated mode only)
+
+Only with `/auditor:patch --post-patch-validation`. Trail of Bits `post-patch-validation` checks the patch
+against the finding, variants of its root cause and behavior that should not change. Its runner creates, locks
+and prunes git worktrees in the repository it is given, and its checks build and run the target with the
+caller's privileges and an open network. So it runs only in Rule 11a **isolated** mode, on the isolated
+runner, and on a no-checkout clone, outside the target tree, of the copy `git-ro.sh copy` makes in `{R}`:
+never on the client checkout. Run the first block from the top level of the repository under audit. It runs
+nothing, and prints the line to record, unless the stricter of the recorded mode (`{R}/exec-mode`, or
+`intake.md` §8 without it) and `AUDITOR_EXEC_MODE` is isolated (`none` stops it, as it stops `run.sh`),
+`probe.sh --only isolation` finds none of the credentials it checks readable, the vendored skill and `uv` are
+there, and `git-ro.sh copy` takes the checkout. That copy refuses a partial clone, a git without the May-2024
+clone fixes, borrowed objects (alternates) and links. When a block stops on an error instead, record "not run:
+<its first error line>". Each block asks for approval: it is shell code, and it runs the Trail of Bits
+runner, which no bundled tool wraps.
+
+The placeholders here are this section's own. `{R}` is the run directory, `audit_<n>` or `incident_<n>`,
+relative to the working directory; `{MODE}` is the word `{R}/exec-mode` holds or, when there is no such file,
+the mode `{R}/intake.md` §8 records (for an incident, the mode in its ledger header); `{FINDING_ID}` is the
+finding or incident id; `{COMMIT}` is the commit the patch targets; `{LEVEL}` is the highest evidence level the
+checks will honestly reach (`source`, `build` or `runtime`, as the skill defines them). Before the first block,
+write the finding's root cause and impact, in one sentence, to `{R}/patches/{FINDING_ID}.summary` with the Write
+tool: the block hands that file's text to the runner as one argument, so the shell never reads it as code,
+whatever quotes or `$` it holds.
+
+```bash
+ROOT="<auditor-skill root>"
+PPV_RUNNER="$ROOT/vendor/trailofbits/plugins/post-patch-validation/skills/post-patch-validation/scripts/post_patch_validation.py"
+case " {MODE} ${AUDITOR_EXEC_MODE:-} " in       # the stricter of the recorded mode and AUDITOR_EXEC_MODE, as run.sh takes it
+  *" none "*) PPV_MODE=none ;;
+  *" isolated "*) PPV_MODE=isolated ;;
+  *) PPV_MODE=native ;;
+esac
+if [ "$PPV_MODE" != isolated ]; then
+  echo "post-patch validation: not run: needs isolated mode"
+elif [ "$("$ROOT/scripts/runner/probe.sh" --only isolation 2>/dev/null)" != "isolation: none of the credentials the self-check reads is readable" ]; then
+  echo "post-patch validation: not run: this is not the isolated runner (scripts/runner/probe.sh --only isolation)"
+elif [ ! -f "$PPV_RUNNER" ] || ! command -v uv >/dev/null 2>&1; then
+  echo "post-patch validation: not run: needs the vendored post-patch-validation skill and uv"
+elif ! PPV_SRC="$("$ROOT/scripts/git-ro.sh" copy . "{R}")"; then
+  echo "post-patch validation: not run: git-ro.sh copy refused the checkout"
+else
+  PPV_SRC="$(pwd -P)/$PPV_SRC" && PPV_PATCH="$(pwd -P)/{R}/patches/{FINDING_ID}.patch" &&
+    PPV_SUMMARY="$(cat "{R}/patches/{FINDING_ID}.summary")" &&
+    PPV="$(mktemp -d "${TMPDIR:-/tmp}/ppv-{FINDING_ID}.XXXXXX")" &&
+    cd "$PPV" &&
+    GIT_NO_LAZY_FETCH=1 git clone -q --no-local --no-checkout --template= "$PPV_SRC" "$PPV/repo" &&
+    mkdir -p "$PPV/repo/.git/info" && printf '* !filter\n' > "$PPV/repo/.git/info/attributes" &&
+    mkdir "$PPV/plan" &&
+    uv run --no-config "$PPV_RUNNER" scaffold --repo "$PPV/repo" --base-ref {COMMIT} \
+      --patch-file "$PPV_PATCH" --finding-id {FINDING_ID} --finding-summary "$PPV_SUMMARY" \
+      --evidence-level {LEVEL} --output "$PPV/plan/plan.json" &&
+    echo "post-patch validation: plan at $PPV/plan/plan.json"
+fi
+```
+
+The clone has no work tree checked out. The `* !filter` line in its `info/attributes`, which the runner's
+worktrees read too, turns every clean and smudge filter off, so a git-lfs filter in the caller's own git config
+never runs on a checkout there and never contacts the LFS host the repository names. `uv run --no-config`
+reads no `uv.toml` or `pyproject.toml` above the scratch directory.
+
+Fill in the plan's checks as the skill's `SKILL.md` describes, at least one of every kind, with any helper
+files under `{PPV}/plan/checks/`, and change nothing else in `plan.json`; `{PPV}` is the directory the first
+block printed. Run the runner only through these two blocks: the skill's own examples pass `--repo .`, which
+during an audit is the client checkout. Then run the plan. The plan runs the target's code, and each block is a
+shell call of its own, which the first block's checks do not reach (a retry outside the sandbox, a run in
+another session), so the second block makes the same mode and isolation checks, word for word, before it runs
+anything; nothing runs unless they pass and `plan.json` still names the clone:
+
+```bash
+ROOT="<auditor-skill root>"
+PPV_RUNNER="$ROOT/vendor/trailofbits/plugins/post-patch-validation/skills/post-patch-validation/scripts/post_patch_validation.py"
+case " {MODE} ${AUDITOR_EXEC_MODE:-} " in       # the stricter of the recorded mode and AUDITOR_EXEC_MODE, as run.sh takes it
+  *" none "*) PPV_MODE=none ;;
+  *" isolated "*) PPV_MODE=isolated ;;
+  *) PPV_MODE=native ;;
+esac
+if [ "$PPV_MODE" != isolated ]; then
+  echo "post-patch validation: not run: needs isolated mode"
+elif [ "$("$ROOT/scripts/runner/probe.sh" --only isolation 2>/dev/null)" != "isolation: none of the credentials the self-check reads is readable" ]; then
+  echo "post-patch validation: not run: this is not the isolated runner (scripts/runner/probe.sh --only isolation)"
+elif cd "{PPV}" && [ -d repo/.git ] &&                                 # outside the target tree, as above
+    [ "$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["repository"])' plan/plan.json 2>/dev/null)" = ../repo ]; then
+  uv run --no-config "$PPV_RUNNER" validate-plan --plan "{PPV}/plan/plan.json" &&
+    uv run --no-config "$PPV_RUNNER" run --plan "{PPV}/plan/plan.json" --output "{PPV}/results"   # exit 0, 1 or 10 leaves results/result.json
+else
+  echo "post-patch validation: not run: plan/plan.json must name ../repo, the disposable clone"
+fi
+```
+
+If the runner stops on a submodule, record "not run: the patch touches submodule <path>, which the disposable
+clone does not hold". Never fetch or initialize submodules in the clone.
+
+**Post-patch validation:** {not run: <the line a block printed, or its first error line> | ran: evidence level <source / build / runtime>, assessment <complete / incomplete>}
+- **Findings:** {each `check_id` (kind): message, as `results/result.json` gives it | none}
+- **Gaps:** {each `check_id`: reason | none}
+- **Effect on the verdict:** {none | lowered from `[FIX-VERIFIED]` to `[FIX-INSUFFICIENT]` by `check_id` (kind) | recorded under Residual, tier unchanged: `check_id` (kind)}
+
+The result is optional evidence and can only lower the verdict. A finding, a failure it attributes to the
+patched revision (a root-cause variant the patch leaves open, a behavior it changes, a regression it brings
+in), makes a `[FIX-VERIFIED]` tier `[FIX-INSUFFICIENT]` (a `[FIX-PROPOSED]` one keeps its tier and records the
+finding under Residual), with that check as what remains open. Read the check and its saved logs first: the runner shows
+that a check behaved as written, not that it is the right check. Passing checks and gaps change nothing, and a
+passing run never stands in for §2's executed revert. List what its checks contacted (package registries,
+toolchain downloads, hosts the target's code or tests reach) under outside services in the report (Rule 11b).
+Discard `{PPV}` once this section is filled in.
+
+## 5. Verdict → report's Auditor Verification field
 
 Emit exactly one, and write it to the finding's **Auditor Verification** line:
 
 | Verdict | Condition |
 |---------|-----------|
-| `[FIX-VERIFIED]` | Patch applied to a scratch worktree, rebuilt, and the finding's PoC **re-ran and now reverts**. Optional mutation/blast-radius clean. |
+| `[FIX-VERIFIED]` | Patch applied to a scratch clone, rebuilt, and the finding's PoC **re-ran and now reverts**. Optional mutation/blast-radius clean. |
 | `[FIX-INSUFFICIENT]` | The PoC still exploits a residual path, a mutant survives on the patched line, or an adjacent path regressed (blast-radius). State exactly what remains open. |
 | `[FIX-PROPOSED]` | A minimal idiomatic diff re-derived from the code closes the cited bound, but **no executable PoC was available** to run the revert. Verified by reasoning, flagged not-yet-executed — never silently promoted. |
 
+Opt-in Trail of Bits `post-patch-validation` (`/auditor:patch --post-patch-validation`, isolated mode only, on a disposable clone) is optional evidence that can only lower a tier: a finding in its result turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`, with that check as the reason; a `[FIX-PROPOSED]` or `[FIX-INSUFFICIENT]` patch keeps its tier and records the finding under Residual, and nothing else in its result changes a tier.
+
 **Verdict:** `{FIX-VERIFIED | FIX-INSUFFICIENT | FIX-PROPOSED}`
 **What a maintainer must do to apply:** {e.g. `git am < {FINDING_ID}.patch` on `{COMMIT}`, `cargo build-sbf`, run the crate's own tests.}
-**Residual (if any):** {what is still open, for INSUFFICIENT — else "none".}
+**Residual (if any):** {what is still open, for INSUFFICIENT or a post-patch-validation finding — else "none".}
 
 ---
 

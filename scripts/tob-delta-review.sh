@@ -11,9 +11,11 @@
 # log and show without colour, external diff or textconv and with rename detection set on the command
 # line, so those settings in the maintainer's ~/.gitconfig or the clone's config never reach the parsers
 # below. Upstream's own .gitattributes cannot hide a changed file from the scans either: they diff with
-# --text, and read attributes from the empty tree where git supports it (2.40+). The report informs a
-# human reviewer; it is not a verdict. Works with bash 3.2.
+# --text, and read attributes from the empty tree where git supports it (2.40+). Every tool reads bytes in
+# the C locale, and the added-line scans drop NUL bytes first, so neither a byte that is not UTF-8 nor a NUL
+# hides a line from them. The report informs a human reviewer; it is not a verdict. Works with bash 3.2.
 set -uo pipefail
+export LC_ALL=C
 
 fetch=0
 if [ "${1:-}" = "--fetch" ]; then fetch=1; shift; fi
@@ -139,11 +141,11 @@ MOVESURF="$LOADSURF|(^|/)skill\\.md\$|(^|/)(commands|agents|bin|scripts)/"
 moved() { renames "$@" | rx="$MOVESURF" awk -F'\t' '$1 == "R100" && tolower($3) !~ ENVIRON["rx"] \
   && $2 !~ /\/(tests|evals|evals-extra|fixtures)\/|[.]lock$|package-lock[.]json$/ { print $2 "\t" $3 }'; }
 moved "${CODE[@]}" > "$tmp/mv_code"; moved "${MD[@]}" > "$tmp/mv_md"; moved "${ALL[@]}" > "$tmp/mv_all"
-# added() MODE LIST PATHSPEC...: the -U0 diff a scan reads, every file as added or changed. MODE skip leaves out
-# the files at the NEW paths of LIST ("OLD<tab>NEW" lines), MODE only keeps just those. Without rename detection
-# a/ and b/ name the same path, so the path is the header's second half.
+# added() MODE LIST PATHSPEC...: the -U0 diff a scan reads, every file as added or changed, NUL bytes dropped.
+# MODE skip leaves out the files at the NEW paths of LIST ("OLD<tab>NEW" lines), MODE only keeps just those.
+# Without rename detection a/ and b/ name the same path, so the path is the header's second half.
 added() { local mode=$1 list=$2; shift 2
-  g diff "${SCAN[@]}" -U0 "$old" "$new" -- "$@" | awk -v mode="$mode" -v list="$list" '
+  g diff "${SCAN[@]}" -U0 "$old" "$new" -- "$@" | tr -d '\000' | awk -v mode="$mode" -v list="$list" '
     BEGIN { while ((getline l < list) > 0) { split(l, a, "\t"); s[a[2]] = 1 } }
     /^diff --git / { n = (length($0) - 16) / 2; keep = (substr($0, 14, n) in s) == (mode == "only") }
     keep'; }
@@ -159,23 +161,24 @@ show "$tmp/mdhosts"
 section "Remote-exec patterns in added lines, continuation lines joined, any letter case (a download piped to or evaluated by a shell, an interpreter or PowerShell; npx --yes, bunx and dlx; pip, pipx, uv, uvx, npm, cargo and deno installs from git or a URL; go install …@latest)"
 # "<path>: <added line>". An added line ending in a backslash, in a space and a backtick (PowerShell), or in a
 # pipe outside a Markdown table row, is joined with the next added line, so a multi-line installer is scanned as
-# one command. A "+++ " line names the file only inside a file header, so an added line that starts with "++ "
-# is scanned like any other.
+# one command; the CRs at the end of a line (CR LF line ends) are dropped first. A "+++ " line names the file only
+# inside a file header, so an added line that starts with "++ " is scanned like any other.
 joined() { awk '
   function flush() { if (buf != "") print file ": " buf; buf = "" }
   /^diff --git / { flush(); hdr = 1; next }
   hdr && /^\+\+\+ / { file = substr($0, 5); sub(/^b\//, "", file); next }
   /^@@/ { flush(); hdr = 0; next }
   hdr { next }
-  /^\+/ { s = substr($0, 2); if (buf != "") sub(/^[ \t]+/, "", s); buf = (buf == "") ? s : buf " " s
+  /^\+/ { s = substr($0, 2); sub(/\r+$/, "", s); if (buf != "") sub(/^[ \t]+/, "", s); buf = (buf == "") ? s : buf " " s
           if (buf ~ /\\[ \t]*$/) { sub(/[ \t]*\\[ \t]*$/, "", buf); next }
           if (buf ~ /[ \t]`[ \t]*$/) { sub(/[ \t]*`[ \t]*$/, "", buf); next }
           if (buf ~ /[|][ \t]*$/ && s !~ /^[ \t]*[|]/) next
           flush(); next }
   { flush() }
   END { flush() }'; }
-# Matched in any letter case: PowerShell ignores case, and so does macOS's default file system.
-SHELLS="((ba|z|da|k)?sh|python[0-9.]*|node|perl|ruby|pwsh|powershell|iex|invoke-expression)([[:space:];&|)\"']|\$)"
+# Matched in any letter case: PowerShell ignores case, and so does macOS's default file system. A shell's name
+# ends at any character that cannot continue it, so one written in Markdown, bold or a link is matched too.
+SHELLS="((ba|z|da|k)?sh|python[0-9.]*|node|perl|ruby|pwsh|powershell|iex|invoke-expression)([^[:alnum:]_-]|\$)"
 GET='(curl|wget)([.]exe)?|(^|[^[:alnum:]_-])(irm|iwr|invoke-restmethod|invoke-webrequest)'   # a download command
 RX_PIPE="($GET)[\"']?[[:space:]].*[|][[:space:]]*(sudo([[:space:]]+-[-A-Za-z0-9=,_]+([[:space:]]+[A-Za-z0-9_]+)?)*[[:space:]]+)?((/[^[:space:]|]*/)?env([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)*[[:space:]]+)?(/[^[:space:]|]*/)?$SHELLS"
 # a shell, eval, an interpreter's -c / -e, or a here-string handed "$(curl …)" or `curl …`

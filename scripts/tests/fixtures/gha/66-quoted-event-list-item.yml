@@ -1,0 +1,12 @@
+# Fixture: discussion-comment trigger written as a single-quoted list item under on:, command match only, no author gate.
+name: f66-quoted-event-list-item
+on:
+  - 'discussion_comment'
+permissions:
+  contents: write
+jobs:
+  deploy:
+    if: startsWith(github.event.comment.body, '/deploy')
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo deploy

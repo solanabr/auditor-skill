@@ -1,0 +1,42 @@
+{
+  "name": "f01-mention-only-gate",
+  "triggers": [
+    "issue_comment",
+    "pull_request_review_comment",
+    "issues"
+  ],
+  "permissions": [
+    "contents: write",
+    "pull-requests: write",
+    "issues: write",
+    "id-token: write"
+  ],
+  "jobs": [
+    {
+      "id": "agent",
+      "line": 16,
+      "if": "(github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) || (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) || (g...",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 20,
+          "uses": "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 21,
+          "uses": "anthropics/claude-code-action@v1",
+          "with": [
+            {
+              "key": "anthropic_api_key",
+              "value": "${{ secrets.ANTHROPIC_API_KEY }}"
+            }
+          ],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

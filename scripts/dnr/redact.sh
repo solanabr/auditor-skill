@@ -37,15 +37,29 @@
 # request line (`> POST /v2/<key> HTTP/2`) or an HTTP/2 `[:path: …]` header loses
 # its path.
 #
+# Rust's Debug form of a URL (url::Url, which solana CLI 2.2.x and older print in some
+# errors: `Url { scheme: "https", …, username: "", password: None, host:
+# Some(Domain("<token>.provider.example")), port: None, path: "/v2/<key>", query:
+# Some("api-key=<key>"), fragment: None }`) has no scheme://, so its fields are
+# redacted one by one: a username, password, query or fragment becomes "REDACTED",
+# the path "/REDACTED", and a Domain host keeps its last two labels, as above. The
+# pretty form ({:#?}, as dbg! prints it) puts each Some's value on a line of its own:
+# the string on the line after "password: Some(", "query: Some(" or "fragment:
+# Some(" becomes "REDACTED", and the one after "host: Some(" and "Domain(" keeps its
+# last two labels. Only the line before is carried, in sed's hold space, so output
+# still streams a line at a time.
+#
 # It is a convenience, not a guarantee (a novel key format can slip through), so the
 # rule still holds: never put an RPC URL in INCIDENTS.json, LEDGER.md, or any
 # output. Record the provider domain (the host's last two labels) and the literal
 # string "$RPC_URL".
 #
 # Portability: POSIX ERE via `sed -E` only — bracket classes, `?`/`+`/`*`, groups and
-# `\1` backreferences, the `g` flag. No GNU-only extensions and no case-insensitive
-# flag (letter case is spelled out in bracket classes instead), so BSD and GNU sed
-# read these expressions the same way. bash >= 3.2.
+# `\1` backreferences, the `g` flag, and the hold space (`G`, `h`, `x`, with `\n`
+# matching the newline `G` adds; a replacement puts a newline back only through a
+# group that matched one, since BSD sed reads `\n` there as `n`). No GNU-only
+# extensions and no case-insensitive flag (letter case is spelled out in bracket
+# classes instead), so BSD and GNU sed read these expressions the same way. bash >= 3.2.
 
 set -uo pipefail
 # Bytes, not characters: under a UTF-8 locale BSD sed stops at an invalid byte.
@@ -65,11 +79,28 @@ key='[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Aa][Cc][Cc][Ee][Ss][Ss][-_]?[Tt][Oo][Kk][Ee]
 # IPv4 address never matches): \1 is what precedes it, \3 its last two labels.
 host='(^|[^A-Za-z0-9_.-])([A-Za-z0-9_-]+\.)+([A-Za-z0-9_-]+\.[A-Za-z][A-Za-z0-9_-]*)'
 
+# A string in Rust's Debug form: quoted, a backslash escaping the character after it;
+# dstr may be empty, dword may not.
+dstr='"([^"\\]|\\.)*"'
+dword='"([^"\\]|\\.)+"'
+
 sed -E \
+  -e "s#(username: )${dword}#\\1\"REDACTED\"#g" \
+  -e "s#((password|query|fragment): Some[(])${dstr}#\\1\"REDACTED\"#g" \
+  -e "s#(path: )${dstr}#\\1\"/REDACTED\"#g" \
+  -e "s#(host: Some[(]Domain[(]\")[^\"]*\\.([^\".]+\\.[A-Za-z][^\".]*\")#\\1REDACTED.\\2#g" \
   -e "s#(${scheme})[^@/?${end}]*@#\\1REDACTED@#g" \
   -e "s#(${scheme}[^/?${end}]+)[/?][^${end}]*#\\1/REDACTED#g" \
   -e "s#(${scheme}(REDACTED@)?)[^/?@${end}]*\.([^./?@${end}]+\.[A-Za-z][^./?@${end}]*)#\\1REDACTED.\\3#g" \
   -e "s#^(> [A-Z]+ )[^ ]+( HTTP/[0-9.]+)#\\1/REDACTED\\2#" \
   -e "s#(\\[:path: )[^]]*#\\1/REDACTED#g" \
   -e "/^(curl: |[*<>] )/s#${host}#\\1REDACTED.\\3#g" \
-  -e "s/((${key})=)[^&${end}]+/\\1REDACTED/g"
+  -e "s/((${key})=)[^&${end}]+/\\1REDACTED/g" \
+  -e 'G' \
+  -e "s#^([[:space:]]*)${dstr}(,?)(\\n)S\$#\\1\"REDACTED\"\\3\\4S#" \
+  -e "s#^([[:space:]]*\")[^\"]*\\.([^\".]+\\.[A-Za-z][^\".]*\",?)(\\n)D\$#\\1REDACTED.\\2\\3D#" \
+  -e 's#^(.*(password|query|fragment): Some[(])(\n)[SHD]?$#\1\3s#' \
+  -e 's#^(.*host: Some[(])(\n)[SHD]?$#\1\2h#' \
+  -e 's#^([[:space:]]*Domain[(])(\n)H$#\1\2d#' \
+  -e 's#(\n)[SHD]$#\1#' -e 's#(\n)s$#\1S#' -e 's#(\n)h$#\1H#' -e 's#(\n)d$#\1D#' \
+  -e 'h' -e 'x' -e 's#^.*\n##' -e 'x' -e 's#\n.*$##'

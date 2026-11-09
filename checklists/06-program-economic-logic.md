@@ -6,7 +6,7 @@
 
 Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{severity}]`, `[PARTIAL]`, or `[N/A]`.
 
-> **Feature-gated sections (advisory load).** Several sections here are feature-specific: if the feature is *provably absent* (empty prescan array or zero grep hits — see `references/orchestration/pre-scan.md`), you may spot-defer the section and render its items `[N/A — feature absent: <marker>]`. This is a token-efficiency layer only — **every item still gets a verdict per Rule 0**, and the section reopens the instant a manual read surfaces the feature.
+> **Feature-gated sections (advisory load).** Several sections here are feature-specific: if the feature is *provably absent* (zero grep hits, and, for a marker a prescan array covers, that array empty; an empty array alone is not proof — see `references/orchestration/pre-scan.md`), you may spot-defer the section and render its items `[N/A — feature absent: <marker>]`. This is a token-efficiency layer only — **every item still gets a verdict per Rule 0**, and the section reopens the instant a manual read surfaces the feature.
 >
 > | Section | Feature | Markers |
 > |---------|---------|---------|

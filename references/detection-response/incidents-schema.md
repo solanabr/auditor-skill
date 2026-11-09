@@ -55,7 +55,7 @@ bumps the `schema` string to `auditor-incidents/2`.
       "poc": {
         "tier": "PoC-REPRODUCED | PoC-SIM-REPRODUCED | PoC-FUZZ-REPRODUCED | PoC-ATTEMPTED | PoC-PROSE | null",
         "path": "incident_<n>/poc/INC-1.1/",
-        "command": "AUDITOR_EXEC_MODE=<isolated|native> VULNERABLE_SO=<incident .so> [FIXED_SO=<fixed .so>] ./run.sh",
+        "command": "<auditor-skill root>/templates/poc/run.sh --crate incident_<n>/poc/INC-1.1 --vulnerable-so incident_<n>/bin/<program>.so [--fixed-so <file under incident_<n>/bin/ or exec/>] (execution mode <isolated|native>)",
         "verified": true,
         "negative": "null | rejected with the pinned error | blocked: failed, account unchanged"
       },
@@ -74,6 +74,19 @@ bumps the `schema` string to `auditor-incidents/2`.
 
 - **`id`** is run-qualified `INC-<n>.<k>` (README). `/auditor:poc` and
   `/auditor:patch` resolve this exact string against this run's file.
+- **`root_cause_class`** is recorded before the incident's first PoC run, `unknown`
+  until it is known:
+  `"<auditor-skill root>/templates/poc/run.sh" --crate incident_<n>/poc/INC-<n>.<k>`
+  reads it, stops (exit 3) when this file, the incident or its class cannot be read, and
+  holds a `supply_chain_or_ci` incident to isolated mode on its dumped bytes
+  (`OUTPUT-RULES.md` Rule 11a). And natively neither `run.sh --crate` nor `target.sh`
+  builds anything, whatever run directory it is given, an audit's included, while the
+  `INCIDENTS.json` of any `incident_*` directory in the working directory records a
+  `supply_chain_or_ci` incident or cannot be read: every `target.sh --src` is that tree
+  or a copy of it, and any PoC crate can build its crates. A run without the file, or
+  whose file records no incident, counts for nothing; only the `incident_*` directories
+  at the top of the working directory the runner starts in count, in any letter case
+  (Rule 11a).
 - **Where entries go.** Only `confirmed_exploited` and `suspected` belong in
   `incidents[]`; `attempted_not_vulnerable` and `benign` are filed in
   `ruled_out[]`. The one subtlety:
@@ -91,8 +104,9 @@ bumps the `schema` string to `auditor-incidents/2`.
   `dumped-after-hotfix` (a later upgrade overwrote the incident binary — dump and
   hash anyway, provenance noted), `source-only` or `none` (Leg 3 unmet → ceiling
   `suspected`).
-- **`poc`** records the run as made. `command` carries `AUDITOR_EXEC_MODE` and
-  `VULNERABLE_SO`, plus `FIXED_SO` when a fixed arm ran. `verified` is true only
+- **`poc`** records the run as made. `command` carries the `run.sh --crate` call with
+  its `--vulnerable-so`, plus `--fixed-so` when a fixed arm ran, and the execution mode
+  its `>> execution mode:` line printed. `verified` is true only
   when `run.sh` ended with `OK: reproduced on prebuilt bytes — vulnerable
   sha256=<hash>`, `<hash>` being the snapshot's. `negative` is how the fixed arm
   held: `rejected with the pinned error` for our patch, `blocked: failed, account

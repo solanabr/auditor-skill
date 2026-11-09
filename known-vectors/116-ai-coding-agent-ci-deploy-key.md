@@ -20,9 +20,10 @@ This vector fuses two conditions that must BOTH be false: (a) the agent can reac
 **Step 1: Inventory workflows and locate AI agent steps**
 ```
 ls -la .github/workflows/ 2>/dev/null
-grep -rn -iE "anthropics/claude-code-(base-)?action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference|claude (-p|--print)|@anthropic-ai/claude-code|codex exec|gemini -p" .github/workflows/
+grep -rn -iE --include='*.yml' --include='*.yaml' '^.*(anthropics/claude-code-(base-)?action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference|claude (([][	 !"$%'\''()*+,./0123456789:<=>?@^_`{}~-]|a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|\\)* )?(-p|--print|\\[ 	]*.?$)|@anthropic-ai/claude-code|codex exec|gemini (([][	 !"$%'\''()*+,./0123456789:<=>?@^_`{}~-]|a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|\\)* )?(-p|--prompt|\\[ 	]*.?$))' .github/
 ```
-- Record: each workflow, its `on:` triggers, and every AI-agent step, including agent CLIs started from a `run:` step (they have no built-in actor check)
+- Record: each workflow, its `on:` triggers, and every AI-agent step, including agent CLIs started from a `run:` step (they have no built-in actor check). For a hit in a composite action under `.github/`, record the workflows that use it: the step runs in their jobs
+- `claude --model x -p` and `gemini -m x -p` count: options may come before `-p`, claude's `--print` or gemini's `--prompt`, as long as everything between them is printable ASCII other than `|`, `;`, `&` and `#`, or the line ends in a `\` that continues the command. An option value with a character outside ASCII before `-p` hides the call, so also read each line `grep -rniE --include='*.yml' --include='*.yaml' '(claude|gemini) ' .github/` lists
 
 **Step 2: Does an AI-agent step reach deploy / upgrade key material?**
 ```

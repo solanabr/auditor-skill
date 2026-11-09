@@ -5,9 +5,10 @@
 Everything else in auditor-skill is pre-deployment — find the flaw before an
 attacker does. This track is for the morning after: a protocol may already have
 been attacked, and the evidence is in the chain's transaction history. It ships
-two commands, `/auditor:hunt` and `/auditor:respond`, and one agent,
-`incident-responder`: the commands keep you in the loop (arguments, approvals, the
-collector, results), and the agent does all reading and analysis of the corpus.
+two commands, `/auditor:hunt` and `/auditor:respond`, one agent,
+`incident-responder`, and one skill, `auditor:dnr-analyze`: the commands keep you in
+the loop (arguments, approvals, the collector, results), and the agent does all
+reading and analysis of the corpus, one phase at a time, as the skill's fork.
 Back to the [docs index](README.md).
 
 The normative contract — the hard rules, the verdict ladder, the `incident_<n>/`
@@ -36,18 +37,31 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
 ## Inputs
 
 - **Your own corpus** (preferred): point `--logs` at a directory of
-  `getTransaction` JSONL, a Geyser/indexer export, or service logs. A line the
-  recipes cannot read is skipped and counted as a collection gap, never guessed
-  at: a non-integer amount, for example, is never rounded.
+  `getTransaction` JSONL, a Geyser/indexer export, or service logs. The command
+  copies it into `incident_<n>/logs/` first, since the analysis tools read only
+  files inside the run directory. The copy is the only step of getting your
+  corpus that asks: Claude Code asks about a `cp` with flags from outside the
+  working directory whatever the rules say, so an interactive run prompts you
+  once for it, and a `claude -p` run is refused it. A copy that is or holds a
+  symbolic link, or that brings Claude Code project config in (`preflight.sh`
+  runs again on it), stops the run. A line the recipes cannot read is skipped and
+  counted as a collection gap, never guessed at: a non-integer amount, for
+  example, is never rounded.
 - **Collected from RPC** (gated): with no `--logs`, the command shows you the
   addresses, window, caps and estimated call count and asks before the one shipped
   collector runs. Set `RPC_URL` in the environment (never on the command line);
   the collector finalizes and passes `maxSupportedTransactionVersion: 1`, which is
   mandatory now that v1 transactions are live on mainnet. Non-interactive runs
-  collect only with `--collect`. A long collection runs in the background; one
-  stopped by INT, TERM or HUP, or by a failed write, records what it had not
-  fetched as collection gaps; for one killed outright, the agent records them from
-  its files.
+  collect only with `--collect`, which stands in for your yes to the addresses,
+  window and caps. The commands pre-approve the snapshot and the collector, so in
+  `claude -p` they run too, within the caps your environment sets; the `--logs`
+  copy is refused there (above). The collection runs in the foreground, with a
+  timeout sized from its call count; one that outlasts it moves to the background,
+  and the turn its completion starts has none of the command's pre-approvals, so
+  the command first invokes itself again, which asks unless your settings allow it
+  ([Long steps](permissions-and-isolation.md#long-steps)). One stopped by INT,
+  TERM or HUP, or by a failed write, records what it had not fetched as collection
+  gaps; for one killed outright, the agent records them from its files.
 - **Source** (`--repo`): needed to confirm a flaw and to reach
   `confirmed_exploited`; without it, findings cap at `suspected`.
 
@@ -95,23 +109,79 @@ already captured.
   to or simulates against a public cluster.
 - **MCP servers stay callable in your session.** `/auditor:hunt` and
   `/auditor:respond` hand all reading and analysis of the incident corpus to the
-  `incident-responder` agent, whose tool list has no MCP tools, so it cannot call
-  a signing or transfer tool. The commands themselves run in your session, where
+  `incident-responder` agent, as the fork of the `auditor:dnr-analyze` skill; its
+  tool list has no MCP tools, so it cannot call a signing or transfer tool. The
+  commands themselves run in your session, where
   every connected MCP server stays callable. They call no MCP tool. Before a live
   incident, disconnect or deny write-capable MCP servers (for example, tools that
   transfer or stake).
-- **Not a sandbox.** The commands' `allowed-tools` pre-approve only reading, `Task`
-  and edits under `incident_*/`; they are intent, not confinement. No bundled script
-  is pre-approved, and neither is `jq` (it can print the environment), so each
-  `scripts/dnr/` run and each `jq` query asks for your approval. Real confinement is an isolated run mode
+- **A clean working directory.** Both commands start with
+  `"<auditor-skill root>/scripts/preflight.sh"`, which refuses a working tree that
+  ships Claude Code project config, anywhere in it or in a parent up to the
+  repository root: a `.claude` link, a `.claude/` with skills, commands, agents,
+  hooks, output styles or workflows in it or a `scheduled_tasks.json`, a
+  `.claude/settings.json` or `settings.local.json` with any key beyond `$schema`,
+  `model`, `cleanupPeriodDays` and `includeCoAuthoredBy`, or a `.mcp.json`. It
+  also refuses a linked git worktree: Claude Code loads its main checkout's
+  `.claude/settings.local.json` too, and that checkout's project skills when the
+  worktree has none. Claude Code loads that config beside the plugin's, so a
+  repository's own skill or agent could take the place of one of ours, or its
+  config could carry hooks and MCP servers. Run the commands from an incident
+  workspace of their own: they need no repository. To work inside one, or in a
+  worktree, make a clean copy: clone it to a new directory, delete every
+  `.claude/` and `.mcp.json` in the copy, and start Claude Code there. `CLAUDE.md`
+  and `AGENTS.md` files are listed, not refused; their text is the repository's,
+  never instructions.
+- **What runs without asking.** The commands pre-approve reading, `Task`, edits
+  under `incident_*/`, invoking themselves again and the `auditor:dnr-analyze`
+  skill, and these bundled tools by their paths: the checks `preflight.sh` and
+  `rundir.sh`, the program snapshot and the collector (your `RPC_URL` only, within
+  the caps your environment sets, after your yes), `rpc-read.sh`, `git-ro.sh`, and
+  the runners `probe.sh`, `target.sh` and `run.sh` (in the recorded execution
+  mode). Inside the skill's fork, the offline analysis tools
+  run without a prompt: `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` (jq over
+  run-directory files, with an empty environment) and `audit-logs`, each run
+  directly by its path in the installation and reading only files inside a run
+  directory. `jq` itself, a line through `redact.sh`, the `--logs` copy, the
+  `solana` CLI and anything else that executes code still ask. Pre-approval is
+  not a sandbox: real confinement is an isolated run mode
   ([`OUTPUT-RULES.md` Rule 11](../OUTPUT-RULES.md#rule-11-operating-safety)); the
-  RPC provider that received your addresses is disclosed under Rule 11b.
+  RPC provider that received your addresses is disclosed under Rule 11b, from the
+  rows the snapshot and the collector add to `incident_<n>/disclosures.tsv`.
+  [permissions-and-isolation.md](permissions-and-isolation.md) has the whole
+  picture.
+- **Approving the skill.** A command's pre-approvals last for the turn that
+  started it. When the command goes on after one of your replies (a yes to a
+  collection, say), it first invokes itself again through the Skill tool
+  (`auditor:hunt --resume <step> incident_<n>`, or `auditor:respond …`), which
+  gives the new turn the command's pre-approvals again, `auditor:dnr-analyze`
+  among them; Manual mode asks about that resume call. To skip that, add
+  `"Skill(auditor:hunt *)"`, `"Skill(auditor:respond *)"` and
+  `"Skill(auditor:dnr-analyze *)"` to `permissions.allow` in your user settings
+  (`~/.claude/settings.json`), or the whole list in
+  [Turns and resuming](permissions-and-isolation.md#turns-and-resuming).
+  Answering "don't ask again" at the prompt can save the rule in a
+  `.claude/settings.local.json` instead: at the root of the git repository that
+  holds the working directory (the main checkout's root, for a worktree), or in the
+  working directory itself outside a repository; and `preflight.sh` refuses that
+  file on the next run, since a `permissions` key is not on its list. Move its
+  `permissions.allow` entries to `~/.claude/settings.json` and delete the file. The
+  fork keeps its own pre-approvals while it runs, after your messages too.
 - **Recipes:** [`scripts/dnr/`](../scripts/dnr/) — profiling, log-frame attribution,
   and exact balance deltas, each checked against adversarial fixtures by
   `scripts/tests/test-dnr.sh`. They share one input contract: a line they cannot
-  read is counted, never echoed, and a corpus path that is a symbolic link is
-  refused.
-- **Scripts run from the installation, never from the audited repo.** The commands
-  invoke them by absolute path, `"<auditor-skill root>/scripts/dnr/…"`, and run
-  python as `python3 -I`, so a same-named script, or a `json.py` the repo ships in
-  the working directory or on `PYTHONPATH`, never runs in their place.
+  read is counted, never echoed, and they read only regular files with one name in
+  `incident_<n>/`, by paths relative to the working directory with no symbolic
+  link on the way, refusing any other before they read anything. When
+  [`audit-logs`](power-tools.md#audit-logs) is built in the installation, the
+  fork runs it first: the same figures from one offline binary, checked against
+  the scripts by `scripts/tests/test-audit-logs.sh`. Build it again after every
+  update. Without it, or when it reports a stale build, the fork runs the
+  scripts.
+- **Scripts run from the installation, never from the audited repo.** The fork
+  runs them by absolute path, `"<auditor-skill root>/scripts/dnr/…"`, with nothing
+  in front, and the python ones open with a bash front end that runs them as
+  `python3 -I`, with a `python3` found from `/` on a `PATH` without
+  working-directory entries, so a same-named script, a `python3`, or a `json.py`
+  the repo ships in the working directory or on `PYTHONPATH`, never runs in their
+  place.

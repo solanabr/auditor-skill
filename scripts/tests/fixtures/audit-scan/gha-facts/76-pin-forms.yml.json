@@ -1,0 +1,67 @@
+{
+  "name": "f76-pin-forms",
+  "triggers": [
+    "push"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "build",
+      "line": 8,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 11,
+          "uses": "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 12,
+          "uses": "example/quoted-action@0123456789abcdef0123456789abcdef01234567",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 13,
+          "uses": "example/single-quoted-action@89abcdef0123456789abcdef0123456789abcdef",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 14,
+          "uses": "example/monorepo/sub/action@fedcba9876543210fedcba9876543210fedcba98",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 15,
+          "uses": "example/bare-action@1111111111111111111111111111111111111111",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 17,
+          "uses": "example/flow-action@2222222222222222222222222222222222222222",
+          "with": [
+            {
+              "key": "level",
+              "value": "1"
+            }
+          ],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "release",
+      "line": 18,
+      "permissions": [],
+      "uses": "example/workflows/.github/workflows/release.yml@3333333333333333333333333333333333333333",
+      "steps": []
+    }
+  ],
+  "unknown": []
+}

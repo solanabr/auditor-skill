@@ -1,0 +1,26 @@
+{
+  "name": "f108-agent-option-backslash",
+  "triggers": [
+    "issue_comment"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "agent",
+      "line": 10,
+      "if": "contains(github.event.comment.body, '@claude')",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 14,
+          "run": "claude --model \"x\\\"y\" -p \"fix it\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

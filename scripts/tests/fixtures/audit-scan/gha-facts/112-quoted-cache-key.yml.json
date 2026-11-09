@@ -1,0 +1,81 @@
+{
+  "name": "f112-quoted-cache-key",
+  "triggers": [
+    "push"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "publish",
+      "line": 10,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 13,
+          "uses": "actions/setup-python@v5",
+          "with": [
+            {
+              "key": "cache",
+              "value": "pip"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 16,
+          "uses": "actions/setup-node@v4",
+          "with": [
+            {
+              "key": "node-version",
+              "value": "22"
+            },
+            {
+              "key": "cache",
+              "value": "npm"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 18,
+          "uses": "actions/setup-java@v4",
+          "with": [
+            {
+              "key": "distribution",
+              "value": "temurin"
+            },
+            {
+              "key": "cache",
+              "value": "gradle"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 22,
+          "uses": "actions/setup-dotnet@v4",
+          "with": [
+            {
+              "key": "cache",
+              "value": "true"
+            },
+            {
+              "key": "dotnet-version",
+              "value": "8"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 24,
+          "run": "make publish",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

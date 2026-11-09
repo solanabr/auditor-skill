@@ -1,0 +1,37 @@
+{
+  "name": "f05-workflow-run-head-checkout",
+  "triggers": [
+    "workflow_run"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "sync",
+      "line": 10,
+      "if": "github.event.workflow_run.head_branch == 'main'",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 14,
+          "uses": "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8",
+          "with": [
+            {
+              "key": "ref",
+              "value": "${{ github.event.workflow_run.head_branch }}"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 17,
+          "run": "./scripts/sync.sh && git push",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

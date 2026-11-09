@@ -1,0 +1,11 @@
+{
+  "resource": {
+    "github_actions_runner_group": {
+      "release": {
+        "name": "release-runners",
+        "visibility": "selected",
+        "allows_public_repositories": false
+      }
+    }
+  }
+}

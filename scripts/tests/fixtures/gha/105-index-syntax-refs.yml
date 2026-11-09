@@ -1,0 +1,39 @@
+# Fixture: a reusable workflow and pull_request_target jobs that read the ref, the fork repository and the PR title
+# through index syntax (github['sha'] reads what github.sha reads); R7 lists each ref and repository line, and R6
+# the expressions that index github or github.event.
+name: f105-index-syntax-refs
+on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs['sha'] }}
+      - run: make
+  matrix:
+    strategy:
+      matrix:
+        head: ['${{ github.event.pull_request.head.sha }}']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix['head'] }}
+      - run: make
+  fork:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github['event']['pull_request']['head']['repo']['full_name'] }}
+          ref: ${{ github.event['pull_request']['head']['sha'] }}
+      - run: echo "${{ github.event.pull_request['title'] }}"

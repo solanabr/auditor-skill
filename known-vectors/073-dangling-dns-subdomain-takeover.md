@@ -14,7 +14,7 @@ DNS CNAME points to deprovisioned service (Heroku, S3, Azure) — attacker claim
 
 **Step 1: List DNS records**
 ```
-# Check for dangling CNAME records:
+# Check for dangling CNAME records (dig asks for approval: it queries a name chosen at run time):
 dig CNAME api.yourdomain.com +short
 dig CNAME staging.yourdomain.com +short
 dig CNAME docs.yourdomain.com +short
@@ -23,7 +23,7 @@ dig CNAME docs.yourdomain.com +short
 
 **Step 2: Check if CNAME targets are live**
 ```
-# For each CNAME: does the target service still exist?
+# For each CNAME: does the target service still exist? (curl asks for approval: it contacts a host chosen at run time)
 curl -s -o /dev/null -w "%{http_code}" https://CNAME_TARGET 2>/dev/null
 ```
 - ✅ PASS: All CNAME targets respond (service is active)

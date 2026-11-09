@@ -11,12 +11,13 @@ Full method and the verdict rules these feed: `references/detection-response/`.
 
 | File | What it does |
 |------|--------------|
-| `snapshot-program.sh` | Step 1 of every run: read-only `solana program show` + `dump` (loader-v4: `program-v4 show` + `download`) of each implicated program into `incident_<n>/bin/`, from a throwaway CLI config (no URL in argv, no keypair to sign with), printing the last-deployed slot (`n/a (immutable loader)` for BPFLoader2), the zero-trimmed sha256 and, for loader-v4, the `status=` for the ledger — before a hotfix can overwrite the incident binary. The slot is read again after the dump, and every `show` must name the requested id as its Program Id. A snapshot is never overwritten: a later one of a redeployed program is kept as `bin/<id>@<slot>.so`, and a program that has not changed prints `unchanged`. Every kept snapshot is checked first: each must still be a regular ELF file beside a regular `.show.txt`, later ones need the first, and bytes on-chain that differ from any snapshot kept at the same or a later slot stop the run with a blocker, even when another one matches. An `unchanged` line gives the authority and status read now. An id that is not a program stops it with a blocker naming the account's owner; when a loader owns the account, the blocker tells a data account of the loader (check the id) from a program neither `show` could read (run again). Refuses an id that is not a base58 32-byte key, and a run directory with a `.` or `..` component, reached through a symbolic link inside the working directory, that is a symbolic link, holds one, is tracked by git, or that git or find cannot check; it checks the run directory again just before its first write. |
-| `collect.sh` | The gated collector: pages signature history (failed transactions included — they are attempt evidence) and fetches transactions into a local JSONL corpus, integers exact on any jq. Refuses without `--confirmed`, on any input that is not base58, when `--out` already holds any corpus file, when `--out` has a `.` or `..` component or is reached through a symbolic link inside the working directory, and when `--out` or the `incident_*` directory above it is a symbolic link, holds one, is tracked by git, or cannot be checked by git or find; writes the corpus files only through the descriptors it opened when it created them; read-only RPC only; capped (`--max-tx` counts every `getTransaction` call) and stops after ten failed calls in a row; pages until an empty page (a shorter page ends the history only on the cap's last page); reports when the page cap stops on a full page, where older history may exist, and writes every gap (a failed fetch, that page cap, the `--max-tx` cap, a stop, an interrupted run) to `collection-gaps.tsv`. Ends with `transactions fetched: N of M calls` and `collection gaps: N`; a write to the corpus that fails stops the run, with a `[blocker]` line (exit 3) in place of those two lines. |
+| `snapshot-program.sh` | Step 1 of every run: read-only `solana program show` + `dump` (loader-v4: `program-v4 show` + `download`) of each implicated program into `incident_<n>/bin/`, from a throwaway CLI config (no URL in argv, no keypair to sign with), printing the last-deployed slot (`n/a (immutable loader)` for BPFLoader2), the zero-trimmed sha256 and, for loader-v4, the `status=` for the ledger — before a hotfix can overwrite the incident binary. The slot is read again after the dump, and every `show` must name the requested id as its Program Id. A snapshot is never overwritten: a later one of a redeployed program is kept as `bin/<id>@<slot>.so`, and a program that has not changed prints `unchanged`. Every kept snapshot is checked first: each must still be a regular ELF file beside a regular `.show.txt`, later ones need the first, and bytes on-chain that differ from any snapshot kept at the same or a later slot stop the run with a blocker, even when another one matches. An `unchanged` line gives the authority and status read now. An id that is not a program stops it with a blocker naming the account's owner; when a loader owns the account, the blocker tells a data account of the loader (check the id) from a program neither `show` could read (run again). Takes exactly `<program_id> incident_<n>`: refuses an id that is not a base58 32-byte key, and any run directory but `incident_<n>`, relative, directly in the working directory, a real directory that holds no symbolic link, is tracked by git in no letter case and has a `.gitignore` holding `*`, or that git or find cannot check; it checks the run directory again just before its first write. Before the CLI reads from the endpoint, one row of `incident_<n>/disclosures.tsv` records the provider domain and the program id. |
+| `collect.sh` | The gated collector: pages signature history (failed transactions included — they are attempt evidence) and fetches transactions into a local JSONL corpus, integers exact on any jq. Refuses without `--confirmed`, on any input that is not base58, on a `--max-pages`, `--max-tx` or address count over the caps set in the environment (`AUDITOR_RPC_MAX_PAGES`, `AUDITOR_RPC_MAX_TX`, `AUDITOR_RPC_MAX_ADDRESSES`), when `--out` already holds any corpus file, and on any `--out` but `incident_<n>/corpus` or `incident_<n>/corpus-<k>` in a run directory that passes the same checks as `snapshot-program.sh`'s; records the provider domain and the addresses, and a `--before` signature, in `incident_<n>/disclosures.tsv` before its first call; writes the corpus files only through the descriptors it opened when it created them; read-only RPC only; capped (`--max-tx` counts every `getTransaction` call) and stops after ten failed calls in a row; pages until an empty page (a shorter page ends the history only on the cap's last page); reports when the page cap stops on a full page, where older history may exist, and writes every gap (a failed fetch, that page cap, the `--max-tx` cap, a stop, an interrupted run) to `collection-gaps.tsv`. Ends with `transactions fetched: N of M calls` and `collection gaps: N`; a write to the corpus that fails stops the run, with a `[blocker]` line (exit 3) in place of those two lines. |
 | `profile.sh` | Baseline a `transactions.jsonl`: outcome / version histograms, time window, fee-payer, signer and top-level-program inventories — all from structural fields, never from log text. Reads under the input contract (below). |
 | `frames.py` | Attribute each `Program log:` / `Program data:` line to the program frame that emitted it, as JSONL. Walks the log array one element at a time with anchored regexes. With `--instructions`, emits the runtime-recorded instructions instead (`ix`: top-level and CPI, program, accounts, data as given) and the runtime invoke lines joined to them (`invoke`), which is how Leg 1 names the instruction that ran. |
-| `deltas.py` | `lamports` or `tokens`: per-account / per-(token account, mint) balance movement, with the owner as a label, computed in Python integers, successful transactions only. An amount or balance that is not an exact integer makes its line malformed; it is never rounded. A balance whose index has no account key is printed as `#<index>`, and a token balance with no `accountIndex` as `#?`, each counted in a note, never left out or merged with another account. |
+| `deltas.py` | `lamports` or `tokens`: per-account / per-(token account, mint) balance movement, with the owner as a label, computed in Python integers, successful transactions only. An amount or balance that is not an exact integer makes its line malformed; it is never rounded. A balance whose index has no account key is printed as `#<index>`, and a token balance with no `accountIndex` as `#?`, each counted in a note, never left out or merged with another account. With `--by`, the sums of those rows instead, exact: per account (`lamports --by account`), per owner and mint (`tokens --by owner,mint`), or per mint (`tokens --by mint`). |
 | `redact.sh` | A stderr/stdout filter that strips provider credentials (e.g. `?api-key=…`, a `/v2/<key>` path, a token in a subdomain, curl's verbose request lines) before text reaches the transcript, the ledger, or a report. |
+| `jq-ro.sh` | `jq` over files inside a run directory, with an empty environment: `-c -r -s -e -n` and `--arg`/`--argjson` only, no option that reads a file, module or library path, no filter with `import`, `include` or `modulemeta`, and every input a confined regular file with one link inside `audit_<n>/` or `incident_<n>/`. Never reads standard input; prints control characters other than tab and newline as `?`; exits with jq's status, or 2 when it refuses. `scripts/tests/test-jq-ro.sh` checks it. |
 | `fixtures/` | Committed adversarial corpora the self-test and the docs cite. |
 
 ## Running them
@@ -25,15 +26,18 @@ Always from the auditor-skill installation, by absolute path —
 `<auditor-skill root>/scripts/dnr/…`, the root the invoking command gave you
 (`OUTPUT-RULES.md` Rule 11e) — and never as a `scripts/…` path relative to the
 working directory, which during an incident is usually the
-audited repo and may ship a same-named file. The python recipes run as
-`python3 -I` (isolated: neither the working directory nor `PYTHONPATH` reaches
-`sys.path`), so they import only the stdlib and never a sibling module.
+audited repo and may ship a same-named file. Run the three analysis recipes
+directly by that quoted path, from the working directory under audit: their
+first lines run `profile.sh` under `/bin/bash`, and the python recipes, through a
+bash front end, as `python3 -I` (isolated: neither the working directory nor
+`PYTHONPATH` reaches `sys.path`), so they import only the stdlib and never a
+sibling module.
 `snapshot-program.sh` hashes with `python3 -I` for the same reason.
 
 ```bash
-bash "<auditor-skill root>/scripts/dnr/profile.sh" [--out <file>] <corpus.jsonl>...
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" [--instructions] [--out <file>] <corpus.jsonl>...
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens|lamports [--out <file>] <corpus.jsonl>...
+"<auditor-skill root>/scripts/dnr/profile.sh" [--out <file>] <corpus.jsonl>...
+"<auditor-skill root>/scripts/dnr/frames.py" [--instructions] [--out <file>] <corpus.jsonl>...
+"<auditor-skill root>/scripts/dnr/deltas.py" tokens|lamports [--by account|owner,mint|mint] [--out <file>] <corpus.jsonl>...
 ```
 
 Each takes every corpus of an incident at once
@@ -42,9 +46,14 @@ than one of them holds once, by signature, saying how many copies it skipped.
 
 A collection is the slow step: `collect.sh` makes up to addresses ×
 `--max-pages` + `--max-tx` calls, one at a time, each up to 60 seconds, and
-usually well under one second on a healthy endpoint. Run a long one in the
-background, or with a timeout sized from that call count; never let a short
-tool timeout cut it off unnoticed. A run stopped by INT, TERM or HUP records
+usually well under one second on a healthy endpoint. No argument raises the caps
+set in the environment: `AUDITOR_RPC_MAX_PAGES` (default 100),
+`AUDITOR_RPC_MAX_TX` (default 10000) and `AUDITOR_RPC_MAX_ADDRESSES` (default
+25); a default over a cap set lower drops to that cap. `/auditor:hunt` and
+`/auditor:respond` run it in the foreground with a timeout sized from that call
+count: a Bash call that outlasts its timeout moves to the background, and the
+turn its completion starts has none of the command's pre-approvals. Run by hand,
+a long one can go in the background. A run stopped by INT, TERM or HUP records
 what it had not finished as collection gaps and prints its closing lines. A run
 whose write to a corpus file fails (a full disk, say) stops there: it records
 what it had not finished as gaps while `collection-gaps.tsv` still takes them,
@@ -63,29 +72,45 @@ one block of code that is the same in all three files. It is copied, not shared,
 because `python3 -I` keeps a sibling module off `sys.path`;
 `scripts/tests/test-dnr.sh` fails when the copies differ.
 
-- **Inputs.** Every named file is checked before anything is printed. A file
-  that is a symbolic link, or that is reached through a directory link inside
-  the working directory, is refused (exit 2), since an approval prompt shows the
-  path, not where it leads. A file that cannot be read, or is not a regular file,
-  is an error (exit 1); `profile.sh` refuses a missing or non-regular file as a
-  usage error (exit 2). With no file named, `frames.py` and `deltas.py` read
-  stdin. A message shows a path escaped to printable ASCII and cut at 120
-  characters, never raw.
+- **Inputs.** A named file must be a regular file with one name in a run
+  directory `incident_<n>/` of the working directory: named by a path relative
+  to it, with no empty, `.` or `..` component, reached through no symbolic link,
+  in a run directory that is a real directory whose `.gitignore` holds `*`
+  (`OUTPUT-RULES.md` Rule 11d). Every named file is checked before anything is
+  read, and any other is refused (exit 2): a missing file, a directory or a FIFO,
+  a file with a second name (a hard link), a link or a path through one, an
+  absolute path, a file outside every run directory or in `audit_<n>/`. An
+  approval prompt shows the path, not where it leads or what else names it. A
+  regular file that cannot be opened, or that another file has replaced since it
+  was checked, is an error (exit 1). With no file named, `frames.py` and
+  `deltas.py` read stdin. Copy a corpus kept elsewhere, such as a `--logs`
+  export, into the run directory (`incident_<n>/logs/`) before a recipe reads it.
+  A refusal is one line on stderr, `<recipe>: refused: <reason>`, and shows a path
+  escaped to printable ASCII and cut at 120 characters, never raw.
+  The recipes do not ask git whether it tracks the run directory, and on a
+  case-insensitive filesystem a directory named `INCIDENT_1` is read as
+  `incident_1/`: make run directories with
+  `"<auditor-skill root>/scripts/rundir.sh" new incident`, and check one before
+  reusing it with `"<auditor-skill root>/scripts/rundir.sh" check incident_<n>`.
 - **Lines.** Input is read as bytes and split on LF only, so a CR is not a line
   break. Surrounding ASCII whitespace is stripped (a CRLF line end is fine), and
-  a blank line is skipped without being counted.
+  a blank line is skipped without being counted. A line longer than 64 MiB, its
+  LF left out, is malformed: it is read past to its LF without being kept. A
+  closed stdin reads as empty.
 - **Text.** A line must be valid UTF-8 and one JSON object. `NaN`, `Infinity`,
   a number too large for a float, and a `\u` escape that leaves a lone surrogate
-  each make it malformed. So does an integer literal of more than 20 digits, or
-  `-0`, anywhere in the line, in a field a recipe reads or not: an RPC response
-  holds neither, and the bound keeps every Python reading the same lines (3.11
-  and later refuse to convert an integer of more than 4300 digits). So does
-  nesting deeper than 128 (jq gives an object two of its 256 parser slots, so
-  it reads at most 128 nested objects, and every recipe stops at that depth):
-  the depth is counted on the line's text before it is parsed, as the brackets
-  `[` and `{` outside strings, escapes honoured, the top-level object being 1,
-  so a deep value that a later duplicate key replaces counts too. A raw CR
-  between JSON tokens is whitespace; inside a string it is invalid JSON.
+  anywhere in the line (in a value a later duplicate key replaces too, since jq
+  refuses a lone high one wherever it is) each make it malformed. So does an
+  integer literal of more than 20 digits, or `-0`, anywhere in the line, in a
+  field a recipe reads or not: an RPC response holds neither, and the bound
+  keeps every Python reading the same lines (3.11 and later refuse to convert an
+  integer of more than 4300 digits). So does nesting deeper than 128 (jq gives
+  an object two of its 256 parser slots, so it reads at most 128 nested objects,
+  and every recipe stops at that depth): the depth is counted on the line's text
+  before it is parsed, as the brackets `[` and `{` outside strings, escapes
+  honoured, the top-level object being 1, so a deep value that a later duplicate
+  key replaces counts too. A raw CR between JSON tokens is whitespace; inside a
+  string it is invalid JSON.
 - **Shape.** Every field a recipe reads must have the type it reads it as:
   `meta`, `transaction` and `message` are objects; `signatures`, `accountKeys`,
   `instructions`, `logMessages`, `innerInstructions` and the balance arrays are
@@ -105,11 +130,15 @@ because `python3 -I` keeps a sibling module off `sys.path`;
 - **The fixed character list** (`_UNSAFE` in the block): the C0 controls
   U+0000–U+001F, DEL U+007F, the C1 controls U+0080–U+009F, the line and
   paragraph separators U+2028 and U+2029, the bidirectional controls U+061C,
-  U+200E, U+200F, U+202A–U+202E and U+2066–U+2069, and the zero-width characters
-  U+200B–U+200D and U+FEFF. The list is fixed: it does not follow the Unicode
-  tables of the Python that runs a recipe, so the same lines are malformed and
-  the same characters escaped under every version. Every other character,
-  assigned or not, counts as printable.
+  U+200E, U+200F, U+202A–U+202E and U+2066–U+2069, and the code points Unicode
+  marks default-ignorable, which text shows as nothing, so two keys that differ
+  only in one look the same: U+00AD, U+034F, U+061C, U+115F–U+1160,
+  U+17B4–U+17B5, U+180B–U+180F, U+200B–U+200F, U+202A–U+202E, U+2060–U+206F,
+  U+3164, U+FE00–U+FE0F, U+FEFF, U+FFA0, U+FFF0–U+FFF8, U+1BCA0–U+1BCA3,
+  U+1D173–U+1D17A and U+E0000–U+E0FFF. The list is fixed: it does not follow the
+  Unicode tables of the Python, jq or OS that runs a recipe, so the same lines
+  are malformed and the same characters escaped under every version. Every other
+  character, assigned or not, counts as printable.
 - **Malformed lines are counted, never echoed and never fatal.** A line that
   breaks a rule above is skipped. Each recipe then prints one note per input on
   stderr (`profile.sh` also closes its report with it):
@@ -131,33 +160,67 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   pre and post sides by, so each side is a row of its own named `#?`, the pre
   balance negative and the post balance positive, counted in a note of its own:
   `deltas.py: N row(s) name a token balance that has no accountIndex, as #?: …`.
-- **Output.** `frames.py` and `deltas.py` write UTF-8 whatever the locale, and
-  neither prints a character of the fixed list raw. `deltas.py` doubles a
-  backslash and escapes, in every column, a tab, newline and carriage return as
-  `\t`, `\n`, `\r`, and every other character of the list as `\xNN` below
-  U+0100 and `\uNNNN` above it (`\x00`, `\x85`, `\u2028`, `\u202e`, lowercase
-  hex). `frames.py` writes JSON: the encoder escapes the C0 controls, and every
-  other character of the list is written as a `\uNNNN` escape (lowercase hex),
-  so the value read back is unchanged.
+- **Output.** No recipe prints a character of the fixed list raw, and
+  `frames.py` and `deltas.py` write UTF-8 whatever the locale. `deltas.py`
+  doubles a backslash and escapes, in every column, a tab, newline and carriage
+  return as `\t`, `\n`, `\r`, and every other character of the list as `\xNN`
+  below U+0100, `\uNNNN` up to U+FFFF and `\UNNNNNNNN` above (`\x00`, `\x85`,
+  `\xad`, `\u2028`, `\u202e`, `\U000e0041`, lowercase hex). `frames.py` writes
+  JSON: the encoder escapes the C0 controls, and every other character of the
+  list is written as a `\uNNNN` escape (lowercase hex; above U+FFFF, the
+  surrogate pair JSON writes, `\udb40\udc41`), so the value read back is
+  unchanged. `profile.sh` prints a `version` that is not a string as its JSON
+  text, the same way: jq escapes the C0 controls and DEL, and every other
+  character of the list becomes a `\uNNNN` escape.
 - **Counting.** `profile.sh` counts and orders values byte by byte (`sort` and
   `uniq` run under `LC_ALL=C`), so two keys that differ only in a character a
   locale's collation ignores stay two lines, and ties fall in the same order under
   every locale.
-- **Saved output.** To keep an output, pass `--out <file>` with a new name,
-  never a shell redirection into `incident_<n>/`. The recipe writes a temporary
-  file beside `<file>` and gives it that name only when the run completes, so a
-  run that is cut short never leaves a partial output under the final name, and
-  one stopped by TERM removes its temporary file. An output never replaces a
+- **Saved output.** To keep an output, pass `--out <file>`, a new `.jsonl`,
+  `.tsv` or `.txt` name directly in a run directory (`incident_<n>/<name>`), or
+  send stdout with `>` to a new name there. With `--out`, the recipe writes a
+  temporary file beside `<file>` and gives it that name only when the run
+  completes, so a run that is cut short never leaves a partial output under the
+  final name, and one stopped by TERM, INT or HUP removes its temporary file (a
+  signal the caller ignores stays ignored). An output never replaces a
   file: an `--out` that already exists (an input corpus among them) is refused
-  (exit 2), and so is one that is a symbolic link or reached through one inside
-  the working directory; one whose directory is missing is an error (exit 1).
-  The recipe opens the directory of `<file>` once, one name at a time, following
-  a symbolic link only above the working directory, and makes, names and removes
-  its files through it: a directory on the way that is moved, or replaced by a
-  link, while the recipe runs never moves the output elsewhere. `profile.sh`
-  writes its report into its private temp directory first and opens the
-  directory of `<file>` only once the report is whole, so a link that is there
-  by then is refused.
+  (exit 2), and so is one that is a symbolic link, in a subdirectory, in a run
+  directory that is a link or has no `.gitignore` of `*`, outside every run
+  directory, or of another kind. The recipe opens the run directory once, from
+  the working directory and never through a symbolic link, makes sure it is the
+  directory it checked, and makes, names and removes its files through it: a run
+  directory that is moved, or replaced by a link, while the recipe runs never
+  moves the output elsewhere. `profile.sh` writes its report into its private
+  temp directory first, then checks `--out` again and opens the run directory
+  only once the report is whole, so a link that is there by then is refused.
+- **Entry points.** Each recipe refuses to run (exit 2) from an installation
+  inside the working directory, or from a path, as it was invoked or with its
+  links resolved, holding a quote, `$`, a backtick, a backslash or a control
+  character, which its quoted call could not match as written. Its options come
+  before the corpus paths, each at most once; an unknown or repeated option is
+  refused (exit 2). `profile.sh`, and the bash front end that opens `frames.py`
+  and `deltas.py`, source `scripts/lib/confine.sh`, which sets `LC_ALL=C` and
+  `umask 077` and keeps only `PATH` entries outside the working directory and
+  the tree it lies in (the outermost directory above it, below your home, that
+  holds a `.git`). Each looks `python3` up on that `PATH` from `/`, so no version file in the working
+  directory (a `.python-version` or `.tool-versions` that a pyenv, asdf or mise
+  shim reads) picks it, and runs the recipe by the absolute path that interpreter
+  reports; one inside the working directory is refused (exit 2), and no `python3`
+  that runs is a named blocker (exit 3). The same block does this in all three.
+  A `python3` that a `PATH` entry outside them names is trusted, with its
+  environment's `.pth` files; a virtual environment the repository keeps lies
+  inside the tree, so its `python3` is never the one taken.
+  `profile.sh`'s private temp directory must lie outside the working directory
+  too, and it runs its `jq` queries from `/` with `HOME` set to a directory that
+  does not exist, so no `~/.jq` is read.
+- **audit-logs.** `tools/auditor-tools/audit-logs` is the same three recipes as
+  one binary, and `scripts/tests/test-audit-logs.sh` fails when its output,
+  notes, exit status or refusals differ from these scripts'. A change to what a
+  recipe prints, accepts or refuses goes into both. Build it again after every
+  update: a binary built before a change to one of these recipes, to
+  `scripts/lib/confine.sh` or to its own `Cargo.toml` or `src/` refuses to run
+  (exit 4, `audit-logs: stale build: …`) until it is rebuilt, and one built
+  before any other change runs as before.
 
 ## Two hazards these encode, and why
 
@@ -191,12 +254,19 @@ account's current value — at `finalized`, not in log text. See
 
 ## Not a sandbox
 
-These scripts run on the auditor's machine and read whatever corpus they are
-pointed at; `collect.sh` makes outbound RPC calls. None of them is pre-approved by
-the commands' `allowed-tools`, so each run asks for approval; those lists, and these
-recipes, shape intent and are not a security boundary (see
-`references/detection-response/README.md` § "allowed-tools is not a sandbox"). Confinement, when you need it, is an isolated
-run mode (`OUTPUT-RULES.md` Rule 11a).
+These scripts run on the auditor's machine; `collect.sh` and `snapshot-program.sh`
+make outbound RPC calls. The `auditor:dnr-analyze` skill pre-approves `profile.sh`,
+`frames.py`, `deltas.py` and `jq-ro.sh` inside its fork, and `audit-logs` from
+`tools/auditor-tools/`, each run directly by its path and reading only files inside
+a run directory. `/auditor:hunt` and `/auditor:respond` pre-approve
+`snapshot-program.sh` and `collect.sh`, which take only `incident_<n>` paths and
+the endpoint and caps your environment sets, and run the collector only with the
+addresses, window and caps you approved (`--confirmed`); a line that pipes into
+`redact.sh` still asks. Each script's own checks bound what it can do; neither they
+nor those pre-approvals confine the agent or the machine (see
+`references/detection-response/README.md` § "allowed-tools is not a sandbox").
+Confinement, when you need it, is an isolated run mode
+(`OUTPUT-RULES.md` Rule 11a).
 
 ## Local tooling
 

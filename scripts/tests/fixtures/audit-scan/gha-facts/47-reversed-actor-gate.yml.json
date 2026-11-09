@@ -1,0 +1,26 @@
+{
+  "name": "f47-reversed-actor-gate",
+  "triggers": [
+    "pull_request_target"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "build",
+      "line": 9,
+      "if": "${{ 'renovate[bot]' == github.actor }}",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 13,
+          "run": "echo \"privileged build\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

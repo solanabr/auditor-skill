@@ -1,0 +1,14 @@
+# Fixture: a comment-triggered agent CLI whose option value holds an escaped quote before -p; R8 and KV-116 Step 1
+# list it.
+name: f108-agent-option-backslash
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: write
+jobs:
+  agent:
+    if: contains(github.event.comment.body, '@claude')
+    runs-on: ubuntu-latest
+    steps:
+      - run: claude --model "x\"y" -p "fix it"

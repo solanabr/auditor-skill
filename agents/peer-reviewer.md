@@ -1,7 +1,7 @@
 ---
 name: peer-reviewer
 description: Independent reconciliation reviewer — the dual-review second pass. Takes the top-severity confirmed findings and re-derives each one from the code (not from the primary's write-up), reusing the context worksheets to avoid re-reconstruction. Emits CONFIRM / DISPUTE / DOWNGRADE per finding; a DISPUTE forces the finding back through Rule 5b or to [UNCONFIRMED]. Scoped to top-severity only to bound cost.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Write, Edit
 model: opus
 ---
 
@@ -32,3 +32,5 @@ When the bundled Trail of Bits plugins are present (`test -d "${CLAUDE_PLUGIN_RO
 - **DOWNGRADE** — the finding is real but over-severed; give the corrected severity and why (e.g. precondition the primary missed, bound tighter than claimed).
 
 Disagreement between you and the primary forces **re-examination** before anything ships — never silently defer to either side. Return your per-finding verdicts to the orchestrator for reconciliation; `audit-reporter` records the reconciled outcome.
+
+**Tools.** Write and edit files only with the Write and Edit tools, never through a heredoc or a shell redirect: the command that spawned you pre-approves writes under its run directory (`audit_*/` or `incident_*/`) and nowhere else. Run each bundled tool as a Bash call of its own, from the working directory, exactly in the form given here: its quoted absolute path first, with nothing in front (no `bash`, no `cd`, no `VAR=value`), then its arguments, every value written out literally; join no other command to it with `;` or `&&`, pipe it only into `grep`, `head`, `tail` or `wc`, and put no `$` or backtick anywhere in the line, inside quotes too. Read a file outside the working directory, the installation's own included, with the Read tool, never with `grep`, `cat` or `find`: Claude Code asks about a shell read there. Those forms run without a prompt under the command's grant; anything else asks the human, or is denied in a non-interactive run: report it as not run, with the reason, and never work around it.

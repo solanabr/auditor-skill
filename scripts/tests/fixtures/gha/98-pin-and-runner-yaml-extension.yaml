@@ -1,0 +1,11 @@
+# Fixture: a workflow saved as .yaml, with a full-SHA pin and a job on a self-hosted runner; R9 and KV-080
+# Step 8 read .yaml workflows as well as .yml ones.
+name: f98-pin-and-runner-yaml-extension
+on: push
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: [self-hosted, release]
+    steps:
+      - uses: example/release-action@4444444444444444444444444444444444444444 # v1.0.0

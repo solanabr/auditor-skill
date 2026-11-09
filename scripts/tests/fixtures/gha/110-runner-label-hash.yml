@@ -1,0 +1,24 @@
+# Fixture: pull-request jobs whose runs-on label carries a # right after a standard label, which YAML reads as part
+# of the label, since a comment starts only at a # after a blank; KV-080 Step 8 lists those two jobs, and the hosted
+# jobs whose comment follows a blank or a tab stay out.
+name: f110-runner-label-hash
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  hash-label:
+    runs-on: ubuntu-latest#2
+    steps:
+      - run: make test
+  hash-label-quoted-key:
+    "runs-on": macos-15#arm
+    steps:
+      - run: make test
+  tab-comment:
+    runs-on: ubuntu-latest	# hosted, the comment after a tab
+    steps:
+      - run: make test
+  blank-comment:
+    runs-on: windows-latest # hosted, the comment after a blank
+    steps:
+      - run: make test

@@ -1,0 +1,64 @@
+{
+  "name": "f110-runner-label-hash",
+  "triggers": [
+    "pull_request"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "hash-label",
+      "line": 9,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 12,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "hash-label-quoted-key",
+      "line": 13,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 16,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "tab-comment",
+      "line": 17,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 20,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "blank-comment",
+      "line": 21,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 24,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

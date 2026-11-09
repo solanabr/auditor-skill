@@ -1,0 +1,27 @@
+# Hostile argument vectors for scripts/dnr/snapshot-program.sh. test-dnr-collect.sh runs each one in a working
+# directory that holds the run directory incident_1 (made by rundir.sh new incident) and the symbolic link
+# incident_2 (to incident_1), with RPC_URL=https://rpc.example.test/ in the environment and stand-ins for curl and
+# solana on PATH.
+# One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each case prints
+# nothing on stdout, calls no stand-in and changes nothing in the working directory.
+2	snapshot-program.sh: refused: usage: snapshot-program.sh <program_id> incident_<n>	ProgTest11111111111111111111111111111111111
+2	snapshot-program.sh: refused: usage: snapshot-program.sh <program_id> incident_<n>	ProgTest11111111111111111111111111111111111	incident_1	extra
+2	snapshot-program.sh: refused: '-x' is not a base58 program id (32-44 characters of [1-9A-HJ-NP-Za-km-z])	-x	incident_1
+2	snapshot-program.sh: refused: '../../etc' is not a base58 program id (32-44 characters of [1-9A-HJ-NP-Za-km-z])	../../etc	incident_1
+2	snapshot-program.sh: refused: '0OIlProgTest111111111111111111111111111111' is not a base58 program id (32-44 characters of [1-9A-HJ-NP-Za-km-z])	0OIlProgTest111111111111111111111111111111	incident_1
+2	snapshot-program.sh: refused: 'ProgTest1111111111111111111111111111111111' does not decode to a 32-byte public key	ProgTest1111111111111111111111111111111111	incident_1
+2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: /tmp/incident_1	ProgTest11111111111111111111111111111111111	/tmp/incident_1
+2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: ../incident_1	ProgTest11111111111111111111111111111111111	../incident_1
+2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: incident_1/bin	ProgTest11111111111111111111111111111111111	incident_1/bin
+2	snapshot-program.sh: refused: the run directory is a symbolic link: incident_2	ProgTest11111111111111111111111111111111111	incident_2
+2	snapshot-program.sh: refused: the run directory is not an existing directory: incident_3	ProgTest11111111111111111111111111111111111	incident_3
+2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: audit_1	ProgTest11111111111111111111111111111111111	audit_1
+2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: incident_x	ProgTest11111111111111111111111111111111111	incident_x
+2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: incident_1234567	ProgTest11111111111111111111111111111111111	incident_1234567
+2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: ~/incident_1	ProgTest11111111111111111111111111111111111	~/incident_1
+2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: .	ProgTest11111111111111111111111111111111111	.
+2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: incident_1/.	ProgTest11111111111111111111111111111111111	incident_1/.
+2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: -incident_1	ProgTest11111111111111111111111111111111111	-incident_1
+2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: Incident_1	ProgTest11111111111111111111111111111111111	Incident_1
+# A control character (ESC, 0x1B) in a value: the line shows it as ?.
+2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: incident_1?	ProgTest11111111111111111111111111111111111	incident_1

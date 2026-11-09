@@ -21,7 +21,7 @@
 >
 > **Status at time of writing (Sept 2026):** feature gate `txv1aq4pp281K9um3tnPgkfX8UqtFT6wcVW3hNezGLL` is active
 > on testnet and devnet and scheduled for mainnet with the Agave v4.2 line. Always verify with
-> `solana -u <cluster> feature status txv1aq4pp281K9um3tnPgkfX8UqtFT6wcVW3hNezGLL` — never assume from a date.
+> `solana -u <cluster> feature status txv1aq4pp281K9um3tnPgkfX8UqtFT6wcVW3hNezGLL` (asks for approval: no bundled reader covers it) — never assume from a date.
 
 ---
 

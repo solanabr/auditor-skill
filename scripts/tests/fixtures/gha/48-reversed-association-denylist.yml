@@ -1,0 +1,13 @@
+# Fixture: deny-list with the value on the left of !=; every association other than NONE passes.
+name: f48-reversed-association-denylist
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: write
+jobs:
+  command:
+    if: ${{ 'NONE' != github.event.comment.author_association }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "privileged command"

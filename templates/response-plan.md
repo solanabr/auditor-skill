@@ -37,7 +37,8 @@ for the menu and the "do not" list (never `program close`, never `--final`).
 
 - **Code fix:** {file:function; the guard to restore}. Hand off as a
   `/auditor:patch INC-{N}.{k}` vuln entry. The stored PoC keeps the incident-time
-  bytes as `VULNERABLE_SO`; `FIXED_SO` is **our proposed patch build**. The fix holds
+  bytes as `--vulnerable-so`; `--fixed-so` is **our proposed patch build**, a file under
+  `incident_<n>/bin/` or `exec/`. The fix holds
   only on a rejection with the guard's exact error (`assert_exploit_rejected_with!`):
   `run.sh` ends with `… fixed sha256=<our build> (rejected with the pinned error) →
   [PoC-REPRODUCED]`.
@@ -45,7 +46,7 @@ for the menu and the "do not" list (never `program close`, never `--final`).
   copy of the PoC crate whose `tests/fixed_blocked.rs` uses the template's commented
   `assert_exploit_blocked!` and its positive control (their error is not known in
   advance, so a legitimate call must go through on the same bytes and change the
-  account): re-run with `FIXED_SO` set to a fresh dump of the **current on-chain**
+  account): re-run with `--fixed-so` set to a fresh dump of the **current on-chain**
   bytes. It holds when `run.sh` ends with `… fixed sha256=<that dump> (blocked:
   failed, account unchanged) → [PoC-REPRODUCED]`; exit 3 (no assertion ran, a harness
   error, a control that failed) is inconclusive, not a broken fix, and is recorded with

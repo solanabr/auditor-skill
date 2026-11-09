@@ -1,0 +1,85 @@
+# Hostile argument vectors for scripts/rundir.sh. test-rundir.sh runs each one in a working directory that
+# holds the run directory audit_1 (made by rundir.sh new audit), a.rs and src/.
+# One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each
+# case prints nothing on stdout and changes nothing in the working directory.
+64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store	nope
+64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store	--help
+64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store	-x
+64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store	NEW
+64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store	create
+64	rundir: refused: new takes one word: audit or incident	new
+64	rundir: refused: new takes one word: audit or incident	new	audit	x
+64	rundir: refused: new takes audit or incident, not project	new	project
+64	rundir: refused: new takes audit or incident, not Audit	new	Audit
+64	rundir: refused: new takes audit or incident, not AUDIT	new	AUDIT
+64	rundir: refused: new takes audit or incident, not ../audit	new	../audit
+64	rundir: refused: new takes audit or incident, not audit_1	new	audit_1
+64	rundir: refused: new takes audit or incident, not incidents	new	incidents
+64	rundir: refused: new takes audit or incident, not *	new	*
+64	rundir: refused: new takes audit or incident, not -x	new	-x
+64	rundir: refused: check takes one run directory	check
+64	rundir: refused: check takes one run directory	check	audit_1	audit_1
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: audit_	check	audit_
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: audit_1234567	check	audit_1234567
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: Audit_1	check	Audit_1
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: AUDIT_1	check	AUDIT_1
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: audit_1a	check	audit_1a
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: audit_-1	check	audit_-1
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: audit_+1	check	audit_+1
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: audit_1/	check	audit_1/
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: audit_1/poc	check	audit_1/poc
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: /tmp/audit_1	check	/tmp/audit_1
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: ../audit_1	check	../audit_1
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: report_1	check	report_1
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: incident_	check	incident_
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: incident_x	check	incident_x
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: audit_1.bak	check	audit_1.bak
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: src	check	src
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: .git	check	.git
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: .	check	.
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: ./	check	./
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: ~/audit_1	check	~/audit_1
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: -audit_1	check	-audit_1
+64	rundir: refused: the run directory is not an existing directory: audit_99	check	audit_99
+64	rundir: refused: the run directory is not an existing directory: incident_1	check	incident_1
+64	rundir: refused: sub takes a run directory and one subdirectory	sub
+64	rundir: refused: sub takes a run directory and one subdirectory	sub	audit_1
+64	rundir: refused: sub takes a run directory and one subdirectory	sub	audit_1	poc	patches
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc	sub	audit_1	poc
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc/	sub	audit_1	poc/
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc/F-	sub	audit_1	poc/F-
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc/F-12345	sub	audit_1	poc/F-12345
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc/F-1a	sub	audit_1	poc/F-1a
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc/f-1	sub	audit_1	poc/f-1
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc/F-1/x	sub	audit_1	poc/F-1/x
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc/INC-1	sub	audit_1	poc/INC-1
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc/INC-1.2.3	sub	audit_1	poc/INC-1.2.3
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc/INC-1234567.1	sub	audit_1	poc/INC-1234567.1
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc/INC-1.12345	sub	audit_1	poc/INC-1.12345
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc/INC-.1	sub	audit_1	poc/INC-.1
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc/INC-1.	sub	audit_1	poc/INC-1.
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not poc/../x	sub	audit_1	poc/../x
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not ../x	sub	audit_1	../x
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not /tmp	sub	audit_1	/tmp
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not corpus-	sub	audit_1	corpus-
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not corpus-12345	sub	audit_1	corpus-12345
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not corpus-a	sub	audit_1	corpus-a
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not corpus	sub	audit_1	corpus
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not exec	sub	audit_1	exec
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not worksheets	sub	audit_1	worksheets
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not deps	sub	audit_1	deps
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not sast	sub	audit_1	sast
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not bin	sub	audit_1	bin
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not .git	sub	audit_1	.git
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not x/y	sub	audit_1	x/y
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not patches/	sub	audit_1	patches/
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not ./patches	sub	audit_1	./patches
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not Patches	sub	audit_1	Patches
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not bootstrap/x	sub	audit_1	bootstrap/x
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not logs/../..	sub	audit_1	logs/../..
+64	rundir: refused: sub creates poc/<ID>, patches, harnesses, bootstrap, corpus-<k>, logs or rpc, not rpc/	sub	audit_1	rpc/
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: src	sub	src	patches
+64	rundir: refused: the run directory must be a run directory named audit_<n> or incident_<n> in the working directory: ../audit_1	sub	../audit_1	patches
+64	rundir: refused: the run directory is not an existing directory: audit_99	sub	audit_99	patches
+64	rundir: refused: store takes no arguments	store	x
+64	rundir: refused: store takes no arguments	store	--db

@@ -1,0 +1,24 @@
+# Fixture: a tag-triggered release job whose setup actions take their cache input under a quoted key, a key with a
+# blank before its colon, or a key inside a flow mapping; KV-140 Step 6 lists each of those lines.
+name: f112-quoted-cache-key
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          "cache": pip
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, "cache": "npm"}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          cache : gradle
+      - uses: actions/setup-dotnet@v4
+        with: {cache: true, dotnet-version: 8}
+      - run: make publish

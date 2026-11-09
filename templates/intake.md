@@ -39,17 +39,42 @@ HOW TO USE:
 
 ## 1. Scope & Commit Pin
 
-<!-- Feeds report §2.1-2.3. Pin the commit so the report names exactly what was reviewed. -->
+<!-- Feeds report §2.1-2.4. Pin the commit so the report names exactly what was reviewed. -->
 
 | | |
 | ------------------- | ------------------------------------------------- |
 | **Repository**      | {path or URL}                                     |
 | **Branch**          | {branch reviewed}                                 |
-| **Audited commit**  | `{full 40-char SHA}` (`git rev-parse HEAD`)       |
+| **Audited commit**  | `{full 40-char SHA}` (`"<auditor-skill root>/scripts/git-ro.sh" rev-parse HEAD`) |
 | **Scope**           | {FULL / PROGRAM / BACKEND / FRONTEND / DEVOPS}    |
-| **In scope**        | {paths / programs / dirs reviewed}                |
-| **Out of scope**    | {excluded paths + reason — Q44} |
+| **In scope**        | {programs / components reviewed; their paths are in the Layout table} |
+| **Out of scope**    | {what is not reviewed, and why; excluded paths are in the Layout table (Q44)} |
+| **Earlier layout**  | {audit_<k>: reused on the human's yes / audit_<k>: not reused, and why / none} |
 | **audit-mem store** | {path of the store that passed the Rule 11d check / none} |
+
+**Layout**
+
+<!--
+Q39 (where the code, the tests and the build files live) and Q44 (what is excluded).
+FULL-AUDIT 0.2 maps the codebase from this table, this run's only; report §2.4 lists
+every exclusion with its source. Each row's source is one of:
+  Q39 / Q44                                 the human's answer at this intake
+  reused from audit_<k> on the human's yes  an earlier run's row, applied unchanged
+  discovered                                what /intake step 1 found in the tree
+  default                                   discovery/file-map.md
+Every path is relative to the working directory, with no leading / or ~, no ..
+component, and nothing inside a run directory. A path is taken literally unless its
+Note says glob. Keep every cell to printable ASCII, with no |. The next interactive
+/intake in this checkout offers this table again and applies it only on the human's
+yes; --auto never applies it (/intake step 4).
+-->
+
+| Kind | Path or glob | Note | Source |
+| ---- | ------------ | ---- | ------ |
+| Code     | {`programs/vault/src/`} | {on-chain program} | {Q39 / reused from audit_<k> on the human's yes / discovered / default} |
+| Tests    | {`tests/`} | {…} | {…} |
+| Build    | {`Anchor.toml`, `Cargo.toml`, `package.json`} | {…} | {…} |
+| Excluded | {`vendor/`} | {why: vendored upstream code} | {Q44 / reused from audit_<k> on the human's yes} |
 
 ---
 
@@ -173,17 +198,25 @@ text for report §4.6.}
 Q46. OUTPUT-RULES Rule 11a: where target-controlled code (builds, tests, installs,
 Anchor.toml [scripts], and every PoC build) may run. Asked once per audit;
 every later step that executes target code or builds a PoC uses this answer, and
-templates/poc/run.sh receives it as AUDITOR_EXEC_MODE. In the auto flow an
+the answer is also written as one word to audit_<n>/exec-mode, where
+templates/poc/run.sh --crate reads it (the stricter of it and AUDITOR_EXEC_MODE). In the auto flow an
 unanswered Q46 is "native" and goes in §9 with its basis. Outside services are not
 gated — they are listed in the report (Rule 11b).
+Q47: whether DEP-072 / DEP-073 may probe the project's own hosts and buckets,
+read-only and unauthenticated. Unanswered, and always in the auto flow, it is "no"
+and goes in §9; those items then give the owner a command to run instead. On yes,
+list each host and bucket the client named or confirmed; one found in the
+repository's deployment config is shown with its file and line, and nothing found
+later is added.
 -->
 
 | | |
 | ------------------------- | ------------------------------------------- |
 | **Execution mode**        | {isolated (recommended) / native} (Q46)     |
 | **Isolation used**        | {container / VM / Claude Code sandbox — no keys or credentials mounted / N/A (native)} |
-| **PoC build cache**       | {the directory made once with `mktemp -d` for this engagement's `run.sh` calls, passed as `CARGO_TARGET_DIR` — inside the isolated runner in isolated mode / none} |
+| **PoC build cache**       | {the directory `run.sh --new-cache` made once for this engagement's `run.sh` calls, passed as `--cache` — inside the isolated runner in isolated mode / none} |
 | **Outside services**      | {disclosed in the report per Rule 11b — e.g. RPC provider, second-opinion LLM, registry queries / none planned} |
+| **Live probes**           | {yes — read-only, unauthenticated probes of: <each host or bucket the client named, or confirmed from the deployment config at <file>:<line>> / no} (Q47). `<host>` is a DNS name or IPv4 address exactly as `intake.md` §8 lists it: ASCII letters, digits, `-` and `.` only (an IDN in its `xn--` form), with no user, port or path. `<bucket>` is 3–63 lowercase letters, digits, `-` and `.`, beginning and ending with a letter or digit, with no `..`. Refuse anything else. |
 
 ---
 
@@ -204,6 +237,7 @@ human explicitly deferred.
 | {Q11 upgradeable — unanswered} | {assumed present; upgrade authority treated as trusted-but-single unless code shows otherwise} | QUESTIONS.md default |
 | {Q23 oracle — unanswered} | {assumed no oracle unless code shows a feed} | inferred from code |
 | {Q46 execution mode — unanswered} | {native — target-controlled code runs on the auditor's machine; the report states it} | OUTPUT-RULES Rule 11a default |
+| {Q47 live probes — unanswered or auto flow} | {no — DEP-072 / DEP-073 give the owner a command to run and are never `[PASS]` until its output arrives} | QUESTIONS.md Q47 default |
 | {…} | {…} | {…} |
 
 > Every default listed here is carried into the report's **§4.6 Assumptions &

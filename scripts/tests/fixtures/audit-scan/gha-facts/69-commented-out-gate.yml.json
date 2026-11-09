@@ -1,0 +1,26 @@
+{
+  "name": "f69-commented-out-gate",
+  "triggers": [
+    "issue_comment"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "test",
+      "line": 9,
+      "if": "startsWith(github.event.comment.body, '/test')",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 14,
+          "run": "echo \"privileged command\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

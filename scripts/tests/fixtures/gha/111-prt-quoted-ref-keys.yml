@@ -1,0 +1,44 @@
+# Fixture: pull_request_target jobs that check out the PR head or the fork through a ref or repository key written
+# another way: double- or single-quoted, with a blank before its colon, or quoted inside a flow mapping; R7 lists
+# each of those lines.
+name: f111-prt-quoted-ref-keys
+on: pull_request_target
+permissions:
+  contents: read
+jobs:
+  double-quoted:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          "ref": ${{ github.event.pull_request.head.sha }}
+      - run: make
+  single-quoted:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          'ref': '${{ steps.pr.outputs.head_sha }}'
+      - run: make
+  blank-before-colon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository : ${{ github.event.pull_request.head.repo.full_name }}
+          ref : ${{ env.HEAD }}
+      - run: make
+  flow-mapping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {"repository": "${{ github.event.pull_request.head.repo.full_name }}", "ref": "${{ inputs.sha }}"}
+      - run: make
+  base-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          "ref": ${{ github.sha }}
+          'repository': '${{ github.repository }}'
+      - run: make

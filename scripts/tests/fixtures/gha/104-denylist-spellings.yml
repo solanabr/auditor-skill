@@ -1,0 +1,44 @@
+# Fixture: comment jobs gated by deny-lists written as a string contains(), a negated comparison or a contains()
+# compared with a boolean; each lets CONTRIBUTOR and FIRST_TIME_CONTRIBUTOR through, and R3 lists each gate.
+name: f104-denylist-spellings
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: write
+jobs:
+  string-none:
+    if: ${{ !contains('NONE', github.event.comment.author_association) }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "privileged command"
+  string-list:
+    if: ${{ !contains('NONE,FIRST_TIMER', github.event.comment.author_association) }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "privileged command"
+  negated-equality:
+    if: ${{ !(github.event.comment.author_association == 'NONE') }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "privileged command"
+  negated-value-first:
+    if: ${{ !('NONE' == github.event.comment.author_association) }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "privileged command"
+  negated-contains:
+    if: ${{ !(contains(fromJSON('["NONE"]'), github.event.comment.author_association)) }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "privileged command"
+  equals-false:
+    if: ${{ contains(fromJSON('["NONE","FIRST_TIMER"]'), github.event.comment.author_association) == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "privileged command"
+  false-first:
+    if: ${{ false == contains(fromJSON('["NONE"]'), github.event.comment.author_association) }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "privileged command"

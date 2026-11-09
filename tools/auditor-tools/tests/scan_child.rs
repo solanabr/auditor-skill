@@ -1,0 +1,210 @@
+//! audit-scan's walk with parsers that die and hang: the file a parser does not
+//! finish is skipped, the next file goes to a new child, and the scan goes on;
+//! with a report that fills up; and with a scan whose time is spent, which asks
+//! git nothing more. One test, since it enters the tree it scans.
+
+mod common;
+
+use std::ffi::OsStr;
+use std::path::Path;
+use std::time::{Duration, Instant};
+
+use auditor_tools::confine::{Parser, PARSE_TIME};
+use auditor_tools::scan::{scan_path_until, scan_path_with, ScanReport, MAX_REPORT, SCAN_TIME};
+use auditor_tools::workflow::printed_size;
+use common::Wt;
+
+const BIN: &str = env!("CARGO_BIN_EXE_audit-scan");
+
+#[test]
+fn a_file_whose_parser_dies_or_hangs_is_skipped_and_the_scan_goes_on() {
+    let wt = Wt::repo();
+    wt.write("src/a.rs", b"fn a() { let x = 1 + 2; }\n");
+    wt.write("src/b.rs", b"// dies\nfn b() {}\n");
+    wt.write("src/c.rs", b"// hangs\nfn c() {}\n");
+    wt.write("src/d.rs", b"fn d() { v.unwrap(); }\n");
+    wt.write("src/e.rs", b"// dies\nfn e() {}\n");
+    wt.write("src/f.rs", b"fn f() { w.expect(\"w\"); }\n");
+    std::env::set_current_dir(&wt.dir).expect("enter the tree");
+    let mut real = Parser::new(Path::new(BIN));
+    let mut dies = Parser::with(
+        Path::new("/bin/sh"),
+        &[OsStr::new("-c"), OsStr::new("kill -s SEGV $$")],
+    );
+    let mut hangs = Parser::with(Path::new("/bin/sleep"), &[OsStr::new("30")]);
+    let started = Instant::now();
+    let report = scan_path_with(Path::new("src"), MAX_REPORT, SCAN_TIME, &mut |bytes| {
+        if bytes.starts_with(b"// dies") {
+            dies.parse(bytes, PARSE_TIME)
+        } else if bytes.starts_with(b"// hangs") {
+            hangs.parse(bytes, Duration::from_secs(1))
+        } else {
+            real.parse(bytes, PARSE_TIME)
+        }
+    });
+    let took = started.elapsed();
+    assert!(
+        took >= Duration::from_secs(1) && took < Duration::from_secs(8),
+        "took {took:?}"
+    );
+    assert_eq!(report.files_scanned, 3);
+    let skipped: Vec<(&str, &str)> = report
+        .skipped
+        .iter()
+        .map(|s| (s.file.as_str(), s.reason.as_str()))
+        .collect();
+    let why = "the parser could not finish";
+    assert_eq!(
+        skipped,
+        [("src/b.rs", why), ("src/c.rs", why), ("src/e.rs", why)]
+    );
+    let functions: Vec<(&str, &str)> = report
+        .functions
+        .iter()
+        .map(|f| (f.name.as_str(), f.file.as_str()))
+        .collect();
+    assert_eq!(
+        functions,
+        [("a", "src/a.rs"), ("d", "src/d.rs"), ("f", "src/f.rs")]
+    );
+    let panics: Vec<(&str, &str)> = report
+        .panic_sites
+        .iter()
+        .map(|p| (p.kind.as_str(), p.file.as_str()))
+        .collect();
+    assert_eq!(panics, [("unwrap", "src/d.rs"), ("expect", "src/f.rs")]);
+    assert_eq!(report.arithmetic_sites[0].file, "src/a.rs");
+
+    // A report has a cap: the file that would take it past the cap, and each file
+    // after it, is not parsed.
+    wt.write("cap/a.rs", b"fn a() {}\n");
+    let sums = format!("fn b() {{ {} }}\n", "let x = 1 + 2; ".repeat(1_000));
+    wt.write("cap/b.rs", sums.as_bytes());
+    wt.write("cap/c.rs", b"fn c() {}\n");
+    let report = scan_path_with(Path::new("cap"), 10_000, SCAN_TIME, &mut |bytes| {
+        real.parse(bytes, PARSE_TIME)
+    });
+    assert_eq!(report.files_scanned, 1);
+    assert_eq!(report.functions.len(), 1);
+    assert_eq!(report.functions[0].file, "cap/a.rs");
+    let skipped: Vec<(&str, &str)> = report
+        .skipped
+        .iter()
+        .map(|s| (s.file.as_str(), s.reason.as_str()))
+        .collect();
+    let full = "not parsed: the report is full";
+    assert_eq!(skipped, [("cap/b.rs", full), ("cap/c.rs", full)]);
+
+    // Each file a parsed one brings in and that is not parsed is an entry of
+    // `skipped`, which names the file and the one that brings it in, and counts in
+    // the cap as it prints, about twice what the child's answer gives for it here.
+    // The report prints within its cap whether the file fits or not.
+    let dir = format!("brings/{}", "d".repeat(150));
+    let file = format!("{dir}/a.rs");
+    wt.write(&file, "include!(\"x\");\n".repeat(200).as_bytes());
+    for (cap, fits) in [(60_000, false), (200_000, true)] {
+        let report = scan_path_with(Path::new("brings"), cap, SCAN_TIME, &mut |bytes| {
+            real.parse(bytes, PARSE_TIME)
+        });
+        let printed = printed_size(&report, false, 0);
+        assert!(printed <= cap, "{cap}: the report prints {printed} bytes");
+        let skipped: Vec<(&str, &str)> = report
+            .skipped
+            .iter()
+            .map(|s| (s.file.as_str(), s.reason.as_str()))
+            .collect();
+        if fits {
+            assert_eq!(report.files_scanned, 1);
+            assert_eq!(skipped.len(), 200);
+            assert_eq!(
+                skipped[199],
+                (
+                    format!("{dir}/x").as_str(),
+                    format!("not parsed: not named *.rs; {file} brings it in (include!, line 200)")
+                        .as_str()
+                )
+            );
+        } else {
+            assert_eq!(report.files_scanned, 0);
+            assert_eq!(skipped, [(file.as_str(), full)]);
+        }
+    }
+
+    // A scan has a time: once it has run that long, no further file is parsed. The
+    // file it started before then still has the time a file is given.
+    wt.write("slow/a.rs", b"// hangs\nfn a() {}\n");
+    wt.write("slow/b.rs", b"fn b() {}\n");
+    wt.write("slow/c.rs", b"fn c() {}\n");
+    let started = Instant::now();
+    let report = scan_path_with(
+        Path::new("slow"),
+        MAX_REPORT,
+        Duration::from_millis(500),
+        &mut |bytes| {
+            if bytes.starts_with(b"// hangs") {
+                hangs.parse(bytes, Duration::from_secs(1))
+            } else {
+                real.parse(bytes, PARSE_TIME)
+            }
+        },
+    );
+    let took = started.elapsed();
+    assert!(
+        took >= Duration::from_secs(1) && took < Duration::from_secs(8),
+        "took {took:?}"
+    );
+    assert_eq!(report.files_scanned, 0);
+    let skipped: Vec<(&str, &str)> = report
+        .skipped
+        .iter()
+        .map(|s| (s.file.as_str(), s.reason.as_str()))
+        .collect();
+    let spent = "not parsed: the scan's time is spent";
+    assert_eq!(
+        skipped,
+        [
+            ("slow/a.rs", why),
+            ("slow/b.rs", spent),
+            ("slow/c.rs", spent)
+        ]
+    );
+
+    // A run directory is the audit's own only when git says nothing in it is
+    // tracked; once the scan's time is spent git is not asked, and the directory
+    // is walked like any other, each `*.rs` in it not parsed.
+    wt.run_dir("audit_1");
+    wt.write("audit_1/poc/lib.rs", b"fn poc() {}\n");
+    let run_dir = "a run directory (a .gitignore of * and nothing tracked), not scanned";
+    let in_time = scan_path_with(Path::new("."), MAX_REPORT, SCAN_TIME, &mut |bytes| {
+        real.parse(bytes, PARSE_TIME)
+    });
+    let late = scan_path_with(Path::new("."), MAX_REPORT, Duration::ZERO, &mut |bytes| {
+        real.parse(bytes, PARSE_TIME)
+    });
+    let about = |report: &ScanReport| -> Vec<(String, String)> {
+        report
+            .skipped
+            .iter()
+            .filter(|s| s.file.starts_with("./audit_1"))
+            .map(|s| (s.file.clone(), s.reason.clone()))
+            .collect()
+    };
+    assert_eq!(
+        about(&in_time),
+        [("./audit_1".to_string(), run_dir.to_string())]
+    );
+    assert_eq!(
+        about(&late),
+        [("./audit_1/poc/lib.rs".to_string(), spent.to_string())]
+    );
+    assert_eq!(late.files_scanned, 0);
+
+    // audit-scan's time runs from its own start (`scan_path_until`): a scan given
+    // a time already past hands its child no file and asks git nothing.
+    let past = scan_path_until(Path::new("."), Some(Instant::now())).expect("the scan starts");
+    assert_eq!(
+        about(&past),
+        [("./audit_1/poc/lib.rs".to_string(), spent.to_string())]
+    );
+    assert_eq!(past.files_scanned, 0);
+}

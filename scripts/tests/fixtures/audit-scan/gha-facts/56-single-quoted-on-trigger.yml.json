@@ -1,0 +1,27 @@
+{
+  "name": "f56-single-quoted-on-trigger",
+  "triggers": [
+    "issues"
+  ],
+  "permissions": [
+    "contents: write",
+    "issues: write"
+  ],
+  "jobs": [
+    {
+      "id": "triage",
+      "line": 8,
+      "if": "contains(github.event.issue.title, '[bug]')",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 12,
+          "run": "echo triage",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

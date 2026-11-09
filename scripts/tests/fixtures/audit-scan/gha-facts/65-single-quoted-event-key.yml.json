@@ -1,0 +1,27 @@
+{
+  "name": "f65-single-quoted-event-key",
+  "triggers": [
+    "issues"
+  ],
+  "permissions": [
+    "contents: write",
+    "issues: write"
+  ],
+  "jobs": [
+    {
+      "id": "triage",
+      "line": 9,
+      "if": "contains(github.event.issue.title, '[bug]')",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 13,
+          "run": "echo triage",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

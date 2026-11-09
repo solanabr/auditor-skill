@@ -1,0 +1,46 @@
+{
+  "name": "f30-workflow-run-gh-run-download",
+  "triggers": [
+    "workflow_run"
+  ],
+  "permissions": [
+    "contents: read",
+    "pull-requests: write"
+  ],
+  "jobs": [
+    {
+      "id": "comment",
+      "line": 11,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 14,
+          "run": "gh run download \"$RUN_ID\" -n pr-meta",
+          "with": [],
+          "env": [
+            {
+              "key": "RUN_ID",
+              "value": "${{ github.event.workflow_run.id }}"
+            },
+            {
+              "key": "GH_TOKEN",
+              "value": "${{ github.token }}"
+            }
+          ]
+        },
+        {
+          "line": 18,
+          "run": "gh pr comment \"$(cat pr_number.txt)\" --body-file comment.md",
+          "with": [],
+          "env": [
+            {
+              "key": "GH_TOKEN",
+              "value": "${{ github.token }}"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

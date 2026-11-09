@@ -1,0 +1,32 @@
+# Fixture: pull-request jobs whose runs-on key is quoted, has a space before its colon, or carries a trailing
+# comment that names a hosted label; KV-080 Step 8 lists each self-hosted label, and the two hosted jobs written the
+# same way stay out.
+name: f106-runner-key-spellings
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  comment:
+    runs-on: ubuntu-arc-runners # runs-on: ubuntu-latest
+    steps:
+      - run: make test
+  double-quoted-key:
+    "runs-on": ubuntu-arc-runners
+    steps:
+      - run: make test
+  single-quoted-key:
+    'runs-on': self-hosted
+    steps:
+      - run: make test
+  space-before-colon:
+    runs-on : ubuntu-arc-runners
+    steps:
+      - run: make test
+  hosted-commented:
+    runs-on: ubuntu-latest # runs-on: self-hosted
+    steps:
+      - run: make test
+  hosted-quoted-key:
+    "runs-on": "ubuntu-24.04"
+    steps:
+      - run: make test

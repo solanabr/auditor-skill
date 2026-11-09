@@ -1,0 +1,31 @@
+# Fixture (near misses for KV-080 Step 8): jobs on GitHub-hosted images, one per spelling; the step lists none.
+name: f79-hosted-runner-labels
+on: push
+permissions:
+  contents: read
+jobs:
+  plain:
+    runs-on: ubuntu-latest
+    steps:
+      - run: make test
+  double-quoted:
+    runs-on: "windows-2025"
+    steps:
+      - run: make test
+  single-quoted:
+    runs-on: 'macos-15'
+    steps:
+      - run: make test
+  flow-list:
+    runs-on: [ubuntu-24.04-arm]
+    steps:
+      - run: make test
+  commented:
+    runs-on: ubuntu-22.04   # the image the release was built on
+    steps:
+      - run: make test
+  larger:
+    # runs-on: self-hosted
+    runs-on: macos-15-xlarge
+    steps:
+      - run: make test

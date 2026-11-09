@@ -1,0 +1,61 @@
+{
+  "name": "f102-input-and-matrix-ref",
+  "triggers": [
+    "workflow_call",
+    "pull_request_target"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "build",
+      "line": 14,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 17,
+          "uses": "actions/checkout@v4",
+          "with": [
+            {
+              "key": "ref",
+              "value": "${{ inputs.sha }}"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 20,
+          "run": "make",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "matrix",
+      "line": 21,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 27,
+          "uses": "actions/checkout@v4",
+          "with": [
+            {
+              "key": "ref",
+              "value": "${{ matrix.head }}"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 30,
+          "run": "make",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

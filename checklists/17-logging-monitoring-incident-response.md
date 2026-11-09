@@ -1,6 +1,6 @@
 # Checklist 17 — Logging, Monitoring & Incident Response
 
-> **Items:** 65  |  **IDs:** LM-001 → LM-065  
+> **Items:** 68  |  **IDs:** LM-001 → LM-068\
 > **Applies to:** All languages, all repository types  
 > **Sources:** CertiK Skynet (on-chain monitoring), SOC 2 Availability + Security criteria, OWASP A09:2025 (Security Logging and Alerting Failures), EY IT Audit (disaster recovery, BCM, change management)
 
@@ -115,3 +115,15 @@
 | LM-060 | RPC endpoint failover: application switches to backup RPC on primary failure | 5 |
 | LM-061 | Key recovery procedure exists: what happens if a deploy key is lost/compromised | 7 |
 | LM-062 | Business continuity plan covers extended outage (>24h) — manual processes, user communication | 4 |
+
+---
+
+## 17.6 Forensic Readiness (LM-066 → LM-068)
+
+> **Source:** CertiK/SOC 2 incident-evidence practice; the evidence `/auditor:hunt` and `/auditor:respond` depend on (see [references/detection-response/README.md](../references/detection-response/README.md))
+
+| ID | Check | Severity |
+|----|-------|----------|
+| LM-066 | Transaction history for every program, vault/treasury PDA and upgrade-authority address is retained beyond the public RPC window (~2 epochs) in an archival store the team controls — an archival RPC, a `getSignaturesForAddress` index, or a Geyser transaction sink — so `/auditor:respond` and `/auditor:hunt` can reconstruct activity after an incident, and the retained address set and retention period are documented (grep infra/config for an archival RPC endpoint, `solana-bigtable`/Bigtable, or a signatures-for-address indexer; FAIL if these addresses rely only on a default public RPC) (cross-ref KV-137, LM-021, DEP-030) | 6 |
+| LM-067 | A deploy/upgrade log ties each on-chain program deployment to its slot or signature, the source commit, and the verified build hash (`solana-verify` / `anchor verify` output), kept for every upgrade and not only the current one, so a post-incident investigation can map a deployed binary back to source at any past slot (check for a committed deploy log or release record carrying slot + commit + build hash; FAIL if upgrades leave no record linking slot → commit → hash) (cross-ref DEP-030, OPS-070, SC-053, SC-056) | 6 |
+| LM-068 | Account-update history for vault/treasury and other fund-holding PDAs is archived from a Geyser / `accountSubscribe` stream — not only transactions — so balance and state transitions can be replayed during an incident when transaction reconstruction alone is insufficient, with the stream's coverage and retention documented (grep for a Geyser/Yellowstone account sink or an account-snapshot archive covering these PDAs; FAIL if no account-level history is retained for fund-holding accounts) (cross-ref LM-058, LM-064, OPS-070) | 5 |

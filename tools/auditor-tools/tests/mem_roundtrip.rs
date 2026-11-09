@@ -1,13 +1,22 @@
 //! Round-trip test for the findings memory: dedup, regression, suppression.
 
+mod common;
+
 use auditor_tools::mem;
+
+const PROG: &str = "Prog1111111111111111111111111111111111111111";
+const SIG: &str = "checked_sub@vault.balance";
+const GUARDED: &[u8] =
+    b"fn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balance -= amount;\n}\n";
+/// The candidate GUARDED's guard makes a false positive: the subtraction on line 3.
+const SITE: &str = "src/withdraw.rs:3";
 
 fn put(conn: &rusqlite::Connection, verdict: &str) -> mem::PutOutcome {
     mem::put_finding(
         conn,
         &mem::PutFinding {
-            program_id: "Prog1111111111111111111111111111111111111111",
-            signature: "checked_sub@vault.balance",
+            program_id: PROG,
+            signature: SIG,
             root_cause: "unchecked subtraction can underflow vault balance",
             title: "Vault balance underflow",
             severity: 3,
@@ -19,6 +28,15 @@ fn put(conn: &rusqlite::Connection, verdict: &str) -> mem::PutOutcome {
         },
     )
     .expect("put_finding should succeed")
+}
+
+fn guard(text: &[u8], first: u32, last: u32) -> mem::Guard {
+    mem::Guard {
+        file: "src/withdraw.rs".into(),
+        first,
+        last,
+        hash: mem::guard_hash(text, first, last).expect("the lines exist"),
+    }
 }
 
 #[test]
@@ -47,8 +65,8 @@ fn dedup_regression_and_suppression() {
     // Mark FIXED, then re-observe -> REGRESSED.
     let changed = mem::set_status(
         &conn,
-        "Prog1111111111111111111111111111111111111111",
-        "checked_sub@vault.balance",
+        PROG,
+        SIG,
         "unchecked subtraction can underflow vault balance",
         "FIXED",
     )
@@ -59,42 +77,785 @@ fn dedup_regression_and_suppression() {
     assert!(third.regressed, "re-observing a FIXED finding regresses it");
     assert_eq!(third.status, "REGRESSED");
 
-    let regs = mem::regressions(&conn, "Prog1111111111111111111111111111111111111111").unwrap();
-    assert_eq!(regs.len(), 1, "one regressed finding listed");
-    assert_eq!(regs[0].status, "REGRESSED");
+    let regs = mem::regressions(&conn, PROG).unwrap();
+    assert_eq!(regs.regressions.len(), 1, "one regressed finding listed");
+    assert_eq!(regs.regressions[0].status, "REGRESSED");
+    assert_eq!(regs.truncated, 0);
 
-    // Rule the signature a FALSE_POSITIVE, then check -> suppressed.
+    // Rule the signature a FALSE_POSITIVE, anchored to its commit and guard, then
+    // check at that commit with the guard unchanged -> suppressed.
+    let g = guard(GUARDED, 2, 2);
     mem::add_ruling(
         &conn,
-        "Prog1111111111111111111111111111111111111111",
-        "checked_sub@vault.balance",
-        "FALSE_POSITIVE",
-        "subtraction is guarded by a prior require! on balance",
-        "auditor",
-        None,
+        &mem::NewRuling {
+            program_id: PROG,
+            signature: SIG,
+            ruling: "FALSE_POSITIVE",
+            rationale: "subtraction is guarded by a prior require! on balance",
+            by: "auditor",
+            scope: None,
+            commit: Some("c0ffee1"),
+            guard: Some(&g),
+            site: Some(SITE),
+        },
     )
     .unwrap();
 
-    let check = mem::check(
-        &conn,
-        "Prog1111111111111111111111111111111111111111",
-        "checked_sub@vault.balance",
-    )
-    .unwrap();
+    let unchanged = |_: &str| -> Result<Vec<u8>, String> { Ok(GUARDED.to_vec()) };
+    let check = mem::check(&conn, PROG, SIG, Some("c0ffee1"), Some(SITE), &unchanged).unwrap();
     assert!(check.suppressed, "FALSE_POSITIVE ruling suppresses");
-    assert!(check.ruling.is_some());
+    assert!(check.stale.is_none());
+    let ruling = check.ruling.expect("the ruling");
+    assert_eq!(ruling.guard.as_deref(), Some("src/withdraw.rs:2"));
+    assert_eq!(ruling.commit.as_deref(), Some("c0ffee1"));
 
     // A different signature is not suppressed.
     let miss = mem::check(
         &conn,
-        "Prog1111111111111111111111111111111111111111",
+        PROG,
         "some_other_signature",
+        Some("c0ffee1"),
+        Some(SITE),
+        &unchanged,
     )
     .unwrap();
     assert!(!miss.suppressed);
+    assert!(miss.ruling.is_none() && miss.stale.is_none());
 
     // Warm context surfaces the ruling.
-    let warm = mem::warm(&conn, "Prog1111111111111111111111111111111111111111").unwrap();
+    let warm = mem::warm(&conn, PROG).unwrap();
     assert_eq!(warm.open_fp_rulings.len(), 1);
     assert!(warm.profile.is_none(), "no profile inserted in this test");
+}
+
+/// A full commit id, as the CLI takes them, and another.
+const C1: &str = "c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe";
+const C2: &str = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+
+fn rule_at(conn: &rusqlite::Connection, commit: Option<&str>, g: &mem::Guard) {
+    mem::add_ruling(
+        conn,
+        &mem::NewRuling {
+            program_id: PROG,
+            signature: SIG,
+            ruling: "FALSE_POSITIVE",
+            rationale: "guarded",
+            by: "auditor",
+            scope: None,
+            commit,
+            guard: Some(g),
+            site: Some(SITE),
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_ruling_goes_stale_when_its_commit_or_guard_changes() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    rule_at(&conn, Some(C1), &guard(GUARDED, 2, 3));
+    let stale = |commit: Option<&str>, text: &'static [u8]| {
+        let read = move |_: &str| -> Result<Vec<u8>, String> { Ok(text.to_vec()) };
+        let r = mem::check(&conn, PROG, SIG, commit, Some(SITE), &read).unwrap();
+        assert_eq!(r.suppressed, r.stale.is_none());
+        r.stale
+    };
+    assert_eq!(stale(Some(C1), GUARDED), None);
+    for other in [
+        &C1[..7],
+        &C1[..39],
+        "c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe00",
+        C2,
+    ] {
+        assert_eq!(
+            stale(Some(other), GUARDED),
+            Some(format!("ruled at commit {C1}, checked at {other}")),
+            "only the same full id is the same commit"
+        );
+    }
+    assert_eq!(
+        stale(None, GUARDED),
+        Some(format!(
+            "ruled at commit {C1}, and no --commit was given to compare"
+        ))
+    );
+    let edited: &[u8] = b"fn withdraw() {\n    require!(vault.balance > amount);\n    vault.balance -= amount;\n}\n";
+    assert_eq!(
+        stale(Some(C1), edited).as_deref(),
+        Some("the guard at src/withdraw.rs:2-3 no longer holds the lines ruled on")
+    );
+    let moved: &[u8] = b"// moved\nfn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balance -= amount;\n}\n";
+    assert!(
+        stale(Some(C1), moved).is_some(),
+        "lines that moved are a change"
+    );
+    assert_eq!(
+        stale(Some(C2), b"fn x() {}\n"),
+        Some(format!("ruled at commit {C1}, checked at {C2}; the guard at src/withdraw.rs:2-3 cannot be read: names line 3, and the file has 1 line(s)"))
+    );
+    let gone = |_: &str| -> Result<Vec<u8>, String> { Err("it does not exist".to_string()) };
+    let r = mem::check(&conn, PROG, SIG, Some(C1), Some(SITE), &gone).unwrap();
+    assert!(!r.suppressed);
+    assert_eq!(
+        r.stale.as_deref(),
+        Some("the guard at src/withdraw.rs:2-3 cannot be read: it does not exist")
+    );
+}
+
+#[test]
+fn a_ruling_suppresses_only_the_candidate_it_was_made_for() {
+    // withdraw's subtraction is guarded and ruled a false positive; liquidate's,
+    // three lines below and with the same signature, is not guarded. Only the
+    // site the ruling names is suppressed: a sibling, a check that names no site,
+    // and a ruling that names none are stale.
+    let text: &[u8] = b"fn withdraw() {\n    require!(v.balance >= amount);\n    v.balance -= amount;\n}\nfn liquidate() {\n    v.balance -= amount;\n}\n";
+    let read = move |_: &str| -> Result<Vec<u8>, String> { Ok(text.to_vec()) };
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    let g = guard(text, 2, 2);
+    rule_at(&conn, Some(C1), &g);
+    let check = |site: Option<&str>| mem::check(&conn, PROG, SIG, Some(C1), site, &read).unwrap();
+    let r = check(Some(SITE));
+    assert!(r.suppressed && r.stale.is_none(), "{r:?}");
+    assert_eq!(r.ruling.and_then(|r| r.site).as_deref(), Some(SITE));
+    let r = check(Some("src/withdraw.rs:6"));
+    assert!(!r.suppressed);
+    assert_eq!(
+        r.stale.as_deref(),
+        Some("ruled for the site src/withdraw.rs:3, checked for src/withdraw.rs:6")
+    );
+    let r = check(None);
+    assert!(!r.suppressed);
+    assert_eq!(
+        r.stale.as_deref(),
+        Some("ruled for the site src/withdraw.rs:3, and no --site was given to compare")
+    );
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    mem::add_ruling(
+        &conn,
+        &mem::NewRuling {
+            program_id: PROG,
+            signature: SIG,
+            ruling: "FALSE_POSITIVE",
+            rationale: "guarded",
+            by: "auditor",
+            scope: None,
+            commit: Some(C1),
+            guard: Some(&g),
+            site: None,
+        },
+    )
+    .unwrap();
+    let r = mem::check(&conn, PROG, SIG, Some(C1), Some(SITE), &read).unwrap();
+    assert!(!r.suppressed);
+    assert_eq!(r.stale.as_deref(), Some("ruled with no site"));
+}
+
+#[test]
+fn each_sibling_s_own_ruling_suppresses_it() {
+    // Both subtractions are guarded, and each has a ruling of its own: a check of
+    // either finds the one made for it, whichever was made last. A site neither
+    // names finds the newest ruling of the signature, stale.
+    let text: &[u8] = b"fn withdraw() {\n    require!(v.balance >= amount);\n    v.balance -= amount;\n}\nfn liquidate() {\n    require!(v.balance >= amount);\n    v.balance -= amount;\n}\n";
+    let read = move |_: &str| -> Result<Vec<u8>, String> { Ok(text.to_vec()) };
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    for (site, line) in [("src/withdraw.rs:3", 2), ("src/withdraw.rs:7", 6)] {
+        mem::add_ruling(
+            &conn,
+            &mem::NewRuling {
+                program_id: PROG,
+                signature: SIG,
+                ruling: "FALSE_POSITIVE",
+                rationale: "guarded",
+                by: "auditor",
+                scope: None,
+                commit: Some(C1),
+                guard: Some(&guard(text, line, line)),
+                site: Some(site),
+            },
+        )
+        .unwrap();
+    }
+    for (site, id) in [("src/withdraw.rs:3", 1), ("src/withdraw.rs:7", 2)] {
+        let r = mem::check(&conn, PROG, SIG, Some(C1), Some(site), &read).unwrap();
+        assert!(r.suppressed && r.stale.is_none(), "{site}: {r:?}");
+        assert_eq!(r.ruling.map(|r| r.ruling_id), Some(id), "{site}");
+    }
+    let r = mem::check(&conn, PROG, SIG, Some(C1), Some("src/withdraw.rs:9"), &read).unwrap();
+    assert!(!r.suppressed);
+    assert_eq!(
+        r.stale.as_deref(),
+        Some("ruled for the site src/withdraw.rs:7, checked for src/withdraw.rs:9")
+    );
+}
+
+#[test]
+fn a_ruling_without_a_commit_never_holds() {
+    let read = |_: &str| -> Result<Vec<u8>, String> { Ok(GUARDED.to_vec()) };
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    rule_at(&conn, None, &guard(GUARDED, 2, 2));
+    for commit in [None, Some(C1)] {
+        let r = mem::check(&conn, PROG, SIG, commit, Some(SITE), &read).unwrap();
+        assert!(!r.suppressed);
+        assert_eq!(r.stale.as_deref(), Some("ruled with no commit"));
+    }
+    // A stored commit that is not the id given, an empty one included, never holds.
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    rule_at(&conn, Some(C1), &guard(GUARDED, 2, 2));
+    conn.execute("UPDATE fp_rulings SET anchor_commit = ''", [])
+        .unwrap();
+    let r = mem::check(&conn, PROG, SIG, Some(C1), Some(SITE), &read).unwrap();
+    assert!(!r.suppressed);
+    assert_eq!(r.stale, Some(format!("ruled at commit , checked at {C1}")));
+}
+
+#[test]
+fn guard_lines_hash_with_their_newlines() {
+    let text = b"a\nb\r\nc";
+    assert!(mem::guard_hash(text, 1, 3).is_ok());
+    assert_ne!(
+        mem::guard_hash(text, 2, 2),
+        mem::guard_hash(b"a\nb\nc", 2, 2)
+    );
+    assert_eq!(
+        mem::guard_hash(text, 4, 4),
+        Err("names line 4, and the file has 3 line(s)".to_string())
+    );
+    assert_eq!(
+        mem::guard_hash(text, 0, 1),
+        Err("is not a range of lines".to_string())
+    );
+    assert_eq!(
+        mem::guard_hash(text, 2, 1),
+        Err("is not a range of lines".to_string())
+    );
+}
+
+#[test]
+fn profile_and_invariants_reach_warm() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    mem::put_profile(
+        &conn,
+        PROG,
+        &mem::ProfileFields {
+            protocol_class: Some("vault"),
+            notes: Some("first pass"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    mem::put_profile(
+        &conn,
+        PROG,
+        &mem::ProfileFields {
+            oracle_set: Some("pyth SOL/USD"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (id, new, replaced) = mem::put_invariant(
+        &conn,
+        PROG,
+        "total_shares == shares_mint.supply",
+        &mem::InvariantFields {
+            status: Some("Unproven"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(new);
+    assert!(replaced.is_empty());
+    let (again, new, replaced) = mem::put_invariant(
+        &conn,
+        PROG,
+        "total_shares == shares_mint.supply",
+        &mem::InvariantFields {
+            status: Some("Manually verified"),
+            cited_line: Some("src/vault.rs:88"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        (again, new),
+        (id, false),
+        "the same statement is one invariant"
+    );
+    assert_eq!(
+        replaced,
+        ["status"],
+        "a status set before is replaced, not erased"
+    );
+    let warm = mem::warm(&conn, PROG).unwrap();
+    let profile = warm.profile.expect("the profile");
+    assert_eq!(profile.protocol_class, "vault");
+    assert_eq!(profile.oracle_set, "pyth SOL/USD");
+    assert_eq!(
+        profile.notes, "first pass",
+        "a later write keeps the fields it does not give"
+    );
+    assert!(
+        profile.changed.is_empty(),
+        "a field set for the first time replaces nothing"
+    );
+    assert_eq!(warm.invariants.len(), 1);
+    assert_eq!(warm.invariants[0].status, "Manually verified");
+    assert_eq!(warm.invariants[0].cited_line, "src/vault.rs:88");
+    let changed: Vec<(&str, &str)> = warm.invariants[0]
+        .changed
+        .iter()
+        .map(|c| (c.field.as_str(), c.previous.as_str()))
+        .collect();
+    assert_eq!(changed, [("status", "Unproven")]);
+    assert!(mem::warm(&conn, "OtherProg").unwrap().profile.is_none());
+}
+
+#[test]
+fn a_replaced_profile_value_is_kept_and_warm_lists_it() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    let put = |notes: &str, admin: Option<&str>| {
+        mem::put_profile(
+            &conn,
+            PROG,
+            &mem::ProfileFields {
+                notes: Some(notes),
+                admin_set: admin,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+    assert!(put("first", Some("3-of-5 multisig; upgrades timelocked 48h")).is_empty());
+    assert!(
+        put("first", None).is_empty(),
+        "the same value replaces nothing"
+    );
+    assert_eq!(put("second", Some("fully trusted")), ["admin_set", "notes"]);
+    assert_eq!(put("", None), ["notes"], "a value erased is kept too");
+    let profile = mem::warm(&conn, PROG)
+        .unwrap()
+        .profile
+        .expect("the profile");
+    assert_eq!(profile.notes, "");
+    assert_eq!(profile.admin_set, "fully trusted");
+    let changed: Vec<(&str, &str)> = profile
+        .changed
+        .iter()
+        .map(|c| (c.field.as_str(), c.previous.as_str()))
+        .collect();
+    assert_eq!(
+        changed,
+        [
+            ("notes", "second"),
+            ("notes", "first"),
+            ("admin_set", "3-of-5 multisig; upgrades timelocked 48h"),
+        ],
+        "newest first"
+    );
+    assert!(profile.changed.iter().all(|c| !c.recorded_at.is_empty()));
+}
+
+#[test]
+fn warm_and_regressions_hold_the_newest_rows_and_count_the_rest() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    for i in 0..250 {
+        mem::put_invariant(&conn, PROG, &format!("invariant {i}"), &Default::default()).unwrap();
+    }
+    for i in 0..210 {
+        mem::add_ruling(
+            &conn,
+            &mem::NewRuling {
+                program_id: PROG,
+                signature: &format!("sig {i}"),
+                ruling: "ACCEPTED_RISK",
+                rationale: "r",
+                by: "a",
+                scope: None,
+                commit: None,
+                guard: None,
+                site: None,
+            },
+        )
+        .unwrap();
+    }
+    for i in 0..205 {
+        mem::put_profile(
+            &conn,
+            PROG,
+            &mem::ProfileFields {
+                notes: Some(&format!("notes {i}")),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+    let warm = mem::warm(&conn, PROG).unwrap();
+    assert_eq!(warm.invariants.len(), 200);
+    assert_eq!(
+        warm.invariants[0].statement, "invariant 50",
+        "the newest, as recorded"
+    );
+    assert_eq!(warm.invariants[199].statement, "invariant 249");
+    assert_eq!(warm.open_fp_rulings.len(), 200);
+    assert_eq!(
+        warm.open_fp_rulings[0].code_signature, "sig 209",
+        "newest first"
+    );
+    let profile = warm.profile.expect("the profile");
+    assert_eq!(profile.changed.len(), 10, "the newest ten");
+    assert_eq!(profile.changed[0].previous, "notes 203");
+    assert_eq!(profile.changed[9].previous, "notes 194");
+    assert_eq!(
+        warm.truncated,
+        50 + 10 + 194,
+        "invariants, rulings and replaced values left out"
+    );
+    for i in 0..230 {
+        let sig = format!("sig {i}");
+        let f = |severity| mem::PutFinding {
+            program_id: PROG,
+            signature: &sig,
+            root_cause: "rc",
+            title: "t",
+            severity,
+            commit: None,
+            audit_n: None,
+            file: None,
+            line: None,
+            verdict: None,
+        };
+        mem::put_finding(&conn, &f(1 + i % 10)).unwrap();
+        mem::set_status(&conn, PROG, &sig, "rc", "FIXED").unwrap();
+        mem::put_finding(&conn, &f(1 + i % 10)).unwrap();
+    }
+    let regs = mem::regressions(&conn, PROG).unwrap();
+    assert_eq!(regs.regressions.len(), 200);
+    assert_eq!(regs.truncated, 30);
+    let kept: std::collections::BTreeSet<String> = regs
+        .regressions
+        .iter()
+        .map(|r| r.code_signature.clone())
+        .collect();
+    let newest: std::collections::BTreeSet<String> =
+        (30..230).map(|i| format!("sig {i}")).collect();
+    assert_eq!(
+        kept, newest,
+        "the 200 seen most recently, not the most severe"
+    );
+    assert!(
+        regs.regressions
+            .windows(2)
+            .all(|w| w[0].severity >= w[1].severity),
+        "the most severe first"
+    );
+    assert_eq!(
+        regs.regressions[0].code_signature, "sig 229",
+        "the most recently seen first among equals"
+    );
+    assert_eq!(regs.regressions[199].code_signature, "sig 30");
+}
+
+/// The finding of `sig` put with `severity` and `title`.
+fn put_one(conn: &rusqlite::Connection, sig: &str, severity: i64, title: &str) -> mem::PutOutcome {
+    mem::put_finding(
+        conn,
+        &mem::PutFinding {
+            program_id: PROG,
+            signature: sig,
+            root_cause: "rc",
+            title,
+            severity,
+            commit: None,
+            audit_n: None,
+            file: None,
+            line: None,
+            verdict: None,
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_replaced_severity_and_title_are_kept_and_regressions_lists_them() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    put_one(&conn, SIG, 9, "Vault drained through an unchecked withdraw");
+    mem::set_status(&conn, PROG, SIG, "rc", "FIXED").unwrap();
+    assert!(put_one(&conn, SIG, 9, "Vault drained through an unchecked withdraw").regressed);
+    // A later call with the same signature rewrites what the next audit reads.
+    put_one(&conn, SIG, 1, "cosmetic: rename variable");
+    let regs = mem::regressions(&conn, PROG).unwrap();
+    assert_eq!(regs.regressions.len(), 1);
+    let row = &regs.regressions[0];
+    assert_eq!(
+        (row.severity, row.title.as_str()),
+        (1, "cosmetic: rename variable")
+    );
+    let changed: Vec<(&str, &str)> = row
+        .changed
+        .iter()
+        .map(|c| (c.field.as_str(), c.previous.as_str()))
+        .collect();
+    assert_eq!(
+        changed,
+        [
+            ("title", "Vault drained through an unchecked withdraw"),
+            ("severity", "9"),
+        ],
+        "newest first"
+    );
+    assert_eq!(regs.truncated, 0);
+    put_one(&conn, SIG, 1, "cosmetic: rename variable");
+    assert_eq!(
+        mem::regressions(&conn, PROG).unwrap().regressions[0]
+            .changed
+            .len(),
+        2,
+        "the same values replace nothing"
+    );
+}
+
+#[test]
+fn each_answer_lists_ten_changes_an_item_and_two_hundred_in_all() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    for i in 0..30 {
+        let statement = format!("invariant {i}");
+        for round in 0..16 {
+            mem::put_invariant(
+                &conn,
+                PROG,
+                &statement,
+                &mem::InvariantFields {
+                    status: Some(&format!("status {round}")),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+    }
+    let warm = mem::warm(&conn, PROG).unwrap();
+    let counts: Vec<usize> = warm.invariants.iter().map(|i| i.changed.len()).collect();
+    assert_eq!(counts, [[10; 20].as_slice(), &[0; 10]].concat());
+    assert_eq!(warm.invariants[0].changed[0].previous, "status 14");
+    assert_eq!(
+        warm.truncated,
+        30 * 15 - 200,
+        "the replaced values left out"
+    );
+
+    for i in 0..25 {
+        let sig = format!("sig {i}");
+        put_one(&conn, &sig, 1, "t0");
+        mem::set_status(&conn, PROG, &sig, "rc", "FIXED").unwrap();
+        for round in 1..=6 {
+            put_one(&conn, &sig, 1 + round % 2, &format!("t{round}"));
+        }
+    }
+    let regs = mem::regressions(&conn, PROG).unwrap();
+    let counts: Vec<usize> = regs.regressions.iter().map(|r| r.changed.len()).collect();
+    assert_eq!(counts.iter().sum::<usize>(), 200);
+    assert!(counts.iter().all(|&n| n <= 10));
+    assert_eq!(
+        regs.truncated,
+        25 * 12 - 200,
+        "the replaced values left out"
+    );
+}
+
+#[test]
+fn warm_and_regressions_read_a_long_history_in_time() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    let mut owners: Vec<(Option<i64>, Option<String>)> = Vec::new();
+    for i in 0..100 {
+        let (id, _, _) =
+            mem::put_invariant(&conn, PROG, &format!("invariant {i}"), &Default::default())
+                .unwrap();
+        owners.push((Some(id), None));
+        let sig = format!("sig {i}");
+        put_one(&conn, &sig, 3, "t");
+        mem::set_status(&conn, PROG, &sig, "rc", "FIXED").unwrap();
+        put_one(&conn, &sig, 3, "t");
+        owners.push((None, Some(mem::finding_id(PROG, &sig, "rc"))));
+    }
+    // Two thousand replaced values for each, as many writes would leave them.
+    let tx = conn.unchecked_transaction().unwrap();
+    {
+        let mut add = tx
+            .prepare(
+                "INSERT INTO history (program_id, inv_id, finding_id, field, previous, recorded_at) \
+                 VALUES (?1, ?2, ?3, 'status', ?4, '0')",
+            )
+            .unwrap();
+        for round in 0..2_000 {
+            for (inv_id, finding_id) in &owners {
+                add.execute(rusqlite::params![
+                    PROG,
+                    inv_id,
+                    finding_id,
+                    format!("value {round}")
+                ])
+                .unwrap();
+            }
+        }
+    }
+    tx.commit().unwrap();
+
+    // What one read of the whole history takes: an answer may take a few, not
+    // one an item (200 items, 400,000 rows). The work is counted in the steps
+    // SQLite runs, not timed, so the host's load changes none of it.
+    let (n, one_read) = vm_steps(&conn, || {
+        conn.query_row(
+            "SELECT count(*) FROM history WHERE program_id = ?1",
+            [PROG],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+    });
+    assert_eq!(n, 400_000);
+    let (warm, warm_steps) = vm_steps(&conn, || mem::warm(&conn, PROG).unwrap());
+    let (regs, regs_steps) = vm_steps(&conn, || mem::regressions(&conn, PROG).unwrap());
+    assert!(
+        warm_steps < one_read * 25,
+        "warm ran {warm_steps} steps, one read of the history {one_read}"
+    );
+    assert!(
+        regs_steps < one_read * 25,
+        "regressions ran {regs_steps} steps, one read of the history {one_read}"
+    );
+
+    let counts: Vec<usize> = warm.invariants.iter().map(|i| i.changed.len()).collect();
+    assert_eq!(counts, [[10; 20].as_slice(), &[0; 80]].concat());
+    assert_eq!(warm.invariants[0].changed[0].previous, "value 1999");
+    assert_eq!(warm.truncated, 100 * 2_000 - 200);
+    let counts: Vec<usize> = regs.regressions.iter().map(|r| r.changed.len()).collect();
+    assert_eq!(counts, [[10; 20].as_slice(), &[0; 80]].concat());
+    assert_eq!(regs.truncated, 100 * 2_000 - 200);
+}
+
+/// What `f` gives, and how many steps SQLite's virtual machine runs on `conn`
+/// meanwhile, as a progress handler called at each step counts them: the work its
+/// queries do, the same on any host under any load.
+fn vm_steps<T>(conn: &rusqlite::Connection, f: impl FnOnce() -> T) -> (T, u64) {
+    use std::os::raw::{c_int, c_void};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    unsafe extern "C" fn count(steps: *mut c_void) -> c_int {
+        // SAFETY: `steps` is the counter below, alive while the handler is set.
+        unsafe { &*(steps as *const AtomicU64) }.fetch_add(1, Ordering::Relaxed);
+        0
+    }
+    let steps = AtomicU64::new(0);
+    // SAFETY: the handle is `conn`'s own, open for the whole call, and the handler
+    // is removed before `steps` goes out of scope.
+    unsafe {
+        rusqlite::ffi::sqlite3_progress_handler(
+            conn.handle(),
+            1,
+            Some(count),
+            &steps as *const AtomicU64 as *mut c_void,
+        );
+    }
+    let out = f();
+    // SAFETY: as above; no handler is set after this.
+    unsafe {
+        rusqlite::ffi::sqlite3_progress_handler(conn.handle(), 0, None, std::ptr::null_mut());
+    }
+    (out, steps.into_inner())
+}
+
+/// A store on disk, made as `audit-mem init` makes it, in a new directory.
+fn store_on_disk() -> (common::Wt, std::path::PathBuf) {
+    let wt = common::Wt::new();
+    let db = wt.path("audit.db");
+    std::fs::File::create(&db).expect("make the store's file");
+    let conn = mem::open_read_write(&db).expect("open the store");
+    mem::ensure_schema(&conn).expect("make the tables");
+    (wt, db)
+}
+
+#[test]
+fn a_writer_that_meets_another_waits_for_it() {
+    type Write = fn(&rusqlite::Connection) -> anyhow::Result<()>;
+    let (_wt, db) = store_on_disk();
+    let writes: [(&str, Write); 6] = [
+        ("ensure_schema", mem::ensure_schema),
+        ("put_finding", |c| put_finding_once(c).map(drop)),
+        ("set_status", |c| {
+            mem::set_status(c, PROG, SIG, "rc", "FIXED").map(drop)
+        }),
+        ("add_ruling", |c| {
+            mem::add_ruling(
+                c,
+                &mem::NewRuling {
+                    program_id: PROG,
+                    signature: SIG,
+                    ruling: "FALSE_POSITIVE",
+                    rationale: "guarded",
+                    by: "auditor",
+                    scope: None,
+                    commit: Some(C1),
+                    guard: None,
+                    site: None,
+                },
+            )
+            .map(drop)
+        }),
+        ("put_profile", |c| {
+            mem::put_profile(
+                c,
+                PROG,
+                &mem::ProfileFields {
+                    protocol_class: Some("vault"),
+                    ..Default::default()
+                },
+            )
+            .map(drop)
+        }),
+        ("put_invariant", |c| {
+            mem::put_invariant(c, PROG, "shares == supply", &Default::default()).map(drop)
+        }),
+    ];
+    // Another writer holds the store's write lock while they start.
+    let holder = rusqlite::Connection::open(&db).expect("open the store");
+    holder
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("take the write lock");
+    let writers: Vec<_> = writes
+        .into_iter()
+        .map(|(name, write)| {
+            let db = db.clone();
+            let writer =
+                std::thread::spawn(move || mem::open_read_write(&db).and_then(|c| write(&c)));
+            (name, writer)
+        })
+        .collect();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    holder.execute_batch("COMMIT").expect("let the lock go");
+    for (name, writer) in writers {
+        let done = writer.join().expect("the writer's thread");
+        assert!(done.is_ok(), "{name}: {:?}", done.err());
+    }
+    let count = |table: &str| -> i64 {
+        holder
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .expect("count")
+    };
+    for table in ["findings", "fp_rulings", "protocol_profile", "invariants"] {
+        assert_eq!(count(table), 1, "{table}");
+    }
+}
+
+fn put_finding_once(conn: &rusqlite::Connection) -> anyhow::Result<mem::PutOutcome> {
+    mem::put_finding(
+        conn,
+        &mem::PutFinding {
+            program_id: PROG,
+            signature: SIG,
+            root_cause: "rc",
+            title: "t",
+            severity: 3,
+            commit: None,
+            audit_n: None,
+            file: None,
+            line: None,
+            verdict: None,
+        },
+    )
 }

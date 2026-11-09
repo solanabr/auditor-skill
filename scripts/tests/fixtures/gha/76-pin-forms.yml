@@ -1,0 +1,19 @@
+# Fixture: actions and a reusable workflow pinned to full commit SHAs in each spelling a workflow allows; R9
+# lists every pinned line, with or without its version comment.
+name: f76-pin-forms
+on: push
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: "example/quoted-action@0123456789abcdef0123456789abcdef01234567" # v1.2.0
+      - uses: 'example/single-quoted-action@89abcdef0123456789abcdef0123456789abcdef' # tag=v2.0.1
+      - uses: example/monorepo/sub/action@fedcba9876543210fedcba9876543210fedcba98 # pin@v3.4.5
+      - name: no version comment
+        uses: example/bare-action@1111111111111111111111111111111111111111
+      - { uses: example/flow-action@2222222222222222222222222222222222222222, with: { level: 1 } }
+  release:
+    uses: example/workflows/.github/workflows/release.yml@3333333333333333333333333333333333333333 # v2.1.0

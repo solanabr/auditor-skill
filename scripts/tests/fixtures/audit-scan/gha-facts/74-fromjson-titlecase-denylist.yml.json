@@ -1,0 +1,26 @@
+{
+  "name": "f74-fromjson-titlecase-denylist",
+  "triggers": [
+    "issue_comment"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "command",
+      "line": 9,
+      "if": "${{ !contains(FromJSON('[\"NONE\"]'), github.event.comment.author_association) }}",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 13,
+          "run": "echo \"privileged command\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

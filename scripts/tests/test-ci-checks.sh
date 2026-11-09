@@ -10,15 +10,32 @@
 #      pipefail, and leaves quoted text, here-documents, waived lines and scripts without pipefail alone.
 #      The check scripts, and the suites that test them, must pass it here; CI runs it over every tracked
 #      *.sh file;
-#   4. .github/workflows: the required job keeps its name; every workflow and job reads contents only; no
-#      workflow runs on pull_request_target or workflow_run, and no run: script holds a ${{ }} expression; every
-#      job has timeout-minutes, every action is pinned by full SHA with its version, and no checkout keeps
-#      credentials;
+#   4. .github/workflows: the required job keeps its name; the directory holds only regular files named *.yml
+#      or *.yaml, GitHub runs both, and the checks read every one, as many as the directory holds; every workflow
+#      and job reads contents only; no workflow names pull_request_target or workflow_run outside a comment line,
+#      however its trigger is written (each quoted scalar where a node starts is read with its escapes decoded, a
+#      | or > in a comment starts no block scalar, no quoted scalar in either style may run on past its line, no
+#      node has a tag, and no line may hold a carriage return or a NEL, LS or PS line break); the top-level mapping
+#      holds plain keys at the left margin, so the trigger is the value of on: alone, and that value fails on what
+#      the check cannot read with certainty (an anchor, an alias, a tag, an escape it does not decode, an explicit
+#      key, a quote mark, ? or : inside a plain scalar in a flow collection, a plain scalar there that goes on
+#      over two lines); none spells a key YAML reads as on other than as plain on: (quoted in either style, with
+#      escapes, a tag, an anchor or another letter case, in block or flow style), or writes an explicit ? key, an
+#      alias as a key or a merge key (<<); no run: script holds a ${{ }} expression; every job has
+#      timeout-minutes, every action is pinned by full SHA with its version, no checkout keeps credentials, and
+#      every cargo test runs with --no-fail-fast; every step of the advisory macOS job runs under the stock PATH:
+#      each run: script exports it plus ~/.cargo/bin first, and each action but checkout gets it in its env; and
+#      one step of that job runs tools/auditor-tools' unit tests;
 #   5. scripts/check-hygiene.sh fails on each kind of file it names, and on a top-level directory named
 #      commands, agents, skills, hooks, bin, monitors or .claude-plugin in another letter case, also when it
-#      is the last of 3,000 tracked paths; on each load surface at the plugin root unless the allow list
-#      names it; and on a manifest key beyond its list, also at the end of a 1 MiB manifest. It passes the
-#      repository itself, and fails outside a checkout and without jq.
+#      is the last of 3,000 tracked paths; on each load surface at the plugin root, and on a SKILL.md other
+#      than SKILL.md and skills/<name>/SKILL.md in any letter case, unless the allow list names it; and on a
+#      manifest key beyond its list, also at the end of a 1 MiB manifest. It passes the repository itself,
+#      and fails outside a checkout and without jq;
+#   6. scripts/check-entrypoints.sh passes the repository, reading its whole list, and a checkout whose entry
+#      points, case files and allow rules all keep the contract; it fails each kind of bad list line (also the
+#      last line of a list over 64 KiB), entry point, case file and allow rule, an agent's Bash rule, and an
+#      entry point no rule pre-approves; it cannot run outside a checkout or without its list.
 # Usage (from the repo root): bash scripts/tests/test-ci-checks.sh   (VERBOSE=1 shows each check's output)
 # Builds throwaway files and git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -207,11 +224,101 @@ fm commands/c03-pattern-dots.md fail "$C" "allowed-tools: Read, Bash(ls ... *)"
 fm commands/c04-pattern-dots-end.md fail "$C" "allowed-tools: Read, Bash(ls *)..."
 fm commands/plugin-root-items.md pass "$C" "allowed-tools:" "  - Read" "  - Grep" \
   "  - 'Bash(\"\${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh\" *)'" "  - 'Bash(bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh\" *)'"
+# the bundled audit-scan and audit-mem only in the forms the confined builds pin, the contract marker in place
+TB='${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release'
+fm commands/tools-marked.md pass "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-scan\" --contract=1 *)'" \
+  "  - 'Bash(\"$TB/audit-mem\" warm --contract=1 *)'" "  - 'Bash(\"$TB/audit-mem\" invariant --contract=1 *)'" \
+  "  - 'Bash(test -x \"$TB/audit-mem\")'" "  - 'Bash(\"$TB/audit-logs\" *)'" "  - 'Read(audit_*/audit-mem.db)'"
+fm commands/tools-scan-bare.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-scan\" *)'"
+fm commands/tools-scan-late.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-scan\" . --contract=1 *)'"
+fm commands/tools-scan-unquoted.md fail "$C" "allowed-tools:" "  - 'Bash($TB/audit-scan:*)'"
+fm commands/tools-scan-glob.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-\"*)'"
+fm commands/tools-scan-triple.md fail "$C" "allowed-tools:" "  - 'Bash(\"${TB%/release}/x86_64-unknown-linux-gnu/release/audit-scan\" --contract=1 *)'"
+fm commands/tools-mem-bare.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-mem\" warm *)'"
+fm commands/tools-mem-late.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-mem\" warm --db x --contract=1 *)'"
+fm commands/tools-mem-rule.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-mem\" rule --contract=1 *)'"
+fm commands/tools-mem-any.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-mem\" *)'"
+fm commands/tools-mem-root-quoted.md fail "$C" "allowed-tools:" "  - 'Bash(\"\${CLAUDE_PLUGIN_ROOT}\"/tools/auditor-tools/target/release/audit-mem warm --contract=1 *)'"
+fm commands/tools-root-glob.md fail "$C" "allowed-tools:" "  - 'Bash(\"\${CLAUDE_PLUGIN_ROOT}/*\" *)'"
+fm commands/tools-tools-glob.md fail "$C" "allowed-tools:" "  - 'Bash(\"\${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/*\" *)'"
+fm commands/tools-any-glob.md fail "$C" "allowed-tools:" "  - 'Bash(\"*/release/audit-*\" *)'"
+fm commands/tools-mem-case.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/AUDIT-MEM\" warm --contract=1 *)'"
+fm commands/tools-prefix.md pass "$C" "allowed-tools:" "  - 'Bash(git log:*)'" "  - 'Bash(ls:*)'"
 fm skill/SKILL.md pass "name: s" 'description: "A skill."'
 fm skill-no-name/SKILL.md fail 'description: "A skill."'
 fm skills/agents/SKILL.md pass "name: a" 'description: "A skill in a directory named agents."'
-fm skills/forked/SKILL.md fail "name: f" 'description: "A forked skill."' "context: fork"
-fm skills/with-tools/SKILL.md fail "name: t" 'description: "A skill."' "allowed-tools: Read"
+# a SKILL.md under skills/ may also have context: fork with an agent of the plugin, background and
+# user-invocable, and allowed-tools under a command's rules; one outside skills/ has name and description only
+fm agents/responder.md pass "name: responder" "$D" "$TL"
+fm agents/misnamed.md pass "name: someone-else" "$D" "$TL"
+F="context: fork"; A="agent: auditor:responder"; S='description: "A forked skill."'
+fm skills/forked/SKILL.md pass "name: f" "$S" "$F" "$A" "background: false" "user-invocable: false" "allowed-tools:" \
+  "  - Read" "  - Edit(incident_*/**)" "  - 'Bash(\"\${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh\" *)'"
+fm skills/fork-one-line/SKILL.md pass "name: f1" "$S" "context: 'fork'" 'agent: "auditor:responder"' "background: true" \
+  "user-invocable: true" 'allowed-tools: Read, Grep, Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh *)'
+fm Skills/upper-case/SKILL.md pass "name: f2" "$S" "$F" "$A"
+fm skills/with-tools/SKILL.md pass "name: t" 'description: "A skill."' "allowed-tools: Read"
+fm skills/invocable/SKILL.md pass "name: i" 'description: "A skill."' "user-invocable: false"
+fm skills/context-inline/SKILL.md fail "name: c1" "$S" "context: inline" "$A"
+fm skills/context-empty/SKILL.md fail "name: c2" "$S" "context: ''" "$A"
+fm skills/fork-no-agent/SKILL.md fail "name: c3" "$S" "$F"
+fm skills/agent-no-fork/SKILL.md fail "name: c4" "$S" "$A"
+fm skills/background-no-fork/SKILL.md fail "name: c5" "$S" "background: false"
+fm skills/background-yes/SKILL.md fail "name: c6" "$S" "$F" "$A" "background: yes"
+fm skills/invocable-no/SKILL.md fail "name: c7" "$S" "user-invocable: no"
+fm skills/invocable-quoted/SKILL.md fail "name: c8" "$S" 'user-invocable: "false"'
+fm skills/agent-twice/SKILL.md fail "name: c9" "$S" "$F" "$A" "$A"
+i=0
+for ag in Explore general-purpose other:responder auditor:Responder auditor: auditor:../responder auditor:a/b \
+  auditor:-x auditor:x- auditor:a--b 'auditor:responder #' auditor:nobody auditor:misnamed; do
+  i=$((i + 1)); fm "skills/agent-$i/SKILL.md" fail "name: g$i" "$S" "$F" "agent: $ag"
+done
+for said in "skills/agent-12/SKILL.md:5: agent auditor:nobody names no agent of this plugin: $T/fm/agents/nobody.md is not a file" \
+  "skills/agent-13/SKILL.md:5: agent auditor:misnamed: the frontmatter of $T/fm/agents/misnamed.md does not name it misnamed" \
+  "skills/fork-no-agent/SKILL.md:4: context: fork needs an agent" "skills/agent-no-fork/SKILL.md:4: agent applies only with context: fork" \
+  "skills/background-no-fork/SKILL.md:4: background applies only with context: fork"; do
+  file=${said%%:*}
+  out=$(bash "$ROOT/scripts/check-frontmatter.sh" "$T/fm/$file" 2>&1)
+  case "$out" in *"$T/fm/$said"*) pass=$((pass + 1)); echo "PASS frontmatter: ... $said";;
+    *) failn=$((failn + 1)); echo "FAIL frontmatter: not reported: $said"; echo "$out";; esac
+done
+fm skills/tools-star/SKILL.md fail "name: t1" "$S" "allowed-tools: Read, *"
+fm skills/tools-nested/SKILL.md fail "name: t2" "$S" "allowed-tools: Read, Bash(echo (x) *)"
+fm skills/tools-empty-entry/SKILL.md fail "name: t3" "$S" "allowed-tools: Read, , Grep"
+fm skills/tools-two-in-item/SKILL.md fail "name: t4" "$S" "allowed-tools:" "  - 'Read, Bash'"
+fm skills/tools-empty-list/SKILL.md fail "name: t5" "$S" "allowed-tools:"
+fm skills/tools-dashes/SKILL.md fail "name: t6" "$S" "allowed-tools:" "  - 'Bash(echo --- *)'"
+fm skill-tools/SKILL.md fail "name: r1" 'description: "A skill."' "allowed-tools: Read"
+fm skill-fork/SKILL.md fail "name: r2" "$S" "$F" "$A"
+fm skill-invocable/SKILL.md fail "name: r3" 'description: "A skill."' "user-invocable: false"
+# the root SKILL.md, the one directly in the directory the check runs in, may also list allowed-tools under a
+# command's rules, its bundled audit-scan and audit-mem from ${CLAUDE_SKILL_DIR}; it takes no other key
+fmroot() { # fmroot NAME WANT LINE...  — a SKILL.md of those LINEs, checked as SKILL.md from its own directory
+  local d="$T/fmroot/$1" want=$2 got=pass; shift 2
+  mkdir -p "$d"; { echo ---; printf '%s\n' "$@"; echo ---; echo; echo Body.; } > "$d/SKILL.md"
+  out=$(cd "$d" && bash "$ROOT/scripts/check-frontmatter.sh" SKILL.md 2>&1) || got=fail
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS frontmatter $want: root SKILL.md, ${d##*/}"
+  else failn=$((failn + 1)); echo "FAIL frontmatter root SKILL.md, ${d##*/}: got $got, want $want"; echo "$out"; fi
+}
+TS='${CLAUDE_SKILL_DIR}/tools/auditor-tools/target/release'
+fmroot listed pass "name: r" 'description: "A skill."' "allowed-tools:" "  - Read" "  - Edit(audit_*/**)" \
+  "  - 'Bash(\"\${CLAUDE_SKILL_DIR}/scripts/preflight.sh\" *)'" "  - 'Bash(\"$TS/audit-scan\" --contract=1 *)'" \
+  "  - 'Bash(\"$TS/audit-mem\" warm --contract=1 *)'" "  - 'Bash(test -x \"$TS/audit-mem\")'"
+fmroot one-line pass "name: r" 'description: "A skill."' "allowed-tools: Read, Grep"
+fmroot plugin-root fail "name: r" 'description: "A skill."' "allowed-tools:" "  - 'Bash(\"$TB/audit-mem\" warm --contract=1 *)'"
+fmroot no-marker fail "name: r" 'description: "A skill."' "allowed-tools:" "  - 'Bash(\"$TS/audit-mem\" check *)'"
+fmroot rule fail "name: r" 'description: "A skill."' "allowed-tools:" "  - 'Bash(\"$TS/audit-mem\" rule --contract=1 *)'"
+fmroot star fail "name: r" 'description: "A skill."' "allowed-tools: Read, Bash(*)"
+fmroot fork fail "name: r" 'description: "A skill."' "context: fork" "allowed-tools: Read"
+fmroot invocable fail "name: r" 'description: "A skill."' "user-invocable: false"
+# the agent is looked up at the plugin root, the path before skills/, however the skill is named
+for at in "$T/fm|skills/forked/SKILL.md" "$T/fm/agents|../skills/forked/SKILL.md" "$ROOT|$T/fm/skills/forked/SKILL.md"; do
+  expect "frontmatter: an agent found from ${at%%|*} for ${at#*|}" 0 sh -c 'cd "$1" && bash "$2" "$3"' sh \
+    "${at%%|*}" "$ROOT/scripts/check-frontmatter.sh" "${at#*|}"
+done
+mkdir -p "$T/fm-noagents/skills/forked"; cp "$T/fm/skills/forked/SKILL.md" "$T/fm-noagents/skills/forked/"
+expect "frontmatter: an agent of another plugin root does not count" 1 bash "$ROOT/scripts/check-frontmatter.sh" \
+  "$T/fm-noagents/skills/forked/SKILL.md"
 # a .md under agents/ or commands/ is an agent or a command, also one named SKILL.md: the first of agents/,
 # commands/ and skills/ in the path gives the kind
 fm agents/skill.md fail "$N" "$D"
@@ -276,6 +383,15 @@ fm commands/bash-patterns.md pass "$C" "allowed-tools:" "  - Read" "  - 'Bash(jq
 expect "frontmatter, with Bash forbidden: Bash(pattern) entries pass" 0 bash "$T/fm-no-bash.sh" "$T/fm/commands/bash-patterns.md"
 expect "frontmatter, with Bash forbidden: an agent's Bash tool passes" 0 bash "$T/fm-no-bash.sh" "$T/fm/agents/a00-control.md" \
   "$ROOT/agents/context-builder.md"
+# FORBIDDEN_ALLOWED_TOOLS holds a bare Bash: a command's, a skill's and the root SKILL.md's fail, in either list
+# form, and so does a catch-all pattern; Bash(pattern) entries pass
+fm commands/bare-bash-real.md fail "$C" "allowed-tools: Read, Bash"
+fm commands/bare-bash-item.md fail "$C" "allowed-tools:" "  - Read" "  - Bash"
+fm commands/bare-bash-quoted.md fail "$C" "allowed-tools:" "  - 'Bash'"
+fm commands/catch-all-real.md fail "$C" "allowed-tools: Read, Bash(*)"
+fm skills/bare-bash/SKILL.md fail "name: bb" 'description: "A skill."' "allowed-tools: Read, Bash"
+fmroot bare-bash fail "name: r" 'description: "A skill."' "allowed-tools:" "  - Bash"
+fm commands/bash-pattern-real.md pass "$C" "allowed-tools: Read, Bash(jq *)"
 for all in 'Bash(*)' 'Bash( * )' 'Bash(:*)' 'Bash(**)'; do
   printf -- '---\n%s\n%s\n---\n' "$C" "allowed-tools: Read, $all" > "$T/fm/commands/catch-all.md"
   expect "frontmatter, with Bash forbidden: $all fails" 1 bash "$T/fm-no-bash.sh" "$T/fm/commands/catch-all.md"
@@ -378,11 +494,189 @@ expect "pipefail: the CI check scripts and their suites are clean" 0 bash "$ROOT
   "$ROOT/scripts/check-attribution.sh" "$ROOT/scripts/check-corpus.sh" "$ROOT/scripts/check-frontmatter.sh" \
   "$ROOT/scripts/check-hygiene.sh" "$ROOT/scripts/check-pipefail.sh" "$ROOT/scripts/tob-delta-review.sh" \
   "$ROOT/scripts/tests/test-bundled-paths.sh" "$ROOT/scripts/tests/test-ci-checks.sh" \
-  "$ROOT/scripts/tests/test-corpus-pins.sh" "$ROOT/scripts/tests/test-gha-recipes.sh"
+  "$ROOT/scripts/tests/test-corpus-pins.sh" "$ROOT/scripts/tests/test-gha-recipes.sh" \
+  "$ROOT/scripts/check-entrypoints.sh" "$ROOT/scripts/tests/test-command-forms.sh" "$ROOT/scripts/tests/test-preapproved-entrypoints.sh"
 
 # ---- 4. workflows --------------------------------------------------------------------------------------
-wfcheck() { # wfcheck FILE -> one line per problem
-  awk -v f="$1" 'BEGIN { sha = "[0-9a-f]"; for (i = 1; i < 40; i++) sha = sha "[0-9a-f]" }
+wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
+  LC_ALL=C awk -v f="$1" -v q="'" '
+    # the letter, digit or _ a two-digit hex code names, or \001 for any other code
+    function hexchr(h) { h = tolower(h); return (h in letter) ? letter[h] : "\001" }
+    # quoted(s, i): the value of the quoted scalar that starts at s[i] (a quote mark), each \x, \u and \U escape
+    # of a letter, a digit or _ decoded and any other escape read as \001. QEND is the index after its closing
+    # quote, or 0 when it goes on past the line; QBAD is 1 when it holds an escape read as \001.
+    function quoted(s, i,   c, e, v, j, n, h) {
+      c = substr(s, i, 1); v = ""; j = i + 1; QEND = 0; QBAD = 0
+      while (j <= length(s)) {
+        e = substr(s, j, 1)
+        if (c == q) {
+          if (e != q) { v = v e; j++; continue }
+          if (substr(s, j + 1, 1) == q) { v = v q; j += 2; continue }
+          QEND = j + 1; return v
+        }
+        if (e == "\"") { QEND = j + 1; return v }
+        if (e != "\\") { v = v e; j++; continue }
+        e = substr(s, j + 1, 1); n = 0
+        if (e == "x") n = 2; else if (e == "u") n = 4; else if (e == "U") n = 8
+        h = substr(s, j + 2, n)
+        if (n && length(h) == n && h ~ /^[0-9A-Fa-f]+$/ && substr(h, 1, n - 2) ~ /^0*$/) h = hexchr(substr(h, n - 1))
+        else h = "\001"
+        if (h == "\001") QBAD = 1
+        v = v h; j += 2 + n
+      }
+      return v
+    }
+    # keyat(s, i): the key that may start at s[i], after any tag and anchor: an explicit ? key, an alias, a
+    # merge key (<<, which can bring in a mapping that holds on), or a key YAML reads as on (or On, ON) that is
+    # quoted, escaped, tagged or anchored, or in another letter case
+    function keyat(s, i,   props, v, j, w, c) {
+      if (substr(s, i, 1) == "?" && (i == length(s) || substr(s, i + 1, 1) ~ /[ \t]/)) {
+        print f ": an explicit ? key; write each key plainly: " s; return }
+      props = 0
+      while (substr(s, i, 1) == "!" || substr(s, i, 1) == "&") {
+        props = 1
+        while (i <= length(s) && substr(s, i, 1) !~ /[ \t]/) i++
+        while (substr(s, i, 1) ~ /[ \t]/) i++
+      }
+      if (substr(s, i, 1) == "*") {
+        j = i; while (j <= length(s) && substr(s, j, 1) !~ /[ \t]/) j++
+        while (substr(s, j, 1) ~ /[ \t]/) j++
+        if (substr(s, j, 1) == ":") print f ": an alias as a key; write each key plainly: " s
+        return
+      }
+      if (substr(s, i, 1) == "\"" || substr(s, i, 1) == q) {
+        v = quoted(s, i); if (!QEND) return
+        j = QEND; while (substr(s, j, 1) ~ /[ \t]/) j++
+        if (substr(s, j, 1) == ":" && tolower(v) == "on") print f ": the on key is quoted; write it as plain on: " s
+        return
+      }
+      w = substr(s, i)
+      if (substr(w, 1, 2) == "<<" && w ~ /^<<[ \t]*:([ \t,}]|$)/) { print f ": a merge key; write each key plainly: " s; return }
+      if (!match(w, /^[^ \t:,{}]+[ \t]*:/)) return
+      c = substr(w, RLENGTH + 1, 1)
+      if (c != "" && c != " " && c != "\t" && c != "," && c != "}" && c != "]") return
+      w = substr(w, 1, RLENGTH); sub(/[ \t]*:$/, "", w)
+      if (index(w, "[") || index(w, "]") || tolower(w) != "on") return
+      if (props) print f ": the on key has a tag or an anchor; write it as plain on: " s
+      else if (w != "on") print f ": the on key is in another letter case; write it as plain on: " s
+    }
+    # keys(s): every key on the line s: the first, after any - of a sequence, and each after a { [ or , outside
+    # a quoted scalar and before a comment
+    function keys(s,   i, j, c) {
+      i = 1
+      while (substr(s, i, 1) ~ /[ \t]/) i++
+      while (substr(s, i, 1) == "-" && substr(s, i + 1, 1) ~ /[ \t]/) { i += 2; while (substr(s, i, 1) ~ /[ \t]/) i++ }
+      keyat(s, i)
+      for (; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (c == "\"" || c == q) { quoted(s, i); if (!QEND) return; i = QEND - 1; continue }
+        if (c == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t]/)) return
+        if (c == "{" || c == "[" || c == ",") { j = i + 1; while (substr(s, j, 1) ~ /[ \t]/) j++; keyat(s, j) }
+      }
+    }
+    # decode(s): the line s up to its comment, each quoted scalar replaced by its value where a YAML node starts:
+    # at the indentation, after a "- ", "? " or ": " there, after a tag or an anchor there, after [, { and , in a
+    # flow collection, and after a : right after a quoted scalar, an alias or a closed collection. Anywhere else a
+    # quote mark is a character of a plain scalar, which YAML never decodes. FD carries the depth of flow
+    # collections over to the next line, and PC whether the line ended in a plain scalar inside one, which the next
+    # line goes on with unless it starts with , ] or }. RUNON is 1 when a quoted scalar, in either style, goes on
+    # past the line, where YAML reads the next line as part of it; TAG is 1 when a node has a tag, such as !!binary,
+    # which makes YAML read the text that follows as base64; HDR is 1 when the line ends in a block scalar header
+    # (| or >).
+    # In the value of on: (STRICT), WHY names the first thing on the line this check cannot read with certainty,
+    # or that YAML parsers read in different ways (libyaml takes any ? or : inside a flow collection as an
+    # indicator, YAML 1.2 only one before a space), so the check fails it whatever its events.
+    function why(r) { if (STRICT && WHY == "") WHY = r }
+    function decode(s,   i, n, c, d, e, out, st, lq, pl) {
+      out = ""; RUNON = 0; TAG = 0; HDR = 0; WHY = ""; n = length(s); st = !(FD && PC); pl = !st; lq = 0
+      for (i = 1; i <= n && substr(s, i, 1) ~ /[ \t]/; i++) out = out substr(s, i, 1)
+      if (i > n) return out
+      if (pl && !index(",]}", substr(s, i, 1))) why("a plain scalar in a flow collection that goes on from the line before")
+      while (i <= n) {
+        c = substr(s, i, 1); d = substr(s, i + 1, 1)
+        if (c == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t]/)) break
+        if (st && (c == "\"" || c == q)) {
+          out = out quoted(s, i)
+          if (!QEND) { RUNON = 1; break }
+          if (QBAD) why("an escape this check does not decode")
+          i = QEND; st = 0; lq = 1; continue
+        }
+        out = out c; i++
+        if (c == " " || c == "\t") continue
+        if (st) {   # where a node starts: a property, a collection, an indicator, a block scalar or a plain scalar
+          if (c == "!" || c == "&" || c == "*") {
+            if (c == "!") TAG = 1
+            why(c == "!" ? "a tag" : (c == "&" ? "an anchor" : "an alias"))
+            while (i <= n && (e = substr(s, i, 1)) !~ /[ \t]/ && !(FD && index(",[]{}", e))) { out = out e; i++ }
+            if (c == "*") { st = 0; lq = 1 }
+            continue
+          }
+          if (c == "[" || c == "{") { FD++; continue }
+          if (FD && (c == "]" || c == "}")) { FD--; st = 0; lq = 1; continue }
+          if (FD && c == ",") continue
+          if ((c == "-" || c == "?" || c == ":") && (d == "" || d == " " || d == "\t")) {
+            if (c == "?") why("an explicit ? key"); else if (c == "-" && FD) why("a - entry inside a flow collection")
+            continue
+          }
+          if (FD && (c == "?" || c == ":")) { why("a " c " inside a flow collection with no space after it"); continue }
+          if (!FD && (c == "|" || c == ">") && substr(s, i - 1) ~ /^[|>][-+0-9]*([ \t]+#.*|[ \t]*)$/) {
+            if (substr(s, i - 1) ~ /^[|>][-+]?[0-9]/) why("a block scalar header with an indentation indicator")
+            HDR = 1; break
+          }
+          if (c == "]" || c == "}") why("a " c " that closes no flow collection")
+          st = 0; pl = 1; continue
+        }
+        if (lq) {   # right after a quoted scalar, an alias or a closed collection
+          if (c == ":") { st = 1; lq = 0; continue }
+          if (FD && c == ",") { st = 1; lq = 0; continue }
+          if (FD && (c == "]" || c == "}")) { FD--; continue }
+          why("text right after a quoted scalar, an alias or a collection")
+          lq = 0; pl = 1; continue
+        }
+        # inside a plain scalar, which ends at ": ", and in a flow collection at , ] and }
+        if (c == ":" && (d == "" || d == " " || d == "\t")) { st = 1; pl = 0; continue }
+        if (!FD) continue
+        if (c == ",") { st = 1; pl = 0; continue }
+        if (c == "]" || c == "}") { FD--; pl = 0; lq = 1; continue }
+        if (c == "\"" || c == q) why("a quote mark inside a plain scalar in a flow collection")
+        else if (index("[{:?", c)) why("a " c " inside a plain scalar in a flow collection")
+      }
+      PC = FD && pl
+      return out
+    }
+    BEGIN { sha = "[0-9a-f]"; for (i = 1; i < 40; i++) sha = sha "[0-9a-f]"
+      trg = "(^|[^A-Za-z0-9_])(pull_request_target|workflow_run)([^A-Za-z0-9_]|$)"
+      for (i = 48; i <= 122; i++) if (i <= 57 || (i >= 65 && i <= 90) || i == 95 || i >= 97) letter[sprintf("%02x", i)] = sprintf("%c", i) }
+    # a carriage return ends a line for a YAML parser, and so do NEL, LS and PS for a YAML 1.1 one, inside what
+    # is one line here
+    !lb && (index($0, "\r") || $0 ~ /\302\205|\342\200\250|\342\200\251/) { lb = 1
+      print f ": line " NR " holds a carriage return or a Unicode line break (NEL, LS or PS); end each line with a newline only" }
+    # the keys of every line outside a block scalar (| or >) and a comment line, and the line with its quoted
+    # scalars decoded; the first line without a BOM. A block scalar starts where its header stands where a node
+    # starts, outside a flow collection.
+    { line = $0; if (NR == 1) sub(/^\357\273\277/, "", line); inside = 0; dec = "" }
+    blk { match(line, /^[ \t]*/)
+      if (line ~ /^[ \t]*$/) inside = 1
+      else if (contind < 0 && RLENGTH > blkind) { contind = RLENGTH; inside = 1 }
+      else if (contind >= 0 && RLENGTH >= contind) inside = 1
+      else blk = 0 }
+    # the top-level mapping: a line at the left margin, outside a flow collection, is one of its keys written
+    # plainly, or a --- or ... document marker. The trigger is then the value of on:, from its line to the next
+    # line at the left margin, and anything else there (a flow collection or a directive at the top level, a line
+    # at the margin inside a flow collection, keys that are indented) fails, since the trigger has no known place
+    !inside && line ~ /^[^ \t#]/ {
+      if (FD) print f ": line " NR " is at the left margin inside a flow collection; indent it: " line
+      else { if (line !~ /^[A-Za-z0-9_-]+[ \t]*:([ \t]|$)/ && line !~ /^(---|\.\.\.)([ \t]+#.*|[ \t]*)$/)
+               print f ": line " NR " is not a plain key of the top-level mapping; write each top-level key plainly at the left margin: " line
+             STRICT = (line ~ /^on[ \t]*:([ \t]|$)/) }
+      top = (line !~ /^(---|\.\.\.)([ \t]|$)/) }
+    !inside && !top && line ~ /^[ \t]+[^ \t#]/ { top = 1
+      print f ": line " NR " starts the top-level mapping indented; write its keys at the left margin: " line }
+    !inside && line !~ /^[ \t]*#/ { keys(line); dec = decode(line)
+      if (TAG) print f ": a tag on a node; write each key and value plainly: " line
+      if (RUNON) print f ": a quoted scalar runs on past its line; keep each on one line: " line
+      else if (HDR) { match(line, /^[ \t]*(-[ \t]+)*/); blkind = RLENGTH; contind = -1; blk = 1 }
+      if (WHY != "") print f ": on: holds " WHY ", which this check cannot read with certainty, so it may run on pull_request_target or workflow_run; write its events plainly: " line }
     /^permissions:/ { if ($0 !~ /^permissions:[ \t]*$/) print f ": permissions is not a block"; perm = 1; next }
     perm == 1 && /^  [^ ]/ { if ($0 !~ /^  contents: read[ \t]*$/) print f ": permissions grants more than contents: read"; next }
     perm == 1 { perm = 2 }
@@ -390,8 +684,11 @@ wfcheck() { # wfcheck FILE -> one line per problem
     /^    permissions:/ { if ($0 !~ /^    permissions:[ \t]*$/) print f ": job " job " permissions is not a block"; jperm = 1; next }
     jperm && /^      [^ ]/ { if ($0 !~ /^      contents: read[ \t]*$/) print f ": job " job " permissions grants more than contents: read"; next }
     jperm { jperm = 0 }
-    /^on:.*(pull_request_target|workflow_run)|^[ \t-]*(pull_request_target|workflow_run)[ \t]*:?[ \t]*$/ {
-      print f ": runs on pull_request_target or workflow_run" }
+    # the trigger, as written on the line and as its quoted scalars read decoded
+    { t = $0; sub(/^[ \t]*#.*/, "", t) }
+    t ~ trg || dec ~ trg { print f ": runs on pull_request_target or workflow_run" }
+    # cargo test stops at the first test binary that fails, and the binaries after it never run
+    t ~ /(^|[ \t;&|(])cargo[ \t]+test([ \t]|$)/ && t !~ /[ \t]--no-fail-fast([ \t]|$)/ { print f ": cargo test without --no-fail-fast: " $0 }
     # run: scripts, one-line or block: an expression there is pasted into the script before it runs
     inrun { match($0, /^[ \t]*/); if (RLENGTH > runind || $0 ~ /^[ \t]*$/) { if (index($0, "${{")) print f ": ${{ }} inside a run: script"; next } inrun = 0 }
     /^[ \t]*(- )?run:/ { match($0, /^[ \t]*(- )?/); runind = RLENGTH; inrun = 1; if (index($0, "${{")) print f ": ${{ }} inside a run: script"; next }
@@ -410,11 +707,67 @@ wfcheck() { # wfcheck FILE -> one line per problem
 n=$(grep -c '^    name: counts, index, version, hygiene$' "$ROOT/.github/workflows/corpus-check.yml")
 if [ "$n" = 1 ]; then pass=$((pass + 1)); echo "PASS workflows: the required job is still named 'counts, index, version, hygiene'"
 else failn=$((failn + 1)); echo "FAIL workflows: corpus-check.yml has $n jobs named 'counts, index, version, hygiene', want 1"; fi
-for wf in "$ROOT"/.github/workflows/*.yml; do
-  probs=$(wfcheck "$wf")
-  if [ -z "$probs" ]; then pass=$((pass + 1)); echo "PASS workflows: ${wf##*/} reads contents only, times out, pins actions, drops credentials"
-  else failn=$((failn + 1)); echo "FAIL workflows: ${wf##*/}"; echo "$probs"; fi
+wfentry() { # wfentry PATH -> one line per problem with an entry of a workflow directory: GitHub runs every .yml and
+  # .yaml file there, so each entry must be a regular file of either name, and each must pass wfcheck
+  if [ -L "$1" ] || [ ! -f "$1" ]; then echo "$1: not a regular file; the workflow directory holds workflow files only"
+  else case "${1##*/}" in
+      *.yml|*.yaml) wfcheck "$1" ;;
+      *) echo "$1: not named *.yml or *.yaml; the workflow directory holds workflow files only" ;;
+    esac; fi
+}
+wfdir() { # wfdir DIR -> for every entry of DIR, dotfiles included, a line "entry: NAME" and then its problems;
+  # last, a count line "entries: N"
+  local p n=0
+  while IFS= read -r -d '' p; do n=$((n + 1)); echo "entry: ${p##*/}"; wfentry "$p"; done < <(find "$1" -mindepth 1 -maxdepth 1 -print0)
+  echo "entries: $n"
+}
+# .github/workflows as wfdir reads it (the fixture below tests wfdir): one PASS or FAIL per entry, and as many
+# entries as the shell's own glob finds there
+wfout=$(wfdir "$ROOT/.github/workflows"); nwf=-1; cur=""; probs=""
+wfdone() { # the PASS or FAIL line of the entry read so far, with its problems
+  [ -n "$cur$probs" ] || return 0
+  if [ -z "$probs" ]; then pass=$((pass + 1)); echo "PASS workflows: $cur reads contents only, times out, pins actions, drops credentials"
+  else failn=$((failn + 1)); echo "FAIL workflows: ${cur:-before any entry}"; printf '%s' "$probs"; fi
+  cur=""; probs=""
+}
+while IFS= read -r l; do
+  case "$l" in
+    "entry: "*) wfdone; cur=${l#entry: } ;;
+    "entries: "*) wfdone; nwf=${l#entries: } ;;
+    *) probs="$probs$l"$'\n' ;;
+  esac
+done <<< "$wfout"
+wfdone
+nglob=0
+for wf in "$ROOT"/.github/workflows/* "$ROOT"/.github/workflows/.*; do
+  case "${wf##*/}" in .|..) continue ;; esac
+  if [ -e "$wf" ] || [ -L "$wf" ]; then nglob=$((nglob + 1)); fi
 done
+if [ "$nwf" -gt 0 ] && [ "$nwf" = "$nglob" ]; then pass=$((pass + 1)); echo "PASS workflows: every entry of .github/workflows was read ($nwf)"
+else failn=$((failn + 1)); echo "FAIL workflows: $nwf entries of .github/workflows were read, and the directory holds $nglob"; fi
+# the directory check itself: a .yaml workflow is read like a .yml one, and a dotfile too; a file of another
+# name, a link and a directory are each a problem
+mkdir -p "$T/wfdir/sub" && printf 'x\n' > "$T/wfdir/notes.txt" && printf 'x\n' > "$T/wfdir/UPPER.YML" \
+  && ln -s notes.txt "$T/wfdir/link.yml" \
+  && { printf 'name: clean\non: push\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n'
+       printf '    timeout-minutes: 5\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n'
+       printf '        with:\n          persist-credentials: false\n      - run: echo ok\n'; } > "$T/wfdir/clean.yaml" \
+  && { printf 'name: release\non: pull_request_target\npermissions: write-all\njobs:\n  a:\n    runs-on: ubuntu-latest\n'
+       printf '    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n'
+       printf '      - run: echo ${{ github.event.pull_request.title }}\n'; } > "$T/wfdir/release.yaml" \
+  && sed 's/^name: release$/name: hidden/' "$T/wfdir/release.yaml" > "$T/wfdir/.hidden.yml" \
+  || { failn=$((failn + 1)); echo "FAIL workflows: could not build the directory fixture"; }
+probs=$(wfdir "$T/wfdir")
+for want in "release.yaml: runs on pull_request_target or workflow_run" "release.yaml: permissions is not a block" \
+            "release.yaml: \${{ }} inside a run: script" "release.yaml: 1 checkout(s) but 0 persist-credentials: false" \
+            ".hidden.yml: runs on pull_request_target or workflow_run" "notes.txt: not named *.yml or *.yaml" \
+            "UPPER.YML: not named *.yml or *.yaml" "link.yml: not a regular file" "sub: not a regular file" \
+            "entry: release.yaml" "entry: .hidden.yml" "entry: clean.yaml" "entries: 7"; do
+  case "$probs" in *"$want"*) pass=$((pass + 1)); echo "PASS workflows: the directory check reports ... $want";;
+    *) failn=$((failn + 1)); echo "FAIL workflows: the directory check does not report: $want"; echo "$probs";; esac
+done
+case "$probs" in *"/clean.yaml: "*) failn=$((failn + 1)); echo "FAIL workflows: the directory check flags a clean .yaml workflow"; echo "$probs";;
+  *) pass=$((pass + 1)); echo "PASS workflows: the directory check passes a clean .yaml workflow";; esac
 # the checker itself: a job with no timeout, an action pinned by tag, and a checkout that keeps credentials;
 # then a workflow on pull_request_target whose job writes contents and pastes the PR title into a script
 printf 'name: x\non: push\npermissions:\n  contents: write\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n' \
@@ -435,6 +788,327 @@ case "$probs" in *"job a permissions grants more"*"pull_request_target or workfl
         pass=$((pass + 1)); echo "PASS workflows: the checker flags job permissions, the trigger and both scripts";;
       *) failn=$((failn + 1)); echo "FAIL workflows: the checker missed a \${{ }} in a run: script"; echo "$probs";; esac;;
   *) failn=$((failn + 1)); echo "FAIL workflows: the checker missed job permissions or the trigger"; echo "$probs";; esac
+trig() { # trig WANT NAME LINE...  — a workflow whose trigger is LINE...; the checker must WANT (flag|pass) it
+  local want=$1 name=$2 got=pass; shift 2
+  { echo 'name: x'; printf '%s\n' "$@"; printf 'permissions:\n  contents: read\n'; } > "$T/trigger-$name.yml"
+  case "$(wfcheck "$T/trigger-$name.yml")" in *"pull_request_target or workflow_run"*) got=flag;; esac
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the trigger check gives $want on $name"
+  else failn=$((failn + 1)); echo "FAIL workflows: the trigger check gives $got on $name, want $want"; fi
+}
+trig flag double-quoted-on '"on": [pull_request_target]'
+trig flag single-quoted-on "'on': workflow_run"
+trig flag flow-mapping 'on:' '  pull_request_target: {types: [opened]}'
+trig flag trailing-comment 'on:' '  workflow_run:   # after the build' '    workflows: [build]'
+trig flag double-quoted-key 'on:' '  "pull_request_target":' '    types: [opened]'
+trig flag single-quoted-item 'on:' "  - 'workflow_run'"
+trig flag space-before-colon 'on : pull_request_target'
+trig flag null-value 'on:' '  pull_request_target: null'
+trig flag tilde-value 'on:' '  workflow_run: ~'
+trig flag empty-list-value 'on:' '  pull_request_target: []'
+trig flag alias 'on:' '  workflow_dispatch: &t' '  workflow_run: *t'
+trig flag wrapped-flow-list 'on: [push,' '  pull_request_target,' '  workflow_dispatch]'
+trig flag json-style '{"on": {"pull_request_target": {}}}'
+trig flag explicit-key 'on:' '  ? pull_request_target' '  : {types: [opened]}'
+trig flag bom "$(printf '\357\273\277on: workflow_run')"
+trig pass comment-line '# no job here starts on pull_request_target or workflow_run' 'on: push'
+trig pass quoted-on-other-events '"on": [push, pull_request]'
+# an event named with escapes in a double-quoted scalar, which YAML decodes, as a value, an item or a key
+trig flag escaped-hex-value 'on: "pull_request_t\x61rget"'
+trig flag escaped-unicode-value 'on: "workflow_r\u0075n"'
+trig flag escaped-long-unicode-value 'on: "pull_request_targe\U00000074"'
+trig flag escaped-underscore 'on: "workflow\x5Frun"'
+trig flag escaped-flow-item 'on: [push, "workflow_r\x75n"]'
+trig flag escaped-flow-item-wrapped 'on: [push,' '  pull_request, "workflow_r\x75n"]'
+trig flag escaped-block-item 'on:' '  - push' '  - "pull_request_t\x61rget"'
+trig flag escaped-key 'on:' '  "workflow_r\x75n":' '    workflows: [build]'
+trig flag escaped-json-key '{"on": {"pull_request_t\u0061rget": {}}}'
+trig flag escaped-tagged-value 'on: !!str "workflow_r\x75n"'
+trig flag escaped-after-apostrophe "{name: it's, on: \"workflow_r\\x75n\"}"
+trig flag escaped-json-key-adjacent '"on":["pull_request_t\u0061rget"]'
+# a quote inside a plain scalar or a block scalar is a character, and YAML decodes nothing there
+trig pass escape-other-text 'on: push' 'env:' '  A: "caf\x65 \u00e9"'
+trig pass escape-in-plain-scalar 'on: push' 'x: echo "pull_request_t\x61rget"'
+trig pass escape-in-block-scalar 'on: push' 'x: |' '  echo "workflow_r\x75n"'
+trig pass escape-in-comment 'on: push   # "workflow_r\x75n"'
+# a | or > in a comment, or at the end of a plain scalar in a flow collection, starts no block scalar, so the
+# lines after it are still read and decoded
+trig flag comment-pipe-item 'on: # |' '  - "pull_request_t\x61rget"'
+trig flag flow-plain-pipe 'on: [a |' '  , "pull_request_t\x61rget"]'
+trig flag comment-gt-item 'on: # >' '  - "workflow_r\x75n"'
+trig flag comment-pipe-key 'on: # |' '  "pull_request_t\x61rget":' '    types: [opened]'
+trig flag comment-pipe-flow 'on: # see |' '  [push, "pull_request_t\x61rget"]'
+trig pass block-after-comment-text 'on: push' 'x: |   # a | in the comment too' '  echo "workflow_r\x75n"'
+# a " - " or " ? " inside a plain scalar starts no node, so a quote mark after it is a character; an anchor's name
+# ends at a flow indicator; a plain scalar in a flow collection can go on to the next line. Each of these is read as
+# the event by libyaml 0.2.1 or js-yaml 4.1.1, or by neither (explicit-key-split-escape, block-ctx-anchor) while
+# showing how a line-by-line reading loses its place, so each must fail
+trig flag dash-dq-desync 'on: {push: {branches: [a - "b]}, "pull_request_t\x61rget": {}}'
+trig flag dash-sq-desync "on: {push: {branches: [a - 'b]}, \"pull_request_t\\x61rget\": {branches: [c']}}"
+trig flag qmark-dq-desync 'on: {push: {branches: [a ? "b]}, "pull_request_t\x61rget": {}}'
+trig flag colon-dq-desync 'on: {push: {branches: [x:"y]}, "pull_request_t\x61rget": {}}'
+trig flag qmark-adjacent-key 'on: {push: {}, ?"pull_request_t\x61rget": {}}'
+trig flag anchor-comma 'on: {push: &a,"pull_request_t\x61rget":{}}'
+trig flag anchor-comma-wfrun 'on: {push: &a,"workflow_r\x75n":{workflows: [build]}}'
+trig flag anchor-comma-seq 'on: [push, &a,"workflow_r\x75n"]'
+trig flag anchor-split-seq 'on: [push, &a,"pull_request_\' '  target"]'
+trig flag block-ctx-anchor 'on:' '  push: {branches: [main]}' '  workflow_dispatch: &a,"pull_request_t\x61rget":{}'
+trig flag flow-plain-continuation 'on: {push: {branches: [a' '  "b]}, "pull_request_t\x61rget": {}}'
+trig flag explicit-key-split 'on: {push: {branches: [a - "b]}, ? "pull_request_\' '  target" : {}}'
+trig flag explicit-key-split-escape 'on: {push: {branches: [a - "b]}, "pull_request_\' '  t\x61rget": {}}'
+trig flag binary-in-desync 'on: {push: {branches: [a - "b]}, !!binary cHVsbF9yZXF1ZXN0X3RhcmdldA==: {branches: [c"]}}'
+# the value of on: fails, whatever its events, on what this check cannot read with certainty: an anchor, an alias,
+# a tag, an escape it does not decode, a plain scalar in a flow collection that goes on over two lines, a ? or a
+# : with no space after it in one, an explicit key, a block scalar header with an indentation indicator
+trig flag fail-closed-anchor 'on:' '  push: &p' '    branches: [main]'
+trig flag fail-closed-alias 'on:' '  push: *p'
+trig flag fail-closed-tag 'on: !!str push'
+trig flag fail-closed-escape 'on: "push\t"'
+trig flag fail-closed-flow-plain-two-lines 'on: [push' '  pull_request]'
+trig flag fail-closed-flow-colon 'on: {push:{}}'
+trig flag fail-closed-explicit-key 'on:' '  ? push' '  : {}'
+trig flag fail-closed-indentation-indicator 'on:' '  workflow_dispatch:' '    inputs:' '      a:' '        description: |2' '          text'
+# and passes what a trigger is written with: plain and quoted events, a quote mark, ? or : inside a plain scalar
+# outside a flow collection, a flow list wrapped after a comma or before its ], a flow mapping of inputs, a block
+# scalar, an escape of a letter
+trig pass plain-trigger 'on:' '  push:' "    branches: [main, 'releases/**']" '    paths-ignore:' "      - '**.md'" \
+  '  schedule:' "    - cron: '0 3 * * 1'" '  workflow_dispatch:' '    inputs:' '      level:' \
+  "        description: Run the job's tests? See https://example.invalid/a:b" '        default: "warning"' \
+  '        options: [info, warning]' '      notes:' '        description: |' '          more "text": here'
+trig pass flow-wrapped-after-comma 'on: [push,' '  pull_request]'
+trig pass flow-wrapped-before-bracket 'on:' '  push:' '    branches: [' '      "main",' '      release' '    ]'
+trig pass inputs-flow 'on:' '  workflow_dispatch:' \
+  "    inputs: {level: {description: 'Log level', default: \"warning\", type: choice, options: [info, \"warning\", 'debug']}}"
+trig pass escaped-other-event 'on: "pu\x73h"'
+# a quoted scalar that runs on past its line can join two halves with an escaped line break, or hold a line that
+# starts with # or a quote mark, after which the line goes on as YAML
+runon() { # runon WANT NAME LINE...  — a workflow of LINE...; the checker must WANT (flag|pass) a run-on scalar
+  local want=$1 name=$2 got=pass; shift 2
+  { echo 'name: x'; printf '%s\n' "$@"; printf 'permissions:\n  contents: read\n'; } > "$T/runon-$name.yml"
+  case "$(wfcheck "$T/runon-$name.yml")" in *"a quoted scalar runs on past its line"*) got=flag;; esac
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the run-on check gives $want on $name"
+  else failn=$((failn + 1)); echo "FAIL workflows: the run-on check gives $got on $name, want $want"; fi
+}
+runon flag escaped-line-break 'on: "pull_request_\' '  target"'
+runon flag escaped-quote-at-end 'on: push' 'x: "a\"'
+runon flag in-flow 'on: [push, "work\' '  flow_run"]'
+runon flag single-quoted 'on: push' "x: 'a" "  b'"
+runon flag single-quoted-hash-line "on: {workflow_dispatch: {inputs: {a: {description: 'x" "  #', default: y}}}, pull_request_target: {}}"
+runon flag single-quoted-quote-line "on: {workflow_dispatch: {inputs: {a: {description: 'x" \
+  "  \"', default: y}}}, \"pull_request_t\\x61rget\": {}}"
+runon flag single-quoted-block-style 'on:' '  workflow_dispatch:' '    inputs:' '      a:' "        description: 'x" "          #'"
+runon pass one-line 'on: "push"' 'x: "a\\" # done' "y: 'it''s'"
+runon pass in-plain-scalar 'on: push' 'x: echo "a' "y: it's"
+runon pass in-block-scalar 'on: push' 'x: |' '  echo "a\' "  echo 'b" '  c"'
+# a carriage return, or a NEL, LS or PS, ends a line for a YAML parser, inside what the checker reads as one line
+lbreak() { # lbreak WANT NAME LINE...  — a workflow of LINE...; the checker must WANT (flag|pass) a line break in it
+  local want=$1 name=$2 got=pass; shift 2
+  { echo 'name: x'; printf '%s\n' "$@"; printf 'permissions:\n  contents: read\n'; } > "$T/lbreak-$name.yml"
+  case "$(wfcheck "$T/lbreak-$name.yml")" in *"holds a carriage return or a Unicode line break"*) got=flag;; esac
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the line-break check gives $want on $name"
+  else failn=$((failn + 1)); echo "FAIL workflows: the line-break check gives $got on $name, want $want"; fi
+}
+lbreak flag cr-item "$(printf 'on:\r  - "pull_request_t\\x61rget"')"
+lbreak flag cr-key "$(printf 'on:\r  "pull_request_t\\x61rget":\r    types: [opened]')"
+lbreak flag cr-flow "$(printf 'on:\r  [push, "pull_request_t\\x61rget"]')"
+lbreak flag crlf "$(printf 'on: push\r')"
+lbreak flag nel "$(printf 'on:\302\205  "workflow_r\\x75n":\302\205    workflows: [build]')"
+lbreak flag ls "$(printf 'on:\342\200\250  "pull_request_t\\x61rget": {}')"
+lbreak flag ps "$(printf 'on:\342\200\251  - "pull_request_t\\x61rget"')"
+lbreak pass other-utf8 'on: push' "$(printf 'env:\n  A: "caf\303\251 \342\200\224 \342\200\242 \302\240 \342\202\254"')"
+# a tag can turn what follows into another value: !!binary reads base64, so the event's name never appears
+tagged() { # tagged WANT NAME LINE...  — a workflow of LINE...; the checker must WANT (flag|pass) a tag in it
+  local want=$1 name=$2 got=pass; shift 2
+  { echo 'name: x'; printf '%s\n' "$@"; printf 'permissions:\n  contents: read\n'; } > "$T/tagged-$name.yml"
+  case "$(wfcheck "$T/tagged-$name.yml")" in *"a tag on a node"*) got=flag;; esac
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the tag check gives $want on $name"
+  else failn=$((failn + 1)); echo "FAIL workflows: the tag check gives $got on $name, want $want"; fi
+}
+tagged flag binary-item 'on: [push, !!binary cHVsbF9yZXF1ZXN0X3RhcmdldA==]'
+tagged flag binary-value 'on:' '  - !!binary d29ya2Zsb3dfcnVu'
+tagged flag directive-tag '%TAG !e! tag:yaml.org,2002:' '---' 'on: !e!binary d29ya2Zsb3dfcnVu'
+tagged flag bare-expression 'on: push' 'jobs:' '  a:' '    if: !cancelled()'
+tagged pass expression 'on: push' 'jobs:' '  a:' '    if: ${{ !cancelled() }}' "    env: {A: \"!x\", B: 'y !z'}" '    run: echo hi!'
+# every cargo test in a workflow runs each test binary, whatever fails before it
+cargo_t() { # cargo_t WANT NAME LINE...  — a workflow whose job runs LINE...; the checker must WANT (flag|pass) it
+  local want=$1 name=$2 got=pass; shift 2
+  { printf 'name: x\non: push\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:\n'
+    printf '%s\n' "$@"; } > "$T/cargo-$name.yml"
+  case "$(wfcheck "$T/cargo-$name.yml")" in *"cargo test without --no-fail-fast"*) got=flag;; esac
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the cargo test check gives $want on $name"
+  else failn=$((failn + 1)); echo "FAIL workflows: the cargo test check gives $got on $name, want $want"; fi
+}
+cargo_t flag one-line '      - run: cargo test --release --locked'
+cargo_t flag block '      - run: |' '          cargo build' '          cargo test'
+cargo_t flag after-and '      - run: cargo build && cargo test --locked'
+cargo_t pass no-fail-fast '      - run: cargo test --release --locked --no-fail-fast'
+cargo_t pass block-no-fail-fast '      - run: |' '          cargo test --no-fail-fast --locked'
+cargo_t pass other-command '      - run: cargo build --release --locked' '      - run: echo cargo testing'
+# The trigger key is plain on: only. A key YAML reads as on in any other spelling fails whatever its events,
+# and so does an explicit ? key or an alias as a key.
+onkey() { # onkey WANT NAME LINE...  — a workflow that starts with LINE...; the checker must WANT (flag|pass) its keys
+  local want=$1 name=$2 got=pass; shift 2
+  { printf '%s\n' "$@"; printf 'permissions:\n  contents: read\n'; } > "$T/onkey-$name.yml"
+  case "$(wfcheck "$T/onkey-$name.yml")" in *"the on key is "*|*"the on key has "*|*"an explicit ? key"*|*"an alias as a key"*|*"a merge key"*) got=flag;; esac
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the on-key check gives $want on $name"
+  else failn=$((failn + 1)); echo "FAIL workflows: the on-key check gives $got on $name, want $want"; wfcheck "$T/onkey-$name.yml"; fi
+}
+onkey flag double-quoted '"on": push'
+onkey flag single-quoted "'on': push"
+onkey flag space-before-colon '"on" : push'
+onkey flag tab-before-colon "$(printf '"on"\t: push')"
+onkey flag block-value "'on':" '  push:' '    branches: [main]'
+onkey flag hex-escape '"o\x6e": push'
+onkey flag hex-escapes-upper '"\x6F\x6E": push'
+onkey flag unicode-escape '"on": push'
+onkey flag long-unicode-escape '"o\U0000006E": push'
+onkey flag quoted-other-case '"On": push'
+onkey flag plain-other-case 'ON: push'
+onkey flag json-style '{"name": "x", "on": "push", "permissions": {"contents": "read"}}'
+onkey flag flow-lines '{' '  "name": "x",' "  'on': push" '}'
+onkey flag flow-plain-tagged '{name: x, !!str on: push}'
+onkey flag in-sequence '- "on": push'
+onkey flag explicit-quoted '? "on"' ': push'
+onkey flag explicit-plain '? on' ': push'
+onkey flag explicit-continued '? "o\' '  n"' ': push'
+onkey flag tag-quoted '!!str "on": push'
+onkey flag tag-plain '!!str on: push'
+onkey flag verbatim-tag "!<tag:yaml.org,2002:str> 'on': push"
+onkey flag anchor '&k "on": push'
+onkey flag anchor-plain '&k on: push'
+onkey flag alias 'events: &k on' '*k : push'
+onkey flag merge-key 'defaults: &d {on: push}' '<<: *d'
+onkey flag merge-key-flow '{name: x, <<: {on: push}}'
+onkey flag bom "$(printf '\357\273\277"on": push')"
+onkey flag trailing-comment "'on': push   # the trigger"
+onkey pass plain 'on: push'
+onkey pass plain-block 'on:' '  push:' '    branches: [main]'
+onkey pass quoted-value 'on: "push"'
+onkey pass quoted-other-key 'on: push' '"env": {"A": "on"}'
+onkey pass in-block-scalar 'on: push' 'jobs:' '  a:' '    steps:' '      - run: |' "          echo '\"on\": x'" "          echo 'on': x" \
+  '        shell: bash'
+onkey pass in-quoted-value 'on: push' "x: 'jq ''{\"on\": 1}'''"
+onkey pass in-comment '# "on": push' 'on: push   # "on": too'
+onkey pass value-on 'on: push' 'x: [a, on]'
+onkey pass merge-text-in-values 'on: push' 'x: "<<: y"' 'y: [<<, z]'
+# The top-level mapping holds plain keys at the left margin, so the trigger is the value of on: and nothing else: a
+# workflow written as a flow mapping, keys that are indented, a sequence or a directive at the margin, a line at
+# the margin inside a flow collection, or a node on a --- line fails.
+toplvl() { # toplvl WANT NAME LINE...  — a workflow of LINE...; the checker must WANT (flag|pass) its top-level lines
+  local want=$1 name=$2 got=pass; shift 2
+  { printf '%s\n' "$@"; printf 'permissions:\n  contents: read\n'; } > "$T/toplvl-$name.yml"
+  case "$(wfcheck "$T/toplvl-$name.yml")" in *"is not a plain key of the top-level mapping"*|*"at the left margin inside a flow collection"*|*"starts the top-level mapping indented"*) got=flag;; esac
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the top-level check gives $want on $name"
+  else failn=$((failn + 1)); echo "FAIL workflows: the top-level check gives $got on $name, want $want"; wfcheck "$T/toplvl-$name.yml"; fi
+}
+toplvl flag flow-mapping '{name: x, on: push}'
+toplvl flag flow-mapping-lines '{' '  name: x,' '  on: push' '}'
+toplvl flag indented-keys '  name: x' '  on: push'
+toplvl flag indented-after-marker '---' '  on: push'
+toplvl flag sequence-at-margin 'on:' '- push'
+toplvl flag margin-inside-flow 'on: [push,' 'pull_request]'
+toplvl flag directive '%YAML 1.2' '---' 'on: push'
+toplvl flag node-on-marker '--- {on: push}'
+toplvl flag quoted-key '"name": x' 'on: push'
+toplvl pass plain 'name: x' 'run-name: y' 'on: push'
+toplvl pass markers-and-comments '# a comment' '---  # the workflow' 'name: x' 'on:   # the trigger' '  push:'
+# The advisory macOS job runs every step under the stock PATH, /usr/bin:/bin:/usr/sbin:/sbin, so no tool from the
+# runner image's Homebrew stands in for the system one: a run: script exports it plus ~/.cargo/bin first, and an
+# action other than checkout gets it in its env. An action looks its tools up on the image's PATH otherwise: the
+# rustup action found Homebrew's rustup there and put neither cargo nor rustup into ~/.cargo/bin.
+macpath() { # macpath FILE -> one line per step of its corpus-macos job that does not run under the stock PATH
+  LC_ALL=C awk -v f="$1" -v q="'" '
+    function flush() {
+      if (st != "" && uses != "" && uses !~ /^actions\/checkout@/ && !envpath)
+        print f ": macOS step " st ": " uses " runs without PATH: " sp " in its env"
+      if (st != "" && run && first != want) print f ": macOS step " st ": its run: script does not start with " want
+      st = ""; uses = ""; envpath = 0; run = 0; first = ""; blk = ""
+    }
+    BEGIN { sp = "/usr/bin:/bin:/usr/sbin:/sbin"; want = "export PATH=\"" sp ":$HOME/.cargo/bin\"" }
+    { line = $0; match(line, /^ */); ind = RLENGTH; text = (line !~ /^[ \t]*(#.*)?$/) }
+    text && ind <= 2 { flush(); job = (line ~ /^  corpus-macos:[ \t]*$/); if (job) seen = 1; next }
+    !job { next }
+    text && ind < 6 { flush(); next }
+    line ~ /^      - / { flush(); nst++; st = "#" nst; sub(/^      - /, "        ", line); ind = 8 }
+    st == "" { next }
+    # inside an env:, with: or run: block of the step; a comment line in a script is not its first line
+    blk != "" && (ind >= 10 || !text) {
+      if (blk == "env" && line ~ /^          PATH:/) {
+        v = line; sub(/^          PATH:[ \t]*/, "", v); sub(/[ \t]+#.*$/, "", v)
+        if (v ~ /^".*"$/ || v ~ ("^" q ".*" q "$")) v = substr(v, 2, length(v) - 2)
+        envpath = (v == sp) }
+      if (blk == "run" && first == "" && text) { first = line; sub(/^[ \t]+/, "", first); sub(/[ \t]+$/, "", first) }
+      next }
+    ind == 8 && line ~ /^        [A-Za-z0-9_-]+:/ {
+      blk = ""; k = line; sub(/^ +/, "", k); v = k; sub(/:.*$/, "", k); sub(/^[^:]*:[ \t]*/, "", v)
+      if (k == "name") st = v
+      else if (k == "uses") { uses = v; sub(/[ \t]+#.*$/, "", uses) }
+      else if (k == "env" || k == "with") blk = k
+      else if (k == "run") { run = 1; if (v ~ /^[|>]/) blk = "run"; else first = v } }
+    END { flush(); if (!seen) print f ": no corpus-macos job" }' "$1"
+}
+probs=$(macpath "$ROOT/.github/workflows/corpus-check.yml")
+if [ -z "$probs" ]; then pass=$((pass + 1)); echo "PASS workflows: every step of the macOS job runs under the stock PATH"
+else failn=$((failn + 1)); echo "FAIL workflows: steps of the macOS job run off the stock PATH"; echo "$probs"; fi
+# the check itself: an action on the image's PATH or with Homebrew's rustup on the PATH its env gives, and a run:
+# script, in a block or on one line, that does not export the stock PATH first, each fail; checkout, a run: script
+# that does, an action given the stock PATH, and a step of another job pass
+{ printf 'name: x\non: push\npermissions:\n  contents: read\njobs:\n  corpus-macos:\n    runs-on: macos-26\n'
+  printf '    timeout-minutes: 5\n    defaults:\n      run:\n        shell: /bin/bash --noprofile --norc -e {0}\n'
+  printf '    steps:\n      - name: checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n'
+  printf '        with:\n          persist-credentials: false\n'
+  printf '      - name: stock run\n        run: |\n          # cargo needs ~/.cargo/bin\n'
+  printf '          export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"\n          cargo --version\n'
+  printf '      - name: image path\n        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n'
+  printf '        with:\n          toolchain: stable\n'
+  printf '      - name: homebrew path\n        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n'
+  printf '        env:\n          PATH: /opt/homebrew/opt/rustup/bin:/usr/bin:/bin:/usr/sbin:/sbin\n'
+  printf '      - name: stock path\n        if: ${{ !cancelled() }}\n'
+  printf '        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n'
+  printf '        env:\n          CARGO_TERM_COLOR: never\n          # no Homebrew\n          PATH: "/usr/bin:/bin:/usr/sbin:/sbin"\n'
+  printf '        with:\n          toolchain: stable\n'
+  printf '      - name: image run\n        run: |\n          cargo --version\n'
+  printf '      - name: one-line run\n        run: bash scripts/check-hygiene.sh\n'
+  printf '  elsewhere:\n    runs-on: macos-26\n    timeout-minutes: 5\n    steps:\n'
+  printf '      - name: other job\n        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n'
+} > "$T/macos-path.yml" || { failn=$((failn + 1)); echo "FAIL workflows: could not build the macOS PATH fixture"; }
+probs=$(macpath "$T/macos-path.yml")
+for want in "step image path: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 runs without PATH:" \
+            "step homebrew path: dtolnay/rust-toolchain@" "step image run: its run: script does not start with export PATH=" \
+            "step one-line run: its run: script does not start with"; do
+  case "$probs" in *"$want"*) pass=$((pass + 1)); echo "PASS workflows: the macOS PATH check reports ... $want";;
+    *) failn=$((failn + 1)); echo "FAIL workflows: the macOS PATH check does not report: $want"; echo "$probs";; esac
+done
+case "$probs" in *"step checkout:"*|*"step stock run:"*|*"step stock path:"*|*"step other job:"*)
+    failn=$((failn + 1)); echo "FAIL workflows: the macOS PATH check flags a step that runs under the stock PATH"; echo "$probs";;
+  *) pass=$((pass + 1)); echo "PASS workflows: the macOS PATH check passes checkout, the stock PATH and other jobs";; esac
+case "$(macpath "$T/bad-workflow.yml")" in *": no corpus-macos job"*)
+    pass=$((pass + 1)); echo "PASS workflows: the macOS PATH check fails a workflow without the macOS job";;
+  *) failn=$((failn + 1)); echo "FAIL workflows: the macOS PATH check passes a workflow without the macOS job";; esac
+# The macOS job runs tools/auditor-tools' unit tests: their cases for a path macOS spells through
+# /System/Volumes/Data or in other letters (audit-logs' stays_inside, audit-mem's working directory) pass on ubuntu
+# without testing anything.
+macrust() { # macrust FILE -> yes when a step of its corpus-macos job runs cargo test in tools/auditor-tools, else no
+  LC_ALL=C awk '
+    { line = $0; match(line, /^ */); ind = RLENGTH; text = (line !~ /^[ \t]*(#.*)?$/); t = line; sub(/^[ \t]*#.*/, "", t) }
+    text && ind <= 2 { job = (line ~ /^  corpus-macos:[ \t]*$/); next }
+    !job { next }
+    line ~ /^      - / { wd = 0; ct = 0 }
+    t ~ /^      [- ] working-directory:[ \t]*tools\/auditor-tools[ \t]*$/ { wd = 1 }
+    t ~ /(^|[ \t;&|(])cargo[ \t]+test([ \t]|$)/ { ct = 1 }
+    wd && ct { found = 1 }
+    END { print (found ? "yes" : "no") }' "$1"
+}
+if [ "$(macrust "$ROOT/.github/workflows/corpus-check.yml")" = yes ]; then pass=$((pass + 1))
+  echo "PASS workflows: the macOS job runs tools/auditor-tools' unit tests"
+else failn=$((failn + 1)); echo "FAIL workflows: no step of the macOS job runs cargo test in tools/auditor-tools"; fi
+{ printf 'jobs:\n  corpus-macos:\n    steps:\n      - name: tests\n        run: cargo test --no-fail-fast\n'
+  printf '      - name: elsewhere\n        working-directory: tools/auditor-tools\n        run: cargo build\n'
+  printf '  auditor-tools:\n    steps:\n      - working-directory: tools/auditor-tools\n'
+  printf '        run: cargo test --release --locked --no-fail-fast\n'
+} > "$T/macos-rust.yml" || { failn=$((failn + 1)); echo "FAIL workflows: could not build the macOS Rust fixture"; }
+if [ "$(macrust "$T/macos-rust.yml")" = no ]; then pass=$((pass + 1))
+  echo "PASS workflows: the macOS Rust check fails cargo test in another directory, another step or another job"
+else failn=$((failn + 1)); echo "FAIL workflows: the macOS Rust check passes cargo test outside tools/auditor-tools or the macOS job"; fi
 
 # ---- 5. check-hygiene.sh ------------------------------------------------------------------------------
 HYG="$ROOT/scripts/check-hygiene.sh"
@@ -482,6 +1156,19 @@ for p in hooks/hooks.json monitors/monitors.json bin/git .mcp.json .LSP.json set
 done
 hysaid "list it in ALLOWED_LOAD_SURFACES"
 hy not-surfaces pass docs/hooks/README.md scripts/bin/tool docs/settings.json tools/x/.mcp.json docs/monitors/x.md
+# a SKILL.md other than SKILL.md and skills/<name>/SKILL.md, in any letter case: with "skills": "./" in the
+# manifest, Claude Code loads <dir>/SKILL.md when the root holds none, and skills/SKILL.md makes skills/ one skill
+hy skill-md-places pass SKILL.md skills/a/SKILL.md skills/B-c/SKILL.md docs/SKILL.md.txt docs/skill-md.md
+for p in decoy/SKILL.md references/decoy/SKILL.md templates/a/b/SKILL.md skills/SKILL.md skills/a/b/SKILL.md \
+         skills/a/skill.md docs/Skill.MD skill.md vendor/x/skills/y/SKILL.md; do
+  hy "skill-md-$(printf '%s' "$p" | tr '/' '_')" fail SKILL.md "$p"
+done
+hysaid "vendor/x/skills/y/SKILL.md: a SKILL.md other than SKILL.md and skills/<name>/SKILL.md"
+sed "s#^ALLOWED_LOAD_SURFACES=''\$#ALLOWED_LOAD_SURFACES='templates/a/b/SKILL.md'#" "$ROOT/scripts/check-hygiene.sh" \
+  > "$T/hyg-allow-skill.sh"
+HYG="$T/hyg-allow-skill.sh"
+hy allow-skill-md pass SKILL.md templates/a/b/SKILL.md; hy allow-skill-md-other fail SKILL.md templates/a/c/SKILL.md
+HYG="$ROOT/scripts/check-hygiene.sh"
 # ALLOWED_LOAD_SURFACES lets a listed path through, in its exact letter case; a path with a space never matches
 sed "s#^ALLOWED_LOAD_SURFACES=''\$#ALLOWED_LOAD_SURFACES='hooks/hooks.json .mcp.json hooks/a hooks/b'#" "$ROOT/scripts/check-hygiene.sh" \
   > "$T/hyg-allow.sh"
@@ -516,6 +1203,156 @@ mkdir -p "$T/nojq"; for t in git tr dirname; do ln -s "$(command -v "$t")" "$T/n
 hyrepo no-jq; out=$(PATH="$T/nojq" "$BASH" "$T/hy/no-jq/scripts/check-hygiene.sh" 2>&1); got=$?
 case "$got:$out" in 1:*"jq is needed"*) pass=$((pass + 1)); echo "PASS hygiene: without jq the manifests fail";;
   *) failn=$((failn + 1)); echo "FAIL hygiene: without jq (rc=$got)"; echo "$out";; esac
+
+# ---- 6. check-entrypoints.sh -------------------------------------------------------------------------
+EPC="$ROOT/scripts/check-entrypoints.sh"
+expect "entry points: the repository passes" 0 bash "$EPC"
+nep=$(grep -c -v -e '^#' -e '^$' "$ROOT/scripts/entrypoints.txt")
+case "$out" in *"passed: $nep entry points"*) pass=$((pass + 1)); echo "PASS entry points: ... all $nep read";;
+  *) failn=$((failn + 1)); echo "FAIL entry points: the repository's list was not read whole"; echo "$out";; esac
+PR='${CLAUDE_PLUGIN_ROOT}'; SD='${CLAUDE_SKILL_DIR}'; RB='tools/auditor-tools/target/release'
+eprepo() { # eprepo NAME  — a checkout whose entry points, case files and rules all pass
+  local d="$T/ep/$1"
+  mkdir -p "$d/scripts/lib" "$d/scripts/tests/fixtures/ok" "$d/scripts/tests/fixtures/rec" "$d/tools/auditor-tools/logs" \
+    "$d/commands" "$d/agents" "$d/skills/s" && git -C "$d" init -q && cp "$EPC" "$d/scripts/check-entrypoints.sh" || return
+  printf '# shared checks\n' > "$d/scripts/lib/confine.sh"
+  printf '#!/bin/bash\nhere=${0%%/*}\n. "$here/lib/confine.sh" || exit 64\n' > "$d/scripts/ok.sh"
+  printf '#!/bin/bash\n  . "${here%%/*}/lib/confine.sh" || exit 2\n' > "$d/scripts/tm.sh"
+  printf "#!/bin/bash\n''':'\n. \"\${0%%/*}/lib/confine.sh\" || exit 2\n'''\nimport sys\n" > "$d/scripts/rec.py"
+  printf '#!/usr/bin/env bash\ncat\n' > "$d/scripts/filter.sh"   # executable, but no confined entry point
+  chmod 755 "$d/scripts/ok.sh" "$d/scripts/tm.sh" "$d/scripts/rec.py" "$d/scripts/filter.sh"
+  printf '# cases\n64\tok: refused: x\t--x\n' > "$d/scripts/tests/fixtures/ok/cases.txt"
+  printf '# cases\nno arguments\nan option\t--x\n' > "$d/scripts/tests/fixtures/rec/hostile-args.txt"
+  printf '[package]\nname = "t"\n\n[[bin]]\nname = "audit-scan"\npath = "a.rs"\n\n[[bin]]\nname = "audit-mem"\npath = "b.rs"\n' \
+    > "$d/tools/auditor-tools/Cargo.toml"
+  printf '[package]\nname = "logs"\n\n[[bin]]\nname = "audit-logs"\npath = "main.rs"\n' > "$d/tools/auditor-tools/logs/Cargo.toml"
+  { printf '# the list\nscripts/ok.sh\tscripts/tests/fixtures/ok/cases.txt\n'
+    printf 'scripts/tm.sh\tscripts/tests/fixtures/ok/cases.txt\t--detect|--offline\n'
+    printf 'scripts/rec.py\tscripts/tests/fixtures/rec/hostile-args.txt\n'
+    printf '%s/audit-scan\tscripts/tests/fixtures/ok/cases.txt\t--contract=1\n' "$RB"
+    printf '%s/audit-mem\tscripts/tests/fixtures/ok/cases.txt\twarm|check --contract=1\n' "$RB"
+    printf '%s/audit-logs\tscripts/tests/fixtures/rec/hostile-args.txt\n' "$RB"; } > "$d/scripts/entrypoints.txt"
+  { printf -- "---\ndescription: A command.\nallowed-tools:\n  - Read\n  - Edit(audit_*/**)\n  - 'Bash(\"%s/scripts/ok.sh\" *)'\n" "$PR"
+    printf -- "  - 'Bash(\"%s/scripts/ok.sh\")'\n  - 'Bash(\"%s/scripts/tm.sh\" --offline *)'\n" "$PR" "$PR"
+    printf -- "  - 'Bash(\"%s/%s/audit-scan\" --contract=1 *)'\n  - 'Bash(\"%s/%s/audit-mem\" check --contract=1 --db x.db)'\n" \
+      "$PR" "$RB" "$PR" "$RB"
+    printf -- "  - Glob\n  - Task\n  - Edit(incident_*/**)\n  - Skill(auditor:poc *)\n  - Skill(auditor:audit-report *)\n"
+    printf -- "---\n\nBody.\n"; } > "$d/commands/c.md"
+  printf -- "---\ndescription: A one-line command.\nallowed-tools: Read, Bash(\"%s/%s/audit-logs\" profile *), Grep\n---\n" "$PR" "$RB" \
+    > "$d/commands/one.md"
+  printf -- '---\nname: a\ndescription: An agent.\ntools: Read, Grep, Write, Edit, Bash\n---\n' > "$d/agents/a.md"
+  printf -- "---\nname: s\ndescription: A skill.\nallowed-tools:\n  - 'Bash(\"%s/scripts/rec.py\" *)'\n---\n" "$PR" > "$d/skills/s/SKILL.md"
+  printf -- "---\nname: r\ndescription: The root skill.\nallowed-tools:\n  - 'Bash(\"%s/scripts/ok.sh\" new *)'\n---\n" "$SD" > "$d/SKILL.md"
+  git -C "$d" add -A
+}
+eprun() { # eprun NAME WANT-RC TEXT  — the check in checkout NAME exits WANT-RC and says TEXT
+  local got
+  out=$(bash "$T/ep/$1/scripts/check-entrypoints.sh" 2>&1); got=$?
+  case "$got:$out" in "$2:"*"$3"*) pass=$((pass + 1)); echo "PASS entry points: $1 (rc=$got)"; if [ -n "${VERBOSE:-}" ]; then echo "$out"; fi;;
+    *) failn=$((failn + 1)); echo "FAIL entry points: $1 (rc=$got, want $2 and '$3')"; echo "$out";; esac
+}
+ep() { # ep NAME TEXT SETUP  — a good checkout, changed by the shell code SETUP run in it, fails saying TEXT
+  if eprepo "$1" && (cd "$T/ep/$1" && eval "$3" && git add -A); then eprun "$1" 1 "$2"
+  else failn=$((failn + 1)); echo "FAIL entry points: cannot build the checkout $1"; fi
+}
+eprepo good && eprun good 0 "passed: 6 entry points, 8 Bash rules"
+# the list
+ep list-one-field "want <path><TAB><case file>[<TAB><words>], not 1 fields" 'printf "scripts/ok.sh\n" >> scripts/entrypoints.txt'
+ep list-four-fields "not 4 fields" 'printf "scripts/x.sh\ta\tb\tc\n" >> scripts/entrypoints.txt'
+ep list-absolute "/etc/x.sh is not a relative path" 'printf "/etc/x.sh\tscripts/tests/fixtures/ok/cases.txt\n" >> scripts/entrypoints.txt'
+ep list-dotdot "scripts/../x.sh has an empty, . or .. component" \
+  'printf "scripts/../x.sh\tscripts/tests/fixtures/ok/cases.txt\n" >> scripts/entrypoints.txt'
+ep list-twice "scripts/ok.sh is listed twice (first at line 2)" 'printf "scripts/ok.sh\tscripts/tests/fixtures/ok/cases.txt\n" >> scripts/entrypoints.txt'
+ep list-words-star "the words for scripts/ok.sh are not words" \
+  'awk -F"\t" -v OFS="\t" "\$1 == \"scripts/ok.sh\" { \$3 = \"new *\" } { print }" scripts/entrypoints.txt > l && mv l scripts/entrypoints.txt'
+ep list-trailing-tab "the words for scripts/ok.sh are not words" \
+  'awk "\$1 == \"scripts/ok.sh\" { \$0 = \$0 \"\t\" } { print }" scripts/entrypoints.txt > l && mv l scripts/entrypoints.txt'
+ep list-empty "lists no entry point" 'printf "# nothing\n" > scripts/entrypoints.txt'
+# each entry point
+ep script-untracked "scripts/ok.sh is not a tracked file" 'git rm -q --cached scripts/ok.sh && printf "scripts/ok.sh\n" > .git/info/exclude'
+ep script-mode "scripts/ok.sh is mode 100644 in the index, not 100755" 'chmod 644 scripts/ok.sh'
+ep script-link "scripts/ok.sh is mode 120000 in the index, not 100755" 'mv scripts/ok.sh scripts/real.sh && ln -s real.sh scripts/ok.sh'
+ep script-env-bash "scripts/ok.sh starts with '#!/usr/bin/env bash', not #!/bin/bash" \
+  'printf "#!/usr/bin/env bash\n. \"\$here/lib/confine.sh\"\n" > scripts/ok.sh'
+ep script-env-python "scripts/rec.py starts with '#!/usr/bin/env python3', not #!/bin/bash" 'printf "#!/usr/bin/env python3\n" > scripts/rec.py'
+ep script-env-python-isolated "scripts/rec.py starts with '#!/usr/bin/env -S python3 -I', not #!/bin/bash" \
+  'printf "#!/usr/bin/env -S python3 -I\nimport sys\n" > scripts/rec.py'
+ep script-crlf "scripts/ok.sh starts with" 'printf "#!/bin/bash\r\n. \"\$here/lib/confine.sh\"\n" > scripts/ok.sh'
+ep script-no-confine "scripts/ok.sh does not source scripts/lib/confine.sh" 'printf "#!/bin/bash\n# . \"\$here/lib/confine.sh\"\n" > scripts/ok.sh'
+ep script-elsewhere "bin/x.sh is not under scripts/, templates/ or tools/auditor-tools/target/release/" \
+  'printf "bin/x.sh\tscripts/tests/fixtures/ok/cases.txt\n" >> scripts/entrypoints.txt'
+ep bin-undeclared "audit-x is no binary a crate under tools/auditor-tools declares" \
+  "printf '%s/audit-x\tscripts/tests/fixtures/ok/cases.txt\n' '$RB' >> scripts/entrypoints.txt"
+ep bin-nested "$RB/sub/audit-scan is not tools/auditor-tools/target/release/<binary>" \
+  "printf '%s/sub/audit-scan\tscripts/tests/fixtures/ok/cases.txt\n' '$RB' >> scripts/entrypoints.txt"
+ep bin-crate-untracked "audit-logs is no binary a crate under tools/auditor-tools declares" \
+  'git rm -q --cached tools/auditor-tools/logs/Cargo.toml && printf "logs/\n" > .git/info/exclude'
+ep cases-untracked "the case file scripts/tests/fixtures/rec/hostile-args.txt is not a tracked file" \
+  'git rm -q --cached scripts/tests/fixtures/rec/hostile-args.txt && printf "*.txt\n" > .git/info/exclude'
+ep cases-empty "the case file scripts/tests/fixtures/rec/hostile-args.txt holds no case" \
+  'printf "# only comments\n\n" > scripts/tests/fixtures/rec/hostile-args.txt'
+ep cases-no-status "the case file scripts/tests/fixtures/ok/cases.txt: line 3 does not start with an exit status and a tab" \
+  'printf "an option\t--x\n" >> scripts/tests/fixtures/ok/cases.txt'
+# the allow rules
+epcmd() { # epcmd NAME TEXT ENTRY  — the good checkout with the item ENTRY added to commands/c.md's allowed-tools fails saying TEXT
+  printf '%s\n' "$3" > "$T/ep-entry"
+  ep "$1" "$2" 'awk -v f="$T/ep-entry" "NR == 4 { getline e < f; print \"  - \" e } { print }" commands/c.md > c && mv c commands/c.md'
+}
+epcmd rule-bare "allowed-tools entry 'Bash' is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\" ...)" 'Bash'
+epcmd rule-catch-all "is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\"" "'Bash(*)'"
+epcmd rule-bash-in-front "is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\"" "'Bash(bash \"$PR/scripts/ok.sh\" *)'"
+epcmd rule-unquoted "is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\"" "'Bash($PR/scripts/ok.sh *)'"
+epcmd rule-half-quoted "is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\"" "'Bash(\"$PR\"/scripts/ok.sh *)'"
+epcmd rule-skill-dir "is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\"" "'Bash(\"$SD/scripts/ok.sh\" *)'"
+epcmd rule-unlisted "names scripts/other.sh, which scripts/entrypoints.txt does not list" "'Bash(\"$PR/scripts/other.sh\" *)'"
+epcmd rule-glob "names scripts/*, which scripts/entrypoints.txt does not list" "'Bash(\"$PR/scripts/*\" *)'"
+epcmd rule-case "names scripts/OK.sh, which scripts/entrypoints.txt does not list" "'Bash(\"$PR/scripts/OK.sh\" *)'"
+epcmd rule-dot "names scripts/./ok.sh, which scripts/entrypoints.txt does not list" "'Bash(\"$PR/scripts/./ok.sh\" *)'"
+epcmd rule-no-space "has no space after the quoted path" "'Bash(\"$PR/scripts/ok.sh\"*)'"
+epcmd rule-prefix "has no space after the quoted path" "'Bash(\"$PR/scripts/ok.sh\":*)'"
+epcmd rule-unclosed "does not close the quoted path" "'Bash(\"$PR/scripts/ok.sh *)'"
+epcmd rule-star-inside "the word '*' holds a character other than" "'Bash(\"$PR/scripts/ok.sh\" * --x)'"
+epcmd rule-dollar "the word '\$HOME' holds a character other than" "'Bash(\"$PR/scripts/ok.sh\" \$HOME *)'"
+epcmd rule-quoted-word "holds a character other than" "'Bash(\"$PR/scripts/ok.sh\" \"\"x\"\" *)'"
+epcmd rule-two-spaces "has an empty word" "'Bash(\"$PR/scripts/ok.sh\"  *)'"
+epcmd rule-scan-no-marker "does not start with '--contract=1' after the path" "'Bash(\"$PR/$RB/audit-scan\" *)'"
+epcmd rule-scan-late-marker "does not start with '--contract=1' after the path" "'Bash(\"$PR/$RB/audit-scan\" . --contract=1 *)'"
+epcmd rule-mem-no-marker "does not start with 'warm|check --contract=1' after the path" "'Bash(\"$PR/$RB/audit-mem\" warm *)'"
+epcmd rule-mem-other "does not start with 'warm|check --contract=1' after the path" "'Bash(\"$PR/$RB/audit-mem\" rule --contract=1 *)'"
+epcmd rule-mem-any "does not start with 'warm|check --contract=1' after the path" "'Bash(\"$PR/$RB/audit-mem\" *)'"
+epcmd rule-collector-any "does not start with '--detect|--offline' after the path" "'Bash(\"$PR/scripts/tm.sh\" *)'"
+epcmd rule-collector-network "does not start with '--detect|--offline' after the path" "'Bash(\"$PR/scripts/tm.sh\" --network *)'"
+epcmd rule-plain "allowed-tools entry 'Bash(git log:*)' is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\"" "'Bash(git log:*)'"
+epcmd rule-test-script "names scripts/tests/t.sh, which scripts/entrypoints.txt does not list" "'Bash(\"$PR/scripts/tests/t.sh\" *)'"
+epcmd rule-env-shebang "names scripts/filter.sh, which scripts/entrypoints.txt does not list" "'Bash(\"$PR/scripts/filter.sh\" *)'"
+# every other allowed-tools entry is a read tool, Task, a run-directory edit or an auditor skill
+for e in WebFetch Write 'Edit(**)' 'Edit(audit_1/x.md)' Skill 'Skill(other:x *)' 'Skill(auditor:poc)' mcp__srv__tool 'Task(x)'; do
+  epcmd "rule-named-$(printf '%s' "$e" | tr -c 'A-Za-z0-9_-' '_')" \
+    "allowed-tools entry '$e' is no read tool (Read, Grep, Glob), Task, run-directory edit" "$e"
+done
+ep rule-named-root "SKILL.md:5: allowed-tools entry 'WebFetch' is no read tool" \
+  'awk "{ print } /^allowed-tools:\$/ { print \"  - WebFetch\" }" SKILL.md > s && mv s SKILL.md'
+ep rule-control "holds a tab, a control character or a byte outside printable ASCII" \
+  "printf -- \"---\ndescription: A command.\nallowed-tools:\n  - 'Bash(\\\"%s/scripts/ok.sh\\\" \\033 *)'\n---\n\" '$PR' > commands/esc.md"
+ep rule-one-line "commands/one.md:3: allowed-tools entry 'Bash(bash" \
+  "sed 's#Bash(\"#Bash(bash \"#' commands/one.md > o && mv o commands/one.md"
+ep rule-skill "skills/s/SKILL.md:5: allowed-tools entry" "sed 's#/scripts/rec.py#/scripts/gone.py#' skills/s/SKILL.md > s && mv s skills/s/SKILL.md"
+ep rule-root-plugin-root "SKILL.md:5: allowed-tools entry 'Bash(\"\${CLAUDE_PLUGIN_ROOT}/scripts/ok.sh\" new *)' is not Bash(\"\${CLAUDE_SKILL_DIR}/<path>\"" \
+  "sed 's#CLAUDE_SKILL_DIR#CLAUDE_PLUGIN_ROOT#' SKILL.md > s && mv s SKILL.md"
+ep rule-agent "agents/a.md:4: the agent tools entry 'Bash(git log *)' is a Bash rule" \
+  "sed 's#^tools: .*#tools: Read, Bash(git log *)#' agents/a.md > a && mv a agents/a.md"
+ep rule-nested-command "commands/sub/n.md:4: allowed-tools entry 'Bash'" \
+  "mkdir commands/sub && printf -- '---\ndescription: N.\nallowed-tools:\n  - Bash\n---\n' > commands/sub/n.md"
+# every listed entry point is pre-approved somewhere
+ep unapproved "scripts/rec.py is listed, but no command, skill or root SKILL.md rule pre-approves it" 'rm skills/s/SKILL.md'
+# large input: a list of 3,000 comment lines, over 64 KiB, whose one bad line is last
+ep list-large "scripts/entrypoints.txt:3008: want <path><TAB><case file>[<TAB><words>], not 1 fields" \
+  'awk "BEGIN { for (i = 0; i < 3000; i++) printf \"# comment line %05d of a long list, padded out to fill it up\n\", i }" >> scripts/entrypoints.txt && printf "scripts/ok.sh\n" >> scripts/entrypoints.txt'
+# cannot run: outside a checkout, or with no list
+mkdir -p "$T/ep-nogit/scripts" && cp "$EPC" "$T/ep-nogit/scripts/" && printf 'scripts/ok.sh\tx\n' > "$T/ep-nogit/scripts/entrypoints.txt"
+expect "entry points: outside a checkout fails" 2 bash "$T/ep-nogit/scripts/check-entrypoints.sh"
+if eprepo no-list && rm "$T/ep/no-list/scripts/entrypoints.txt"; then eprun no-list 2 "scripts/entrypoints.txt is not a file"
+else failn=$((failn + 1)); echo "FAIL entry points: cannot build the checkout no-list"; fi
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

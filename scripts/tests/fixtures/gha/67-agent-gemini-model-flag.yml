@@ -1,0 +1,15 @@
+# Fixture: Google's agent CLI started from run: with a model option before its prompt flag; it has no actor check of its own.
+name: f67-agent-gemini-model-flag
+on:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  summarize:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gemini -m gemini-2.5-pro -p "Summarize the change in this pull request"
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

@@ -1,0 +1,36 @@
+{
+  "name": "f18-prt-quoted-head-sha",
+  "triggers": [
+    "pull_request_target"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "test",
+      "line": 9,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 12,
+          "uses": "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8",
+          "with": [
+            {
+              "key": "ref",
+              "value": "${{ github.event.pull_request.head.sha }}"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 15,
+          "run": "npm ci && npm test",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

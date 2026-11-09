@@ -1,0 +1,108 @@
+# Hostile argument vectors for templates/poc/run.sh, the installation's copy. test-dnr-poc-runner.sh runs
+# each one under each bash on the machine, from a working directory that is not a repository and holds
+# the run directories audit_1 and incident_1 (made by scripts/rundir.sh); audit_1/exec-mode holding
+# native; the crate audit_1/poc/F-1; audit_1/exec/build-sbf-1/vuln.so, fixed.so and notes.txt; the file
+# a.rs; the directory src/; and linkdir, a symbolic link to audit_1. AUDITOR_EXEC_MODE is not set.
+# One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each
+# case prints nothing on stdout, makes no scratch directory and changes nothing in the working directory.
+# what run.sh takes
+3	[PoC-ATTEMPTED] blocker: run.sh refused: -x is not an argument run.sh takes (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	-x
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --help is not an argument run.sh takes (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	--help
+3	[PoC-ATTEMPTED] blocker: run.sh refused: -h is not an argument run.sh takes (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	-h
+3	[PoC-ATTEMPTED] blocker: run.sh refused: crate is not an argument run.sh takes (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	crate
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate=audit_1/poc/F-1 is not an argument run.sh takes (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	--crate=audit_1/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --CRATE is not an argument run.sh takes (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	--CRATE	audit_1/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: -- is not an argument run.sh takes (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	--	--crate	audit_1/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --vulnerable_so is not an argument run.sh takes (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable_so	audit_1/exec/build-sbf-1/vuln.so
+3	[PoC-ATTEMPTED] blocker: run.sh refused: extra is not an argument run.sh takes (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	--crate	audit_1/poc/F-1	extra
+3	[PoC-ATTEMPTED] blocker: run.sh refused: x is not an argument run.sh takes (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	--new-cache	x
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate needs a value — nothing was copied or built.	--crate
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --mode needs a value — nothing was copied or built.	--crate	audit_1/poc/F-1	--mode
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --init needs a value — nothing was copied or built.	--init
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --cache needs a value — nothing was copied or built.	--crate	audit_1/poc/F-1	--cache
+3	[PoC-ATTEMPTED] blocker: run.sh refused: give --crate once — nothing was copied or built.	--crate	audit_1/poc/F-1	--crate	audit_1/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: give --keep once — nothing was copied or built.	--crate	audit_1/poc/F-1	--keep	--keep
+3	[PoC-ATTEMPTED] blocker: run.sh refused: give --vulnerable-so once — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable-so	audit_1/exec/build-sbf-1/vuln.so	--vulnerable-so	audit_1/exec/build-sbf-1/vuln.so
+3	[PoC-ATTEMPTED] blocker: run.sh refused: give --new-cache once — nothing was copied or built.	--new-cache	--new-cache
+3	[PoC-ATTEMPTED] blocker: run.sh refused: give --crate, --init or --new-cache (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	--keep
+3	[PoC-ATTEMPTED] blocker: run.sh refused: give --crate, --init or --new-cache (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	--mode	native
+3	[PoC-ATTEMPTED] blocker: run.sh refused: give --crate, --init or --new-cache (--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache) — nothing was copied or built.	--vulnerable-so	audit_1/exec/build-sbf-1/vuln.so
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --new-cache takes no other argument — nothing was copied or built.	--new-cache	--keep
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --new-cache takes no other argument — nothing was copied or built.	--crate	audit_1/poc/F-1	--new-cache
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --init takes no other argument — nothing was copied or built.	--init	audit_1/poc/F-9	--keep
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --init takes no other argument — nothing was copied or built.	--crate	audit_1/poc/F-1	--init	audit_1/poc/F-9
+# the crate: a confined <R>/poc/<ID> in a run directory
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate must be relative to the working directory: /etc — nothing was copied or built.	--crate	/etc
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate must be relative to the working directory: //audit_1/poc/F-1 — nothing was copied or built.	--crate	//audit_1/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate may not start with - or ~: -x — nothing was copied or built.	--crate	-x
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate may not start with - or ~: --keep — nothing was copied or built.	--crate	--keep
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate may not start with - or ~: ~/audit_1/poc/F-1 — nothing was copied or built.	--crate	~/audit_1/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate has an empty, . or .. component: ../wt/audit_1/poc/F-1 — nothing was copied or built.	--crate	../wt/audit_1/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate has an empty, . or .. component: audit_1/poc/F-1/ — nothing was copied or built.	--crate	audit_1/poc/F-1/
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate has an empty, . or .. component: audit_1/poc/../poc/F-1 — nothing was copied or built.	--crate	audit_1/poc/../poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate has an empty, . or .. component: audit_1//poc/F-1 — nothing was copied or built.	--crate	audit_1//poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate passes through a symbolic link: linkdir/poc/F-1 — nothing was copied or built.	--crate	linkdir/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate has a component that is not a directory: a.rs/poc/F-1 — nothing was copied or built.	--crate	a.rs/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not audit_1 — nothing was copied or built.	--crate	audit_1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not audit_1/poc — nothing was copied or built.	--crate	audit_1/poc
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not audit_1/poc/F-12345 — nothing was copied or built.	--crate	audit_1/poc/F-12345
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not audit_1/poc/f-1 — nothing was copied or built.	--crate	audit_1/poc/f-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not audit_1/poc/F- — nothing was copied or built.	--crate	audit_1/poc/F-
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not audit_1/poc/F-1a — nothing was copied or built.	--crate	audit_1/poc/F-1a
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not audit_1/poc/INC-1 — nothing was copied or built.	--crate	audit_1/poc/INC-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not audit_1/poc/INC-1.2.3 — nothing was copied or built.	--crate	audit_1/poc/INC-1.2.3
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not audit_1/poc/INC-1234567.1 — nothing was copied or built.	--crate	audit_1/poc/INC-1234567.1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not audit_1/poc/F-1/src — nothing was copied or built.	--crate	audit_1/poc/F-1/src
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not audit_1/exec/F-1 — nothing was copied or built.	--crate	audit_1/exec/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not x/audit_1/poc/F-1 — nothing was copied or built.	--crate	x/audit_1/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: the run directory of --crate must be a run directory named audit_<n> or incident_<n> in the working directory: src — nothing was copied or built.	--crate	src/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: the run directory of --crate must be a run directory named audit_<n> or incident_<n> in the working directory: Audit_1 — nothing was copied or built.	--crate	Audit_1/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: the run directory of --crate must be a run directory named audit_<n> or incident_<n> in the working directory: audit_1234567 — nothing was copied or built.	--crate	audit_1234567/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: the run directory of --crate is not an existing directory: audit_9 — nothing was copied or built.	--crate	audit_9/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --crate is not an existing crate directory: audit_1/poc/F-2 — nothing was copied or built.	--crate	audit_1/poc/F-2
+# the prebuilt bytes: a regular file under a run directory's bin/ or exec/
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --vulnerable-so must be relative to the working directory: /etc/passwd — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable-so	/etc/passwd
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --vulnerable-so has an empty, . or .. component: ../vuln.so — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable-so	../vuln.so
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --vulnerable-so may not start with - or ~: --keep — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable-so	--keep
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --vulnerable-so passes through a symbolic link: linkdir/exec/build-sbf-1/vuln.so — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable-so	linkdir/exec/build-sbf-1/vuln.so
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --vulnerable-so takes a file under a run directory's bin/ or exec/, not a.rs — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable-so	a.rs
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --vulnerable-so takes a file under a run directory's bin/ or exec/, not audit_1/poc/F-1/Cargo.toml — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable-so	audit_1/poc/F-1/Cargo.toml
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --vulnerable-so takes a file under a run directory's bin/ or exec/, not audit_1/exec — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable-so	audit_1/exec
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --vulnerable-so takes a file under a run directory's bin/ or exec/, not audit_1/exec-mode — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable-so	audit_1/exec-mode
+3	[PoC-ATTEMPTED] blocker: run.sh refused: the run directory of --vulnerable-so must be a run directory named audit_<n> or incident_<n> in the working directory: src — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable-so	src/bin/vuln.so
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --vulnerable-so is not an existing regular file: audit_1/exec/build-sbf-1/missing.so — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable-so	audit_1/exec/build-sbf-1/missing.so
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --vulnerable-so is not an existing regular file: audit_1/exec/build-sbf-1 — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable-so	audit_1/exec/build-sbf-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --fixed-so needs --vulnerable-so: the fixed bytes are checked against the exploit on the vulnerable ones — nothing was copied or built.	--crate	audit_1/poc/F-1	--fixed-so	audit_1/exec/build-sbf-1/fixed.so
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --fixed-so takes a file under a run directory's bin/ or exec/, not a.rs — nothing was copied or built.	--crate	audit_1/poc/F-1	--vulnerable-so	audit_1/exec/build-sbf-1/vuln.so	--fixed-so	a.rs
+# the pins, the cache, the mode
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins entry 'borsh;true' is not <crate> or <crate>@<pinned version> — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	borsh;true
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins entry '--config=build.rustc-wrapper=x' is not <crate> or <crate>@<pinned version> — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	--config=build.rustc-wrapper=x
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins entry '../borsh' is not <crate> or <crate>@<pinned version> — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	../borsh
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins entry 'b*' is not <crate> or <crate>@<pinned version> — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	borsh b*
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins entry 'borsh@' is not <crate> or <crate>@<pinned version> — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	borsh@
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins entry 'borsh@=3.0.0' is not <crate> or <crate>@<pinned version> — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	borsh@=3.0.0
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins names more than 32 pins — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	p0 p1 p2 p3 p4 p5 p6 p7 p8 p9 p10 p11 p12 p13 p14 p15 p16 p17 p18 p19 p20 p21 p22 p23 p24 p25 p26 p27 p28 p29 p30 p31 p32
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins entry '-p' is not <crate> or <crate>@<pinned version> — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	-p
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins names no pin — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	 	--keep
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --cache takes a directory --new-cache made, $TMPDIR/auditor-poc-target.XXXXXX, not /tmp — nothing was copied or built.	--crate	audit_1/poc/F-1	--cache	/tmp
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --cache takes a directory --new-cache made, $TMPDIR/auditor-poc-target.XXXXXX, not x — nothing was copied or built.	--crate	audit_1/poc/F-1	--cache	x
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --cache takes a directory --new-cache made, $TMPDIR/auditor-poc-target.XXXXXX, not auditor-poc-target.abcdef — nothing was copied or built.	--crate	audit_1/poc/F-1	--cache	auditor-poc-target.abcdef
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --cache takes a directory --new-cache made, $TMPDIR/auditor-poc-target.XXXXXX, not ../auditor-poc-target.abcdef — nothing was copied or built.	--crate	audit_1/poc/F-1	--cache	../auditor-poc-target.abcdef
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --cache takes a directory --new-cache made, $TMPDIR/auditor-poc-target.XXXXXX, not /tmp/auditor-poc-target.ab*def — nothing was copied or built.	--crate	audit_1/poc/F-1	--cache	/tmp/auditor-poc-target.ab*def
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --cache takes a directory --new-cache made, $TMPDIR/auditor-poc-target.XXXXXX, not /tmp/auditor-poc-target.abc — nothing was copied or built.	--crate	audit_1/poc/F-1	--cache	/tmp/auditor-poc-target.abc
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --cache takes a directory --new-cache made, $TMPDIR/auditor-poc-target.XXXXXX, not /tmp/auditor-poc-target.abcdefg — nothing was copied or built.	--crate	audit_1/poc/F-1	--cache	/tmp/auditor-poc-target.abcdefg
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --cache is not in TMPDIR, where --new-cache makes it: /nonexistent/auditor-poc-target.abcdef — nothing was copied or built.	--crate	audit_1/poc/F-1	--cache	/nonexistent/auditor-poc-target.abcdef
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --mode takes none, isolated or native, not 'yes' — nothing was copied or built.	--crate	audit_1/poc/F-1	--mode	yes
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --mode takes none, isolated or native, not 'Native' — nothing was copied or built.	--crate	audit_1/poc/F-1	--mode	Native
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --mode takes none, isolated or native, not '--keep' — nothing was copied or built.	--crate	audit_1/poc/F-1	--mode	--keep
+3	[PoC-ATTEMPTED] blocker: --mode is isolated, but the recorded execution mode is native (audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset); the mode changes only when the human answers again — nothing was copied or built.	--crate	audit_1/poc/F-1	--mode	isolated
+3	[PoC-ATTEMPTED] blocker: --mode is none, but the recorded execution mode is native (audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset); the mode changes only when the human answers again — nothing was copied or built.	--crate	audit_1/poc/F-1	--mode	none
+# --init: a new or empty <R>/poc/<ID>
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --init makes a crate in a new or empty directory, and audit_1/poc/F-1 holds files — nothing was copied or built.	--init	audit_1/poc/F-1
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --init must be relative to the working directory: /tmp/audit_1/poc/F-9 — nothing was copied or built.	--init	/tmp/audit_1/poc/F-9
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --init has an empty, . or .. component: audit_1/poc/../../F-9 — nothing was copied or built.	--init	audit_1/poc/../../F-9
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --init passes through a symbolic link: linkdir/poc/F-9 — nothing was copied or built.	--init	linkdir/poc/F-9
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --init takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not audit_1/exec/build-sbf-1/vuln.so — nothing was copied or built.	--init	audit_1/exec/build-sbf-1/vuln.so
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --init takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not audit_1/poc/F-9/x — nothing was copied or built.	--init	audit_1/poc/F-9/x
+3	[PoC-ATTEMPTED] blocker: run.sh refused: the run directory of --init must be a run directory named audit_<n> or incident_<n> in the working directory: src — nothing was copied or built.	--init	src/poc/F-9
+3	[PoC-ATTEMPTED] blocker: run.sh refused: the run directory of --init is not an existing directory: incident_7 — nothing was copied or built.	--init	incident_7/poc/INC-7.1

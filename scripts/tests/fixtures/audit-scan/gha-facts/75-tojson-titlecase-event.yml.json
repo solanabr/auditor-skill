@@ -1,0 +1,25 @@
+{
+  "name": "f75-tojson-titlecase-event",
+  "triggers": [
+    "pull_request_target"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "log",
+      "line": 9,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 12,
+          "run": "echo '${{ ToJSON(github.event) }}' > event.json",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

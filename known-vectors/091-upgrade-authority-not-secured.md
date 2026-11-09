@@ -14,7 +14,8 @@ Solana program upgrade authority is a single hot wallet — attacker compromises
 
 **Step 1: Check current upgrade authority**
 ```
-solana program show <PROGRAM_ID> 2>/dev/null | grep -i "authority"
+# read-only, through the bundled RPC reader (--cluster devnet for a devnet program)
+"<auditor-skill root>/scripts/rpc-read.sh" program-show <PROGRAM_ID> --run audit_<n> --cluster mainnet-beta | grep -i "authority"
 ```
 - Record: Who is the upgrade authority?
 
@@ -38,7 +39,7 @@ grep -rn "upgrade.*authority\|programAuthority\|deploy.*keypair" . --include="*.
 **Step 4: Check if program is frozen (immutable) where appropriate**
 ```
 # For mature programs that don't need upgrades:
-# solana program show <ID> should show "Authority: None"
+# rpc-read.sh program-show <ID> should show "Authority: None"
 ```
 - ✅ PASS: Production program frozen (no upgrades possible) or behind multisig timelock
 - ⚠️ PARTIAL: Upgrade authority exists but secured with multisig

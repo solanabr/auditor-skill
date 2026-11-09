@@ -33,14 +33,14 @@ grep -rn --include="*.yaml" --include="*.yml" --include="*.ts" -iE "backup|mongo
 ```
 # Is the git repo the single source of truth?
 # Are there other critical configs not in version control?
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false remote -v   # Rule 11c flags
+"<auditor-skill root>/scripts/git-ro.sh" remote -v   # read-only git (Rule 11c)
 ```
 - ✅ PASS: All code in version control, infrastructure as code, multiple remotes
 - ❌ FAIL: Single point of failure (one GitHub repo, no mirrors)
 
 **Step 4: Check for recovery procedure documentation**
 ```
-find . -name "*.md" | xargs grep -liE "disaster|recovery|restore|backup.*procedure" 2>/dev/null | head -5
+grep -rliE --include='*.md' 'disaster|recovery|restore|backup.*procedure' . | head -5
 ```
 - ✅ PASS: Documented disaster recovery procedure
 - ⚠️ PARTIAL: Backups exist but no documented recovery procedure

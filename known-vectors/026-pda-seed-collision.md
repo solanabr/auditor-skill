@@ -21,7 +21,7 @@ grep -rn --include="*.rs" "seeds = \[" programs/*/src/instructions/
 **Step 2: Verify unique prefix per account type**
 ```
 # Each PDA type should start with a unique string literal
-grep -rn --include="*.rs" 'seeds = \[' programs/ | sed 's/.*seeds = \[//' | sed 's/\].*//' | sort
+grep -rhoE --include='*.rs' 'seeds = \[[^]]*' programs/ | sort
 ```
 - ✅ PASS: Every account type has a unique first seed (e.g., `b"fund"`, `b"position"`, `b"withdrawal"`)
 - ❌ FAIL: Two different types share the same seed prefix

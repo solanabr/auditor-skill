@@ -1,0 +1,28 @@
+# Fixture: gated issue_comment workflow; one job looks up the PR head and the next job checks out that job's output.
+name: f62-comment-job-output-ref
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+jobs:
+  pr:
+    if: github.event.issue.pull_request && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.lookup.outputs.sha }}
+    steps:
+      - id: lookup
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.pulls.get({ ...context.repo, pull_number: context.issue.number })
+            core.setOutput('sha', data.head.sha)
+  test:
+    needs: pr
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ needs.pr.outputs.sha }}
+      - run: make test

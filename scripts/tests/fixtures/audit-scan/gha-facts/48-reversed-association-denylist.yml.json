@@ -1,0 +1,26 @@
+{
+  "name": "f48-reversed-association-denylist",
+  "triggers": [
+    "issue_comment"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "command",
+      "line": 9,
+      "if": "${{ 'NONE' != github.event.comment.author_association }}",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 13,
+          "run": "echo \"privileged command\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}
