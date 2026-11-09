@@ -113,7 +113,7 @@
 | 10 | Frontend Security | 84 | | | | | % |
 | 11 | Supply Chain | 65 | | | | | % |
 | 12 | Secrets & OpSec | 53 | | | | | % |
-| 13 | Deployment & Infra | 96 | | | | | % |
+| 13 | Deployment & Infra | 102 | | | | | % |
 | 14 | Python Safety | 82 | | | | | % |
 | 15 | General Language | 88 | | | | | % |
 | 16 | Formal Verification & Testing | 73 | | | | | % |
@@ -121,7 +121,7 @@
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
 | 19 | AI Agent Security | 39 | | | | | % |
 | 20 | Rust Off-Chain Services | 23 | | | | | % |
-| | **Total** | **1459** | | | | | **%** |
+| | **Total** | **1465** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -288,7 +288,7 @@
 
 ```
 [PASS]      DEP-001: {reason}
-...through DEP-096
+...through DEP-102
 ```
 
 ### Checklist 14 — Python Safety (if applicable)
@@ -340,7 +340,7 @@
 ...through RS-023
 ```
 
-### Known Vectors Results (KV-001..KV-140)
+### Known Vectors Results (KV-001..KV-141)
 
 ```
 [PASS]      KV-001: {reason}
@@ -348,7 +348,7 @@
               File: {path:line}
               Impact: {what can go wrong}
               Fix: {what to change}
-...through KV-140
+...through KV-141
 ```
 
 ---
@@ -370,7 +370,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 140 |
+| Total known vectors | 141 |
 | PASS | <!-- N --> |
 | FAIL | <!-- N --> |
 | PARTIAL | <!-- N --> |
