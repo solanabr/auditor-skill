@@ -11,14 +11,14 @@
 auditor-skill does **not** read its whole corpus up front. It discovers the repo, declares a scope, loads only what that scope needs, and guarantees a verdict for every in-scope item.
 
 1. **Discover** (cheap, always): enumerate file extensions and markers (`Anchor.toml`, `Cargo.toml`, `package.json`, `*.py`, `.github/`). No checklists or vectors loaded yet.
-2. **Declare scope**: from detected languages + any `--scope` flag, compute the IN-SCOPE checklist set (see [SKILL.md](SKILL.md) → Scope-Gated Loading). Load this file (`OUTPUT-RULES.md`) once — it is always in scope.
+2. **Declare scope**: from detected languages + any `--scope` flag, compute the IN-SCOPE checklist set (see [SKILL.md](SKILL.md) → Scope-Gated Loading). Load this file (`OUTPUT-RULES.md`) once — it is always in scope. A Quick or CI run (`/auditor:quick-scan`, `/auditor:diff-audit`) declares a smaller scope instead: the selection of [references/depth-scope.md](references/depth-scope.md), which it writes to `audit_<n>/scope.md` before it reads a checklist section or a vector file. What that selection leaves out, a section a checklist calls baseline or an `always` row included, is out of that depth's scope.
 3. **Load on demand**: load an in-scope checklist when its phase begins; load a known-vector only when its phase + language/domain trigger reaches it. Out-of-scope checklists and vectors are **never read**.
 
 Completeness is measured **output-side**, not input-side:
 
 - The audit is COMPLETE iff every IN-SCOPE checklist item and every phase-triggered vector has an explicit verdict.
 - If any in-scope item lacks a verdict, report `[INCOMPLETE — in-scope item without verdict]` and finish it before concluding.
-- Out-of-scope items render as `[N/A — out of scope: <reason>]`, generated from the scope gate (not from reading the file).
+- Out-of-scope items render as `[N/A — out of scope: <reason>]`, generated from the scope gate (not from reading the file). In a Quick or CI report they render once per left-out section, and once per left-out INDEX section, as `references/depth-scope.md` §8 says.
 
 Every full report MUST include a **Scope Coverage** table: for each of the checklists and each vector group, `IN-SCOPE` (with items evaluated / total) or `OUT-OF-SCOPE (reason)`.
 
@@ -161,7 +161,7 @@ After each chunk, save to session memory:
 
 ## Rule 4: Every Item Gets a Verdict
 
-Every single checklist item and every known attack vector MUST appear in the report output with an explicit verdict. No items are skipped silently. This is the proof that the auditor actually checked everything.
+Every single checklist item and every known attack vector MUST appear in the report output with an explicit verdict. No items are skipped silently. This is the proof that the auditor actually checked everything. In a Quick or CI report, the items its depth-scope selection leaves out are not skipped silently either: they render once, by section, as `references/depth-scope.md` §8 says, and the items of a selected section that no site in scope reaches share that section's one N/A line.
 
 ### Item Verdict Format
 
