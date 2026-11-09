@@ -47,8 +47,9 @@
 #                   the package, crates.io's of the crate, PyPI's of the project), in the budget's order,
 #                   at most 1000 requests and 300 seconds (the rest "not checked"), crates.io's at most one
 #                   a second; for each new version its publish time, its publisher and the publishers of
-#                   earlier versions, flagging one under 14 days old, a first release, a publisher that
-#                   published no earlier version, a yanked version and one the registry does not list.
+#                   earlier versions, flagging one under 14 days old, a first release under 14 days old, a
+#                   publisher that published no earlier version, a yanked version and one the registry does not
+#                   list (a package it has no record of included).
 #                   AUDITOR_PUBLISH_AGE=off (the default is on) leaves this out. Then the budget: at most
 #                   40 entries of the npm and crates rows whose version changed, in this order: direct
 #                   dependencies, pins, key handlers, install scripts, versions under 14 days, sources now
@@ -60,7 +61,9 @@
 #                   public is never sent or fetched. The report goes to <R>/deps/lock-budget-<n>.txt, the
 #                   publish ages to lock-budget-<n>/ages.tsv and each request to lock-budget-<n>/requests.txt.
 #                   Exit 1 when anything is flagged; 3 when an artifact the budget selects still fails after
-#                   its retry, once the rest are compared, the last line giving the count.
+#                   its retry, once the rest are compared, the last line giving the count. The whole call
+#                   stops at 540 seconds, or AUDITOR_RUN_TIMEOUT when that is less, inside the 600 a Bash tool
+#                   call may take: what it did not fetch by then counts as failed.
 #
 # Manifests. Each --manifest is a confined regular file of at most 50 MB under the working directory, named
 # as its action takes it: Cargo.lock, Cargo.toml, package.json, package-lock.json or npm-shrinkwrap.json,
@@ -1153,7 +1156,9 @@ SET_ECOS = {"npm": (r"^(@[A-Za-z0-9~-][A-Za-z0-9._~-]*/)?[A-Za-z0-9~-][A-Za-z0-9
 SEMVER = r"^(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})(-[0-9A-Za-z.-]{1,64})?(\+[0-9A-Za-z.-]{1,64})?$"
 PEP440 = r"^[0-9][0-9A-Za-z.!+_-]{0,63}$"
 CATEGORY = (("direct", 1), ("pin", 2), ("key", 3), ("install", 4), ("young", 5), ("source-change", 6))
-BUDGET, ASK_CAP, ASK_SECONDS, CRATES_GAP, QUARANTINE = 40, 1000, 300, 1.0, 14
+# One call stays inside the 600 seconds a Bash tool call may take: the publish ages stop at 300 seconds, and the
+# whole call at 540.
+BUDGET, ASK_CAP, ASK_SECONDS, CALL_SECONDS, CRATES_GAP, QUARANTINE = 40, 1000, 300, 540, 1.0, 14
 
 
 def set_rows(path):
@@ -1206,7 +1211,7 @@ class Fetcher:
         self.scratch, self.deadline, self.maxsize, self.agent, self.log = scratch, deadline, maxsize, agent, log
         self.count, self.last_crates, self.k = 0, 0.0, 0
 
-    def get(self, url, accept_json=False, compressed=False):
+    def get(self, url, accept_json=False, compressed=False, most=120):
         import subprocess, time
         if url.startswith("https://crates.io/"):
             wait = self.last_crates + CRATES_GAP - time.time()
@@ -1215,11 +1220,11 @@ class Fetcher:
             self.last_crates = time.time()
         left = int(self.deadline - time.time())
         if left < 5:
-            return None, "the run reached its time limit (AUDITOR_RUN_TIMEOUT)"
+            return None, "the call reached its time limit (%d seconds, or AUDITOR_RUN_TIMEOUT when that is less)" % CALL_SECONDS
         self.k += 1
         out = os.path.join(self.scratch, "get-%d" % self.k)
         args = ["curl", "-q", "--proto", "=https", "--proto-redir", "=https", "--tlsv1.2", "-sS", "--connect-timeout", "30",
-                "--max-time", str(min(left - 2, 300)), "--max-filesize", str(self.maxsize), "-A", self.agent]
+                "--max-time", str(min(left - 2, most)), "--max-filesize", str(self.maxsize), "-A", self.agent]
         if accept_json:
             args += ["-H", "Accept: application/json"]
         if compressed:
@@ -1310,7 +1315,10 @@ def age_check(rows, fetcher, now, log):
             url = {"npm": "https://registry.npmjs.org/" + npm_url_path(name), "crates": "https://crates.io/api/v1/crates/" + name,
                    "pypi": "https://pypi.org/pypi/%s/json" % name}[eco]
             asked += 1
-            got, why = fetcher.get(url, True, eco == "npm")
+            got, why = fetcher.get(url, True, eco == "npm", 60)
+            if not got and why.startswith("HTTP 404 "):
+                # the registry has no such package: every version of it is one the registry does not list
+                results[(eco, name)], why = {}, ""
             if got:
                 try:
                     hist, recs = history(eco, name, got, wanted.get((eco, name), set()))
@@ -1353,13 +1361,16 @@ def age_check(rows, fetcher, now, log):
 
 
 def tree_files(top):
-    # {path below the top directory of the archive: absolute path}, regular files only (unpack makes no other kind)
-    out = {}
+    # [(path below the first folder of the archive, path below files/, absolute path)] of every file, in a fixed
+    # order. npm and cargo drop the first folder of each entry as they unpack, so two entries can land on one
+    # path.
+    out = []
     for d, dirs, files in os.walk(top):
-        for f in files:
+        dirs.sort()
+        for f in sorted(files):
             full = os.path.join(d, f)
             rel = os.path.relpath(full, top).split(os.sep)
-            out["/".join(rel[1:]) if len(rel) > 1 else rel[0]] = full
+            out.append(("/".join(rel[1:]) if len(rel) > 1 else rel[0], "/".join(rel), full))
     return out
 
 
@@ -1379,43 +1390,56 @@ def read_text(path):
         return None
 
 
-def sweep(old_top, new_top, left_out):
+def sweep(old_top, new_top, left_out, first):
+    # the files added, changed and removed between two unpacked artifacts, by the path the package manager
+    # gives each, and the added lines that match SC-059 or SC-060. <first> is the folder the registry puts
+    # every entry under: an entry elsewhere, or two entries on one path, is an SC-060 hit, and every copy on a
+    # shared path is read whole.
     import collections
-    old = tree_files(old_top) if old_top else {}
-    new = tree_files(new_top)
-    hits, binary = [], []
-    added = [p for p in new if p not in old]
-    changed = []
-    for p in new:
-        if p in old:
-            with open(old[p], "rb") as a, open(new[p], "rb") as b:
-                if a.read() != b.read():
-                    changed.append(p)
-    removed = [p for p in old if p not in new]
-    for p in sorted(added + changed):
-        if SC059_PATH.search(p):
-            hits.append(("SC-059", p, 0, "a %s file %s" % (p.rsplit("/", 1)[-1], "added" if p in added else "changed")))
-        text = read_text(new[p])
-        if text is None:
-            binary.append(p)
-            continue
-        lines = text.splitlines()
-        if p in old:
-            before = read_text(old[p])
-            counts = collections.Counter(before.splitlines() if before is not None else [])
-        else:
-            counts = collections.Counter()
-        for n, line in enumerate(lines, 1):
-            if counts[line] > 0:
-                counts[line] -= 1
+    old, new = {}, {}
+    for p, rel, full in tree_files(old_top) if old_top else []:
+        old.setdefault(p, []).append(full)
+    for p, rel, full in tree_files(new_top):
+        new.setdefault(p, []).append((rel, full))
+    hits, binary, added, changed = [], [], 0, 0
+    for p in sorted(new):
+        copies = new[p]
+        if len(copies) > 1:
+            hits.append(("SC-060", p, 0, "%d entries of the artifact unpack to this path, and the package manager keeps one: %s"
+                         % (len(copies), ", ".join(rel for rel, _ in copies[:5]))))
+        for rel, full in copies:
+            if rel.split("/")[0] != first:
+                hits.append(("SC-060", rel, 0, "an entry outside the %s/ folder the registry puts every entry under" % first))
+            before = old.get(p, [])
+            if len(copies) == 1 and len(before) == 1:
+                with open(before[0], "rb") as a, open(full, "rb") as b:
+                    if a.read() == b.read():
+                        continue
+                changed += 1
+                was = "changed"
+                prior = read_text(before[0])
+                counts = collections.Counter(prior.splitlines() if prior is not None else [])
+            else:
+                added += 1
+                was = "added"
+                counts = collections.Counter()
+            if SC059_PATH.search(p):
+                hits.append(("SC-059", rel, 0, "a %s file %s" % (p.rsplit("/", 1)[-1], was)))
+            text = read_text(full)
+            if text is None:
+                binary.append(rel)
                 continue
-            if SC059_LINE.search(line):
-                hits.append(("SC-059", p, n, line))
-            if SC060_LINE.search(line):
-                hits.append(("SC-060", p, n, line))
+            for n, line in enumerate(text.splitlines(), 1):
+                if counts[line] > 0:
+                    counts[line] -= 1
+                    continue
+                if SC059_LINE.search(line):
+                    hits.append(("SC-059", rel, n, line))
+                if SC060_LINE.search(line):
+                    hits.append(("SC-060", rel, n, line))
     for entry in left_out:
         hits.append(("SC-060", entry, 0, "an entry left out of the unpacked files: a link, a special file or an unsafe name"))
-    return {"added": len(added), "changed": len(changed), "removed": len(removed), "hits": hits, "binary": binary}
+    return {"added": added, "changed": changed, "removed": sum(1 for p in old if p not in new), "hits": hits, "binary": binary}
 
 
 def fetch_one(fetcher, eco, name, version, records, dest):
@@ -1468,8 +1492,8 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
     import time
     now = time.time()
     rows, odd = set_rows(setfile)
-    log = open(os.path.join(outdir, "requests.txt"), "w", encoding="utf-8")
-    fetcher = Fetcher(scratch, float(deadline), int(maxsize), agent, log)
+    log = open(os.path.join(outdir, "requests.txt"), "w", encoding="utf-8", errors="backslashreplace")
+    fetcher = Fetcher(scratch, min(float(deadline), now + CALL_SECONDS), int(maxsize), agent, log)
     out, summary = [], []
     out.append("lock-budget: %s: %d rows%s" % (setname, len(rows), "; %d lines that are not a row of the set, never sent" % odd if odd else ""))
     ages, records, asked, took, not_checked = {}, {}, 0, 0.0, {}
@@ -1486,7 +1510,7 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
         line = "publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: %d of %d rows" % (len(public), len(public))
     out.append(line)
     summary.append(line)
-    with open(os.path.join(outdir, "ages.tsv"), "w", encoding="utf-8") as f:
+    with open(os.path.join(outdir, "ages.tsv"), "w", encoding="utf-8", errors="backslashreplace") as f:
         f.write("eco\tname\tversion\tpublished\tage_days\tpublisher\tearlier_publishers\tflags\n")
         for r in public:
             a = ages.get(r["i"], {})
@@ -1537,7 +1561,7 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
         for side, version in sides:
             dest = os.path.join(outdir, str(k), side)
             ok, said, left = fetch_one(fetcher, r["eco"], r["name"], version, records, dest)
-            if not ok:
+            if not ok and fetcher.deadline - time.time() > 10:
                 time.sleep(2)
                 if os.path.exists(dest):
                     shutil_rm(dest)
@@ -1549,7 +1573,8 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
                 failed += 1
                 failures.append("%s %s %s: %s" % (r["eco"], r["name"], version, said))
         if "new" in got and ("old" in got or len(sides) == 1):
-            s = sweep(got["old"][0] if "old" in got else None, got["new"][0], got["new"][1])
+            s = sweep(got["old"][0] if "old" in got else None, got["new"][0], got["new"][1],
+                      "package" if r["eco"] == "npm" else "%s-%s" % (r["name"], r["new"]))
         else:
             s = None
         results.append((k, r, s))
@@ -1604,12 +1629,14 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
         if extra > 0:
             out.append("  ... %d more hits in this entry" % extra)
     log.close()
-    with open(report, "w", encoding="utf-8") as f:
+    with open(report, "w", encoding="utf-8", errors="backslashreplace") as f:
         f.write("\n".join(shown(x) if x else "" for x in out) + "\n")
     for line in summary:
         print(">> " + shown(line))
     if failed:
-        print("%d of %d selected artifacts could not be fetched after one retry" % (failed, failed + fetched))
+        late = any("reached its time limit" in f for f in failures)
+        print("%d of %d selected artifacts could not be fetched after one retry%s" % (failed, failed + fetched,
+              ", the call having reached its time limit" if late else ""))
         sys.exit(3)
     flags = tot59 + tot60 + totbin + sum(len(v) for v in flagged.values())
     sys.exit(1 if flags else 0)
