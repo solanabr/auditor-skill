@@ -2246,6 +2246,10 @@ for v, files in (("0.1.0", {"Cargo.toml": b"[package]\n"}), ("0.2.0", {"Cargo.to
                  "published_by": {"login": "ferris"}, "checksum": hashlib.sha256(data).hexdigest()}
     put("https://crates.io/api/v1/crates/lb_crate/" + v, json.dumps({"version": crates[v]}))
 put("https://crates.io/api/v1/crates/lb_crate", json.dumps({"versions": list(crates.values())}))
+# the crates.io index: one line per version, its pubtime and checksum; lb_nt has no pubtime
+put("https://index.crates.io/lb/_c/lb_crate", "".join(json.dumps({"name": "lb_crate", "vers": v, "deps": [], "cksum": c["checksum"],
+    "features": {}, "yanked": False, "pubtime": c["created_at"].replace("+00:00", "Z")}) + "\n" for v, c in sorted(crates.items())))
+put("https://index.crates.io/lb/_n/lb_nt", json.dumps({"name": "lb_nt", "vers": "1.0.0", "deps": [], "cksum": "0" * 64, "features": {}, "yanked": False}) + "\n")
 put("https://pypi.org/pypi/lb-py/json", json.dumps({"releases": {"1.0": [{"upload_time_iso_8601": iso(2)}]}}))
 PY
 H='eco	lockfile	name	old	new	oldsource	source	marks'
@@ -2264,16 +2268,16 @@ r0=$(rows)
 run "$DEPS" "$WT" HTTPS_PROXY="$PROXY" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
 LB=$WT/audit_1/deps/lock-budget-$n
-check "lock-budget: one record per public name, eight at a time, before any artifact; none for a git source" \
-  sh -c "[ '$RC' = 1 ] && lb=\$(sed -n 's/^url: //p' '$T/calls' | sed -n 1,5p | LC_ALL=C sort | tr '\n' ' ') && [ \"\$lb\" = 'https://crates.io/api/v1/crates/lb_crate https://pypi.org/pypi/lb-py/json https://registry.npmjs.org/lb-direct https://registry.npmjs.org/lb-meta https://registry.npmjs.org/lb-young ' ] && ! grep -q 'lb-git' '$T/calls'"
+check "lock-budget: one record per public name, eight at a time, a crate's from the index; then the selected crate's publisher; none for a git source" \
+  sh -c "[ '$RC' = 1 ] && lb=\$(sed -n 's/^url: //p' '$T/calls' | sed -n 1,5p | LC_ALL=C sort | tr '\n' ' ') && [ \"\$lb\" = 'https://index.crates.io/lb/_c/lb_crate https://pypi.org/pypi/lb-py/json https://registry.npmjs.org/lb-direct https://registry.npmjs.org/lb-meta https://registry.npmjs.org/lb-young ' ] && [ \"\$(sed -n 's/^url: //p' '$T/calls' | sed -n 6p)\" = https://crates.io/api/v1/crates/lb_crate ] && ! grep -q 'lb-git' '$T/calls'"
 check "... the npm record asked compressed, with the proxy" \
   sh -c "grep -q '^== curl -q --proto =https --proto-redir =https --tlsv1.2 -sS --connect-timeout 30 --max-time [0-9]* --max-filesize 104857600 -A .* -H Accept: application/json --compressed -o .* -- https://registry.npmjs.org/lb-direct\$' '$T/calls' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/calls'"
 check "... the publish ages: three under 14 days, two first releases, a publisher who published no earlier version" \
-  sh -c "grep -q '^>> publish age: 5 names asked in [0-9]* s; not checked: 0 of 5 rows; under 14 days: 3; first releases: 2; publisher changes: 1; from a person to CI publishing: 0; yanked: 0; not listed by the registry: 0\$' '$T/out' && grep -q '^npm	lb-direct	1.1.0	[0-9T:Z-]*	3	mallory	alice	young,publisher-change\$' '$LB/ages.tsv'"
+  sh -c "grep -q '^>> publish age: 5 names asked in [0-9]* s; not checked: 0 of 5 rows; under 14 days: 3; first releases: 2; publisher changes: 1; from a person to CI publishing: 0; yanked: 0; not listed by the registry: 0; crate publishers, the selected crates only: 1 asked, 0 not checked\$' '$T/out' && grep -q '^crates	lb_crate	0.2.0	[0-9T:Z-]*	100	ferris	ferris	-\$' '$LB/ages.tsv' && grep -q '^npm	lb-direct	1.1.0	[0-9T:Z-]*	3	mallory	alice	young,publisher-change\$' '$LB/ages.tsv'"
 check "... the budget: direct, pin, then the young version; the old package metadata only, the git row never fetched" \
   sh -c "grep -qxF '>> budget: 0 key handlers to compare, outside the 40-entry budget; 3 entries to compare (direct 1, pin 1, install 0, young 1, source-change 0); over the 40-entry budget: 0; metadata only: 1; PyPI rows, metadata only: 1; same version with a new checksum: 0; not public, never fetched (SC-061): 1; a version outside its registry grammar, never sent: 0' '$T/out' && ! grep -q 'lb-meta/-/' '$T/calls'"
-check "... old and new fetched from the URLs the records give (the npm record from the age answer, not asked again), and compared" \
-  sh -c "grep -qxF '>> artifacts: 3 entries, 5 artifacts fetched, 0 failed after one retry' '$T/out' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-direct/1.1.0\$' '$T/calls') = 0 ] && [ -f '$LB/1/new/files/package/index.js' ] && [ -f '$LB/1/old/files/package/index.js' ] && [ -f '$LB/2/new/files/lb_crate-0.2.0/build.rs' ]"
+check "... old and new fetched from the URLs the records give (the npm record from the age answer, the crate's from the index, neither asked again), and compared" \
+  sh -c "grep -qxF '>> artifacts: 3 entries, 5 artifacts fetched, 0 failed after one retry' '$T/out' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-direct/1.1.0\$' '$T/calls') = 0 ] && ! grep -q '^url: https://crates.io/api/v1/crates/lb_crate/' '$T/calls' && [ -f '$LB/1/new/files/package/index.js' ] && [ -f '$LB/1/old/files/package/index.js' ] && [ -f '$LB/2/new/files/lb_crate-0.2.0/build.rs' ]"
 check "... the sweep, counts first: the new postinstall and build.rs (SC-059), the new fetch (SC-060)" \
   sh -c "grep -qxF '>> sweep: SC-059 2 hits in 2 entries, SC-060 1 hits in 1 entries, binary files added or changed 0 in 0 entries; the hits are in the report' '$T/out' && grep -q '^1. npm lb-direct 1.0.0 -> 1.1.0 \[direct,young\] SC-059 1, SC-060 1, binary 0; files +0 ~2 -0\$' '$LB.txt' && grep -qF 'SC-060 package/index.js:2: fetch(\"https://collector.invalid/k\");' '$LB.txt' && grep -q '^SC-059 lb_crate-0.2.0/build.rs:0: a build.rs file added\$' '$LB.txt'"
 check "... one disclosure row per service for the whole run, each naming the set" \
@@ -2281,8 +2285,8 @@ check "... one disclosure row per service for the whole run, each naming the set
 check "... the run directory still passes its check" sh -c "(cd '$WT' && '$ROOT/scripts/rundir.sh' check audit_1) >/dev/null"
 r0=$(rows)
 run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
-check "lock-budget with AUDITOR_PUBLISH_AGE=off: no record of a whole package, each version's record instead, nothing to PyPI" \
-  sh -c "[ '$RC' = 1 ] && grep -q '^>> publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: 5 of 5 rows\$' '$T/out' && ! grep -qxF 'url: https://registry.npmjs.org/lb-direct' '$T/calls' && grep -qxF 'url: https://registry.npmjs.org/lb-direct/1.1.0' '$T/calls' && ! grep -q 'pypi.org' '$T/calls' && grep -q '^>> budget: 0 key handlers to compare, outside the 40-entry budget; 2 entries to compare (direct 1, pin 1, ' '$T/out'"
+check "lock-budget with AUDITOR_PUBLISH_AGE=off: no record of a whole package, each version's record instead, nothing to PyPI or the index" \
+  sh -c "[ '$RC' = 1 ] && ! grep -q 'index.crates.io' '$T/calls' && grep -q '^>> publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: 5 of 5 rows\$' '$T/out' && ! grep -qxF 'url: https://registry.npmjs.org/lb-direct' '$T/calls' && grep -qxF 'url: https://registry.npmjs.org/lb-direct/1.1.0' '$T/calls' && ! grep -q 'pypi.org' '$T/calls' && grep -q '^>> budget: 0 key handlers to compare, outside the 40-entry budget; 2 entries to compare (direct 1, pin 1, ' '$T/out'"
 check "... two rows, npmjs.org and crates.io, that say only the selected versions go out" \
   sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 2 ] && tail -n 2 '$DT' | grep -c 'budget selects' | grep -qx 2"
 LBN=102
@@ -2314,6 +2318,11 @@ run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
 check "lock-budget: a person to GitHub Actions is reported as a change to CI publishing, at low severity, not as a publisher change" \
   sh -c "grep -q '; publisher changes: 0; from a person to CI publishing: 1;' '$T/out' && grep -qxF '  publisher changed from a person to CI publishing (trusted publishing; low severity): npm lb-ci 1.1.0 (package-lock.json): GitHub Actions (earlier: alice)' '$WT/audit_1/deps/lock-budget-$n.txt'"
+LBN=116
+lb_set "$LBN" 'crates	Cargo.lock	lb_nt	-	1.0.0	-	public	-'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget: a crate whose index entry has no pubtime is not checked, and a crate the budget does not select is never asked for its publisher" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^>> publish age: 1 names asked in [0-9]* s; not checked: 1 of 1 rows (no publish time);' '$T/out' && grep -qxF 'url: https://index.crates.io/lb/_n/lb_nt' '$T/calls' && ! grep -q 'crates.io/api' '$T/calls'"
 LBN=104
 lb_set "$LBN"
 r0=$(rows)

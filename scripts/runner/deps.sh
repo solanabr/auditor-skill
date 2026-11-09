@@ -44,11 +44,13 @@
 #   lock-budget     <R>/deps/lock-set-<n>.tsv: the CI budget of checklist 11 §11.11 over a set that
 #                   scripts/recipes/lock-delta.sh set wrote, in one run. First the publish age: one request
 #                   for each distinct name of the set from a public registry (the npm registry's record of
-#                   the package, crates.io's of the crate, PyPI's of the project), in the budget's order,
-#                   at most 8 at a time, 1000 requests and 300 seconds, crates.io's at most one a second; a
+#                   the package, the crate's entry in the crates.io index at index.crates.io, PyPI's record
+#                   of the project), in the budget's order,
+#                   at most 8 at a time, 1000 requests and 300 seconds; a
 #                   lookup that still fails after one retry, the rest past those bounds and a version with
 #                   no publish time are "not checked", which fails nothing. For each new version: its
-#                   publish time, its publisher and the publishers of
+#                   publish time, its publisher (for a crate, from crates.io's record, one request a second,
+#                   asked only for the crates the budget selects) and the publishers of
 #                   earlier versions, flagging one under 14 days old, a first release under 14 days old, a
 #                   publisher that published no earlier version (a person to "GitHub Actions", trusted
 #                   publishing, apart, at low severity), a yanked version and one the registry does not list
@@ -1168,7 +1170,8 @@ MARKS = (("key", 0),) + CATEGORY
 # One call stays inside the 600 seconds a Bash tool call may take: the publish ages stop at 300 seconds, and the
 # whole call at 540.
 BUDGET, ASK_CAP, ASK_SECONDS, CALL_SECONDS, CRATES_GAP, QUARANTINE = 40, 1000, 300, 540, 1.0, 14
-# At most this many publish-age requests in flight; crates.io takes one a second whatever the number.
+# At most this many publish-age requests in flight. The crates.io API, asked only for the publishers of the
+# crates the budget selects, takes one request a second.
 IN_FLIGHT = 8
 # At most this much a download of the budget, and this much unpacked in one call.
 ARTIFACT_MAX, CALL_UNPACKED = 50 * 1000 * 1000, 500 * 1000 * 1000
@@ -1292,7 +1295,11 @@ def when(text):
 def history(eco, name, path, wanted):
     # {version: (published, publisher, yanked)}, and the records fetch-artifact reads for the versions in
     # <wanted>, from one registry answer
-    data = load(path)
+    if eco == "crates-index":
+        with open(path, encoding="utf-8") as f:
+            data = [line for line in f.read().split("\n") if line.strip()]
+    else:
+        data = load(path)
     hist, records = {}, {}
     if eco == "npm":
         times = data.get("time") if isinstance(data.get("time"), dict) else {}
@@ -1312,6 +1319,23 @@ def history(eco, name, path, wanted):
             hist[rec["num"]] = (when(rec.get("created_at")), str(by.get("login") or "") or None, bool(rec.get("yanked")))
             if rec["num"] in wanted:
                 records[rec["num"]] = {"version": {"num": rec["num"], "crate": rec.get("crate") or name, "checksum": rec.get("checksum")}}
+    elif eco == "crates-index":
+        # the crates.io index: one JSON line per version, its pubtime where crates.io records one
+        read = 0
+        for line in data:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict) or not isinstance(rec.get("vers"), str) or str(rec.get("name", "")).lower() != name.lower():
+                continue
+            read += 1
+            v = rec["vers"]
+            hist[v] = (when(rec.get("pubtime")), None, bool(rec.get("yanked")))
+            if v in wanted and isinstance(rec.get("cksum"), str):
+                records[v] = {"version": {"num": v, "crate": name, "checksum": rec["cksum"]}}
+        if not read:
+            raise ValueError("the index entry holds no version of %s" % name)
     else:
         for v, files in (data.get("releases") or {}).items():
             if not isinstance(files, list):
@@ -1324,6 +1348,16 @@ def history(eco, name, path, wanted):
 
 def npm_url_path(name):
     return name.replace("/", "%2F") if name.startswith("@") else name
+
+
+def index_path(name):
+    # where the crates.io index keeps a crate: by the length of its lowercase name, then its first letters
+    n = name.lower()
+    if len(n) <= 2:
+        return "%d/%s" % (len(n), n)
+    if len(n) == 3:
+        return "3/%s/%s" % (n[0], n)
+    return "%s/%s/%s" % (n[:2], n[2:4], n)
 
 
 def age_check(rows, fetcher, now, log):
@@ -1342,19 +1376,19 @@ def age_check(rows, fetcher, now, log):
 
     def ask(eco, name):
         # one registry record, with one retry: (history, records, why not checked)
-        url = {"npm": "https://registry.npmjs.org/" + npm_url_path(name), "crates": "https://crates.io/api/v1/crates/" + name,
+        url = {"npm": "https://registry.npmjs.org/" + npm_url_path(name), "crates": "https://index.crates.io/" + index_path(name),
                "pypi": "https://pypi.org/pypi/%s/json" % name}[eco]
         why = ""
         for attempt in (1, 2):
             if time.time() - start > ASK_SECONDS:
                 return None, None, why or "the 300-second bound"
-            got, why = fetcher.get(url, True, eco == "npm", 60)
+            got, why = fetcher.get(url, eco != "crates", eco != "pypi", 60)
             if not got and why.startswith("HTTP 404 "):
                 # the registry has no such package: every version of it is one the registry does not list
                 return {}, {}, ""
             if got:
                 try:
-                    hist, recs = history(eco, name, got, wanted.get((eco, name), set()))
+                    hist, recs = history("crates-index" if eco == "crates" else eco, name, got, wanted.get((eco, name), set()))
                     return hist, recs, ""
                 except BaseException as e:
                     why = "the answer cannot be read: %s" % (str(e) or type(e).__name__)
@@ -1410,6 +1444,54 @@ def age_check(rows, fetcher, now, log):
             flags.append("yanked")
         out[r["i"]] = {"published": published, "publisher": publisher, "earlier": earlier, "flags": flags}
     return out, records, asked, time.time() - start, not_checked
+
+
+def crate_publishers(chosen, ages, fetcher):
+    # the record crates.io keeps of each crate the budget selects, one request a second with one retry: the publisher of
+    # each version, for SC-061. The index gives no publisher, and no other crate is asked.
+    import time
+    names = []
+    for r in chosen:
+        if r["eco"] == "crates" and r["name"] not in names:
+            names.append(r["name"])
+    hists, whys = {}, {}
+    for name in names:
+        why = ""
+        for attempt in (1, 2):
+            got, why = fetcher.get("https://crates.io/api/v1/crates/" + name, True, False, 60)
+            if got:
+                try:
+                    hists[name] = history("crates", name, got, set())[0]
+                    why = ""
+                except BaseException as e:
+                    why = "the answer cannot be read: %s" % (str(e) or type(e).__name__)
+                finally:
+                    os.remove(got)
+                if not why:
+                    break
+            if "time limit" in why or why.startswith("HTTP 404 "):
+                break
+            if attempt == 1:
+                time.sleep(1)
+        if why:
+            whys[name] = why
+    unchecked = 0
+    for r in chosen:
+        a = ages.get(r["i"])
+        if r["eco"] != "crates" or a is None or "flags" not in a:
+            continue
+        hist = hists.get(r["name"])
+        mine = hist.get(r["new"]) if hist else None
+        if not mine:
+            a["publisher_why"] = whys.get(r["name"], "crates.io lists no %s" % r["new"])
+            unchecked += 1
+            continue
+        published, publisher = mine[0], mine[1]
+        earlier = sorted({p for v, (s, p, y) in hist.items() if p and s is not None and published is not None and s < published})
+        a["publisher"], a["earlier"] = publisher, earlier
+        if publisher and earlier and publisher not in earlier:
+            a["flags"].append("publisher-change")
+    return len(names), unchecked
 
 
 def tree_files(top):
@@ -1565,6 +1647,26 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
     ages, records, asked, took, not_checked = {}, {}, 0, 0.0, {}
     if age == "on":
         ages, records, asked, took, not_checked = age_check(rows, fetcher, now, log)
+    for r in rows:
+        if "young" in ages.get(r["i"], {}).get("flags", []):
+            r["marks"].add("young")
+    candidates, seen = [], set()
+    for r in sorted((r for r in rows if r["public"] and r["eco"] in ("npm", "crates") and r["old"] != r["new"]),
+                    key=lambda r: (rank(r), r["i"])):
+        k = (r["eco"], r["name"], r["old"], r["new"])
+        if k not in seen:
+            seen.add(k)
+            candidates.append(r)
+    keys = [r for r in candidates if rank(r) == 0]
+    pool = [r for r in candidates if 0 < rank(r) < 7]
+    chosen, over = keys + pool[:BUDGET], pool[BUDGET:]
+    by = {}
+    for r in pool[:BUDGET]:
+        name = dict((c, m) for m, c in CATEGORY)[rank(r)]
+        by[name] = by.get(name, 0) + 1
+    crate_asked = crate_unchecked = 0
+    if age == "on":
+        crate_asked, crate_unchecked = crate_publishers(chosen, ages, fetcher)
     flagged = {f: [r for r in rows if f in ages.get(r["i"], {}).get("flags", [])] for f in ("young", "first-release", "publisher-change", "ci-publishing", "yanked", "unlisted")}
     unchecked = sum(1 for r in rows if r["public"] and "why" in ages.get(r["i"], {}) and "flags" not in ages.get(r["i"], {}))
     public = [r for r in rows if r["public"]]
@@ -1573,6 +1675,8 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
                 % (asked, took, unchecked, len(public), (" (" + ", ".join(sorted({a["why"] for a in ages.values() if "why" in a and "flags" not in a})[:5]) + ")") if unchecked else "",
                    QUARANTINE, len(flagged["young"]), len(flagged["first-release"]), len(flagged["publisher-change"]), len(flagged["ci-publishing"]),
                    len(flagged["yanked"]), len(flagged["unlisted"])))
+        if crate_asked:
+            line += "; crate publishers, the selected crates only: %d asked, %d not checked" % (crate_asked, crate_unchecked)
     else:
         line = "publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: %d of %d rows" % (len(public), len(public))
     out.append(line)
@@ -1597,23 +1701,6 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
             out.append("  %s: %s %s %s (%s)%s" % (title, r["eco"], r["name"], r["new"], r["lockfile"], extra))
         if len(flagged[f]) > 50:
             out.append("  %s: %d more in %s/ages.tsv" % (title, len(flagged[f]) - 50, outname))
-    for r in rows:
-        if "young" in ages.get(r["i"], {}).get("flags", []):
-            r["marks"].add("young")
-    candidates, seen = [], set()
-    for r in sorted((r for r in rows if r["public"] and r["eco"] in ("npm", "crates") and r["old"] != r["new"]),
-                    key=lambda r: (rank(r), r["i"])):
-        k = (r["eco"], r["name"], r["old"], r["new"])
-        if k not in seen:
-            seen.add(k)
-            candidates.append(r)
-    keys = [r for r in candidates if rank(r) == 0]
-    pool = [r for r in candidates if 0 < rank(r) < 7]
-    chosen, over = keys + pool[:BUDGET], pool[BUDGET:]
-    by = {}
-    for r in pool[:BUDGET]:
-        name = dict((c, m) for m, c in CATEGORY)[rank(r)]
-        by[name] = by.get(name, 0) + 1
     line = ("budget: %d key handlers to compare, outside the %d-entry budget; %d entries to compare (%s); over the %d-entry budget: %d; metadata only: %d; PyPI rows, metadata only: %d; same version with a new checksum: %d; not public, never fetched (SC-061): %d; a version outside its registry grammar, never sent: %d"
             % (len(keys), BUDGET, len(pool[:BUDGET]), ", ".join("%s %d" % (m, by.get(m, 0)) for m, _ in CATEGORY), BUDGET, len(over),
                len(candidates) - len(keys) - len(pool),
@@ -1960,7 +2047,7 @@ case "$ACTION" in
       case "$svc:$AGE" in
         npmjs.org:on) disclose npmjs.org "the name of each new npm package in this set (its registry record: publish times and publishers), then the tarballs of the versions its budget selects" "$SETF" ;;
         npmjs.org:off) disclose npmjs.org "the npm versions this set's budget selects (each version's registry record, then its tarball)" "$SETF" ;;
-        crates.io:on) disclose crates.io "the name of each new crate in this set (its crates.io record: publish times and publishers), then the .crate files of the versions its budget selects" "$SETF" ;;
+        crates.io:on) disclose crates.io "the name of each new crate in this set (its entry in the crates.io index, for publish times; crates.io's record of the crates its budget selects, for their publishers), then the .crate files of the versions it selects" "$SETF" ;;
         crates.io:off) disclose crates.io "the crate versions this set's budget selects (each version's crates.io record, then its .crate download)" "$SETF" ;;
         pypi.org:on) disclose pypi.org "the name of each new PyPI project in this set (its PyPI JSON record: upload times)" "$SETF" ;;
       esac
