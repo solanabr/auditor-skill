@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # test-runners.sh — self-test for scripts/runner/target.sh, deps.sh and sast.sh: each case file under
 # fixtures/{target,deps,sast}/ under each bash on the machine (/bin/bash and the bash running this suite,
-# when they differ), then each runner against stand-in toolchains (fixtures/runners/fake-tool.sh as cargo,
-# cargo-build-sbf, cargo-audit, cargo-outdated, anchor, npm, node, semgrep, curl and rustup) that record
-# their arguments, working directory, HOME, ulimit -t and -f and environment: the fixed command lines, the
-# scratch copy outside the working directory, the mode rule with none, the isolated self-check, the proxy
-# and HOME split, canary variables, the watchdog and the caps, patches, revisions, submodules, artifacts,
-# disclosure rows and large inputs. Then one case with the real tool for each action whose tool is
-# installed: cargo test and cargo clippy, cargo build-sbf (when its platform tools are installed, so that
-# nothing is downloaded), npm ci, cargo audit --no-fetch and cargo tree, all offline. With REQUIRE_TOOLCHAIN=1
-# (CI sets it), a missing cargo or rustup fails the run instead of skipping those. Needs git and python3;
-# no network. Usage (from the repo root): bash scripts/tests/test-runners.sh
+# when they differ), in default and in strict mode (AUDITOR_STRICT=1), then each runner against stand-in
+# toolchains (fixtures/runners/fake-tool.sh as cargo, cargo-build-sbf, cargo-audit, cargo-outdated, anchor,
+# npm, node, semgrep, curl and rustup) that record their arguments, working directory, HOME, ulimit -t and -f
+# and environment: the fixed command lines, the scratch copy outside the working directory, the mode rule with
+# none and strict mode, the isolated self-check, the proxy and HOME split, canary variables, the watchdog and
+# the caps, patches, revisions, submodules, artifacts, disclosure rows and large inputs, and for each check
+# strict mode makes a refusal or a stop, the note default mode prints instead. A case where strict mode
+# builds, which is isolated, runs only where isolated mode can (ISOLATED_OK). Then one case with the real tool
+# for each action whose tool is installed: cargo test and cargo clippy, cargo build-sbf (when its platform
+# tools are installed, so that nothing is downloaded), npm ci, cargo audit --no-fetch and cargo tree, all
+# offline. With REQUIRE_TOOLCHAIN=1 (CI sets it), a missing cargo or rustup fails the run instead of skipping
+# those. Needs git and python3; no network. Usage (from the repo root): bash scripts/tests/test-runners.sh
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 TARGET=$ROOT/scripts/runner/target.sh
@@ -22,6 +24,10 @@ T=$(cd -P "$T" && pwd -P) || exit 1
 trap 'chmod -R u+rwX "$T" 2>/dev/null; rm -rf "$T"' EXIT
 REAL_HOME=${HOME:-}
 REAL_PATH=$PATH
+# The fixtures' own rundir.sh and git-ro.sh calls take the caller's environment: an AUDITOR_STRICT=1 there
+# would leave strict markers that turn every default-mode case strict. The runners themselves get only what
+# run passes (env -i).
+unset AUDITOR_STRICT
 export GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
@@ -162,9 +168,13 @@ for prog in "$TARGET" "$DEPS" "$SAST"; do
     check "git records $rel as 100755" test "${mode%% *}" = 100755
   fi
 done
-for pair in "target:$TARGET" "deps:$DEPS" "sast:$SAST"; do
+# Each case is refused the same way in default and in strict mode (AUDITOR_STRICT=1): it never gets as far
+# as the mode. test-preapproved-entrypoints.sh replays these files under AUDITOR_STRICT=1.
+for pair in "target:$TARGET" "deps:$DEPS" "sast:$SAST" "target:$TARGET:1" "deps:$DEPS:1" "sast:$SAST:1"; do
   name=${pair%%:*}
   prog=${pair#*:}
+  strict=""
+  case "$prog" in *:1) strict=1; prog=${prog%:1} ;; esac
   before=$(tree_of "$WT")
   ncase=0
   while IFS= read -r line; do
@@ -175,14 +185,14 @@ for pair in "target:$TARGET" "deps:$DEPS" "sast:$SAST"; do
     rest=${rest#*$'\t'}
     IFS=$'\t' read -r -a args <<< "$rest"
     ncase=$((ncase + 1))
-    label="$name ${args[*]}"
+    label="$name${strict:+ (strict)} ${args[*]}"
     label=${label//[[:cntrl:]]/?}
     [ "${#label}" -le 160 ] || label="${label:0:160}..."
     i=0
     for sh in "${SHELLS[@]}"; do
       rm -rf "$NT"
       mkdir -p "$NT"
-      ( cd "$WT" && env -i HOME="$CLEANHOME" PATH="$FPATH" TMPDIR="$NT" "$sh" "$prog" "${args[@]}" ) \
+      ( cd "$WT" && env -i HOME="$CLEANHOME" PATH="$FPATH" TMPDIR="$NT" ${strict:+AUDITOR_STRICT=1} "$sh" "$prog" "${args[@]}" ) \
         >"$T/case.out.$i" 2>"$T/case.err.$i" </dev/null
       echo $? > "$T/case.rc.$i"
       [ -z "$(ls -A "$NT")" ] || echo scratch >> "$T/case.out.$i"
@@ -197,9 +207,9 @@ for pair in "target:$TARGET" "deps:$DEPS" "sast:$SAST"; do
       ko "case: $label prints differently under ${SHELLS[0]} and ${SHELLS[1]}"
     fi
   done < "$FIXT/$name/cases.txt"
-  check "the $name case file has cases ($ncase)" test "$ncase" -gt 20
-  check "no $name case changed anything in the working directory" test "$(tree_of "$WT")" = "$before"
-  check "no $name case ran a configured program or hook of the repository" test -z "$(ls -A "$T/marks")"
+  check "the $name case file has cases ($ncase)${strict:+, in strict mode}" test "$ncase" -gt 20
+  check "no $name case changed anything in the working directory${strict:+, in strict mode}" test "$(tree_of "$WT")" = "$before"
+  check "no $name case ran a configured program or hook of the repository${strict:+, in strict mode}" test -z "$(ls -A "$T/marks")"
 done
 for pair in "target:$TARGET" "deps:$DEPS" "sast:$SAST"; do
   run "${pair#*:}" "$WT" --
@@ -231,36 +241,105 @@ else
   echo "note: this machine is not an isolated runner ($readable); the cases where isolated mode runs are skipped"
 fi
 settings
-while IFS='|' read -r file env want; do
+# The mode is the stricter of exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT=1, as isolated), and
+# native when none of them says anything, with a note that says so. An isolated run where this machine fails
+# the self-check stops there, after the mode line.
+ISO_STOP='^target: blocker: isolated mode, but these are readable here: '
+NOMODE='>> note: no execution mode is recorded, so target.sh builds natively, on this machine (OUTPUT-RULES.md Rule 11a)'
+while IFS='|' read -r file env strict want; do
   [ -n "$want" ] || continue
   if [ -n "$file" ]; then printf '%s\n' "$file" > "$WT/audit_1/exec-mode"; else rm -f "$WT/audit_1/exec-mode"; fi
   set --
   [ -z "$env" ] || set -- "AUDITOR_EXEC_MODE=$env"
+  [ -z "$strict" ] || set -- "$@" AUDITOR_STRICT=1
   run "$TARGET" "$WT" "$@" -- cargo-test --run audit_1 --src .
-  label="exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}'"
+  label="exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}'${strict:+, AUDITOR_STRICT=1}"
+  says="strict mode: off"
+  [ -z "$strict" ] || says="strict mode: on (AUDITOR_STRICT=1)"
+  line=">> execution mode: $want (the stricter of audit_1/exec-mode: ${file:-absent}; AUDITOR_EXEC_MODE: ${env:-unset}; $says; native when none is recorded)"
   case "$want" in
-    native|isolated)
-      if [ "$want" = isolated ] && [ "$ISOLATED_OK" = 0 ]; then continue; fi
-      check "$label: runs in $want mode" sh -c "[ '$RC' = 0 ] && grep -qxF '>> execution mode: $want (the stricter of audit_1/exec-mode: ${file:-absent}; AUDITOR_EXEC_MODE: ${env:-unset})' '$T/out'" ;;
+    native)
+      if [ -z "$file$env$strict" ]; then
+        check "$label: runs in native mode, with a note that no mode is recorded" \
+          sh -c "[ '$RC' = 0 ] && grep -qxF '$line' '$T/out' && grep -qxF '$NOMODE' '$T/out'"
+      else
+        check "$label: runs in native mode" sh -c "[ '$RC' = 0 ] && grep -qxF '$line' '$T/out' && ! grep -q '^>> note: no execution mode' '$T/out'"
+      fi ;;
+    isolated)
+      if [ "$ISOLATED_OK" = 1 ]; then
+        check "$label: runs in isolated mode" sh -c "[ '$RC' = 0 ] && grep -qxF '$line' '$T/out' && ! grep -q '^>> note: no execution mode' '$T/out'"
+      else
+        check "$label: isolated mode, which the self-check stops here, after the mode line" \
+          sh -c "[ '$RC' = 3 ] && grep -qxF '$line' '$T/out' && ! grep -q '^>> note: no execution mode' '$T/out' && grep -q '$ISO_STOP' '$T/err' && [ ! -s '$T/calls' ]"
+      fi ;;
     none)
-      check "$label: none, exit 3 before anything is copied" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: the recorded execution mode is none (' '$T/err' && [ ! -s '$T/out' ] && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]" ;;
-    missing)
-      check "$label: no recorded mode, exit 3 before anything is copied" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: no recorded mode: audit_1/exec-mode is missing and AUDITOR_EXEC_MODE is not set' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]" ;;
+      check "$label: none, exit 3 before anything is copied" sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: the recorded execution mode is none (audit_1/exec-mode: ${file:-absent}; AUDITOR_EXEC_MODE: ${env:-unset}; $says): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ ! -s '$T/out' ] && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]" ;;
   esac
 done <<'CASES'
-native||native
-isolated||isolated
-|native|native
-|isolated|isolated
-native|isolated|isolated
-isolated|native|isolated
-none||none
-|none|none
-native|none|none
-none|native|none
-isolated|none|none
-||missing
+native|||native
+isolated|||isolated
+|native||native
+|isolated||isolated
+native|isolated||isolated
+isolated|native||isolated
+none|||none
+|none||none
+native|none||none
+none|native||none
+isolated|none||none
+|||native
+||1|isolated
+native||1|isolated
+|native|1|isolated
+none||1|none
+|none|1|none
 CASES
+# --mode must name the mode that holds; strict mode's isolated counts. An incident run with no recorded mode is
+# native too, and stops at the INCIDENTS.json it lacks.
+printf 'native\n' > "$WT/audit_1/exec-mode"
+for strict in "" 1; do
+  says="strict mode: off" mode=native
+  [ -z "$strict" ] || { says="strict mode: on (AUDITOR_STRICT=1)"; mode=isolated; }
+  for arg in isolated none native; do
+    [ "$arg" != "$mode" ] || continue
+    run "$TARGET" "$WT" ${strict:+AUDITOR_STRICT=1} -- build-sbf --run audit_1 --src . --mode "$arg"
+    check "--mode $arg where the mode is $mode${strict:+ (strict)}: exit 3 before anything is copied, naming the sources" \
+      sh -c "[ '$RC' = 3 ] && [ \"\$(cat '$T/err')\" = 'target: blocker: --mode is $arg, but the recorded execution mode is $mode (audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset; $says); the mode changes only when the human answers again — nothing was copied or built.' ] && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+  done
+  out=">> execution mode: $mode (the stricter of incident_1/exec-mode: absent; AUDITOR_EXEC_MODE: unset; $says; native when none is recorded)"
+  what=$mode
+  [ -n "$strict" ] || { out="$out
+$NOMODE"; what="$mode, with the note"; }
+  run "$TARGET" "$WT" ${strict:+AUDITOR_STRICT=1} -- cargo-test --run incident_1 --src .
+  check "an incident run with no recorded mode${strict:+ (strict)}: $what, then exit 3 at the INCIDENTS.json it lacks, nothing copied" \
+    sh -c "[ '$RC' = 3 ] && [ \"\$(cat '$T/out')\" = '$out' ] && grep -qxF \"target: blocker: incident_1/INCIDENTS.json is missing: an incident's code is built only once incident_1/INCIDENTS.json records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built.\" '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+done
+# A strict marker in a run directory of the working directory turns strict mode on, as AUDITOR_STRICT=1 does.
+printf 'strict\n' > "$WT/audit_1/strict"
+run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
+check "a strict marker in audit_1: isolated, the marker named as the source" \
+  grep -qxF '>> execution mode: isolated (the stricter of audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset; strict mode: on (audit_1/strict); native when none is recorded)' "$T/out"
+rm -f "$WT/audit_1/strict"
+# An AUDITOR_STRICT value that is neither on nor off is read as on, with a note from confine.sh: each runner
+# prints it on stdout, as its own notes, so that stderr holds at most the blocker or refusal line. In a working
+# directory of their own, so that what they keep numbers nothing the cases below count.
+MW=$T/maybewt
+mkdir -p "$MW/src"
+tgit init -q "$MW" && tgit -C "$MW" symbolic-ref HEAD refs/heads/main
+printf '[package]\nname = "maybe"\nversion = "0.1.0"\nedition = "2021"\n' > "$MW/Cargo.toml"
+printf '# generated\nversion = 3\n\n[[package]]\nname = "maybe"\nversion = "0.1.0"\n' > "$MW/Cargo.lock"
+printf 'pub fn m() {}\n' > "$MW/src/lib.rs"
+tgit -C "$MW" add -A && tgit -C "$MW" commit -qm maybe
+( cd "$MW" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$MW/audit_1/exec-mode"
+MAYBE=">> note: AUDITOR_STRICT is 'maybe', read as on"
+run "$TARGET" "$MW" AUDITOR_STRICT=maybe -- cargo-test --run audit_1 --src .
+check "AUDITOR_STRICT=maybe: target.sh prints confine.sh's note on stdout, none on stderr, and the mode is isolated" \
+  sh -c "grep -qxF \"$MAYBE\" '$T/out' && ! grep -q 'note:' '$T/err' && [ \"\$(grep -c . '$T/err')\" -le 1 ] && grep -q '^>> execution mode: isolated .*strict mode: on (AUDITOR_STRICT=maybe)' '$T/out'"
+run "$DEPS" "$MW" AUDITOR_STRICT=maybe -- cargo-audit --run audit_1 --manifest Cargo.lock --no-fetch
+check "... deps.sh too" sh -c "grep -qxF \"$MAYBE\" '$T/out' && ! grep -q 'note:' '$T/err' && [ \"\$(grep -c . '$T/err')\" -le 1 ]"
+run "$SAST" "$MW" AUDITOR_STRICT=maybe -- semgrep --run audit_1 --path src --ruleset p/rust
+check "... and sast.sh, before its last line" \
+  sh -c "grep -qxF \"$MAYBE\" '$T/out' && [ \"\$(sed -n '\$p' '$T/out')\" != \"$MAYBE\" ] && ! grep -q 'note:' '$T/err' && [ \"\$(grep -c . '$T/err')\" -le 1 ]"
 for bad in 'native extra' Native 'native native' ''; do
   printf '%s\n' "$bad" > "$WT/audit_1/exec-mode"
   run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
@@ -290,14 +369,31 @@ printf 'key\n' > "$CREDHOME/.ssh/id_rsa"
 run "$TARGET" "$WT" HOME="$CREDHOME" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
 check "isolated mode with a readable SSH key: exit 3, nothing copied, the kinds named and no path" \
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: isolated mode, but these are readable here: SSH keys (1)' '$T/err' && grep -q 'this is not the isolated runner (Rule 11a)' '$T/err' && ! grep -q 'id_rsa' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+# That blocker says what the human changes to build natively instead: what recorded isolated (Addendum L). In
+# strict mode isolated is the only way, and the blocker says so.
+LISTS=', and scripts/runner/probe.sh --only isolation lists them'
+NATIVE='. To build natively instead, on this machine, the human'
+check "... and says how to build natively instead: the human unsets AUDITOR_EXEC_MODE" \
+  sh -c "[ \"\$(grep -c . '$T/err')\" = 1 ] && grep -qF '$LISTS$NATIVE unsets AUDITOR_EXEC_MODE where Claude Code runs — nothing was copied or built.' '$T/err' && grep -q 'built\.\$' '$T/err'"
+printf 'isolated\n' > "$WT/audit_1/exec-mode"
+run "$TARGET" "$WT" HOME="$CREDHOME" -- cargo-test --run audit_1 --src .
+check "... an exec-mode of isolated: the human writes native to it" \
+  sh -c "[ '$RC' = 3 ] && grep -qF '$LISTS$NATIVE writes native to audit_1/exec-mode — nothing was copied or built.' '$T/err' && grep -q 'built\.\$' '$T/err'"
+run "$TARGET" "$WT" HOME="$CREDHOME" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
+check "... both: both" \
+  sh -c "[ '$RC' = 3 ] && grep -qF '$LISTS$NATIVE unsets AUDITOR_EXEC_MODE where Claude Code runs and writes native to audit_1/exec-mode — nothing was copied or built.' '$T/err' && grep -q 'built\.\$' '$T/err'"
+printf 'native\n' > "$WT/audit_1/exec-mode"
+run "$TARGET" "$WT" HOME="$CREDHOME" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+check "strict mode with a readable SSH key: exit 3, nothing copied, and the blocker says strict mode builds only on an isolated runner" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: isolated mode, but these are readable here: SSH keys (1)' '$T/err' && grep -qF '$LISTS. Strict mode is on (AUDITOR_STRICT=1), so target.sh builds only on an isolated runner (Rule 11f) — nothing was copied or built.' '$T/err' && ! grep -q 'To build natively' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
 run "$TARGET" "$WT" HOME="$CREDHOME" -- cargo-test --run audit_1 --src .
 check "native mode with a readable SSH key: a warning by kind and count, and the run goes on" \
   sh -c "[ '$RC' = 0 ] && grep -q '^>> warning: native mode, and these are readable here, to the code this run builds and runs too: SSH keys (1)' '$T/out' && ! grep -q 'id_rsa' '$T/out'"
 mkdir -p "$T/sys-nopy"
 for f in "$T/sys/"*; do [ "${f##*/}" = python3 ] || ln -s "$(readlink "$f")" "$T/sys-nopy/${f##*/}"; done
 run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
-check "isolated mode where the self-check cannot run (no python3): exit 3, nothing copied" \
-  sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: isolated mode, but the credential self-check could not finish (python3 is not on PATH)' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+check "isolated mode where the self-check cannot run (no python3): exit 3, nothing copied, and how to build natively instead" \
+  sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: isolated mode, but the credential self-check could not finish (python3 is not on PATH)' '$T/err' && grep -qF 'isolated runner (Rule 11a)$NATIVE unsets AUDITOR_EXEC_MODE where Claude Code runs — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
 check "native mode without python3: a blocker before anything is copied, since only python3 tells that incident_1 holds no INCIDENTS.json" \
   sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so target.sh cannot tell whether incident_1 holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
@@ -379,16 +475,39 @@ check "--package builds that member, and TOOLS_VERSION goes to the install and t
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src . --package nope
 check "a --package the workspace does not have: exit 3, nothing built" \
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: the workspace at the top of the copy has no member package nope' '$T/err' && ! grep -q '^== cargo build-sbf --skip' '$T/calls'"
-# A cargo build-sbf without --install-only, --skip-tools-install and --offline: natively the run stops, since
-# the build would get the real HOME and the network; in isolated mode the build runs with the real HOME and the
-# proxy variables, as templates/poc/run.sh builds each arm then, and a note says so.
+# A cargo build-sbf without --install-only, --skip-tools-install and --offline. Natively the build runs without
+# those options, offline in the throwaway HOME still, so its code gets neither the real HOME nor the network,
+# with the platform tools already in ~/.cache/solana: the version its --version names (the stand-in says
+# platform-tools v1.43), or TOOLS_VERSION. When they are not there the run stops before the build and names the
+# install. In isolated mode the build runs with the real HOME and the proxy variables, as templates/poc/run.sh
+# builds each arm then, and a note says so.
 settings FAKE_SBF_HELP=old
+LACKS='this cargo build-sbf has no --install-only, --skip-tools-install or --offline, so in native mode it builds offline in the throwaway HOME, with only the platform tools already in ~/.cache/solana'
+run "$TARGET" "$WT" HTTPS_PROXY="$PROXY" -- build-sbf --run audit_1 --src .
+check "natively, such a cargo build-sbf whose platform tools are not in ~/.cache/solana: exit 3 before the build, naming the install" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: $LACKS, and platform-tools v1.43 is not there; install it once outside the audit (cargo build-sbf --tools-version v1.43 in any program crate downloads it), then run this again; log audit_1/exec/build-sbf-[0-9]*[.]log\$' '$T/err' && ! grep -q '^== cargo build-sbf --install' '$T/calls' && ! grep -q '^== cargo build-sbf --sbf' '$T/calls'"
+mkdir -p "$CLEANHOME/.cache/solana/v1.43/platform-tools"
+OLDNAT='>> note: this cargo build-sbf has no --install-only, --skip-tools-install or --offline: in native mode the build runs offline in the throwaway HOME, with platform-tools v1.43 from ~/.cache/solana'
+run "$TARGET" "$WT" HTTPS_PROXY="$PROXY" -- build-sbf --run audit_1 --src .
+check "... with them there: exit 0, the .so kept, and a note names native mode" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '$OLDNAT' '$T/out' && sed -n '\$p' '$T/out' | grep -q '^>> build-sbf: ok (exit 0); log audit_1/exec/build-sbf-[0-9]*[.]log; 1 .so in audit_1/exec/build-sbf-[0-9]*/: demo.so\$'"
+check "... no install, the version asked, and the build without --skip-tools-install and --offline" calls_are \
+  "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --version|cargo build-sbf --sbf-out-dir $S/out|"
+check "... in the copy, in the throwaway HOME with its keypair and that version's tools linked from the real cache, not the cache itself, offline, without the proxy" \
+  sh -c "awk '/^== cargo build-sbf --sbf-out-dir/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'cwd: $S/src' '$T/blk' && grep -qxF 'home: $S/home' '$T/blk' && grep -qxF 'keypair: yes' '$T/blk' && grep -qxF 'tools: ' '$T/blk' && grep -qxF 'tool-links: v1.43 -> $CLEANHOME/.cache/solana/v1.43 ' '$T/blk' && grep -qxF 'env: CARGO_NET_OFFLINE=true' '$T/blk' && ! grep -q '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]=' '$T/blk'"
+rm -rf "$CLEANHOME/.cache"
+mkdir -p "$CLEANHOME/.cache/solana/v1.51/platform-tools"
+run "$TARGET" "$WT" TOOLS_VERSION=v1.51 HTTPS_PROXY="$PROXY" -- anchor-build --run audit_1 --src . --program demo
+check "natively, anchor-build with that cargo build-sbf and TOOLS_VERSION's tools there: anchor build without those options, TOOLS_VERSION after --, its version not asked" calls_are \
+  "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|anchor build -p demo -- --tools-version v1.51|"
+check "... offline in the throwaway HOME, that version's tools linked, without the proxy, and the note" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '>> note: this cargo build-sbf has no --install-only, --skip-tools-install or --offline: in native mode the build runs offline in the throwaway HOME, with platform-tools v1.51 from ~/.cache/solana' '$T/out' && awk '/^== anchor build/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'home: $S/home' '$T/blk' && grep -qxF 'tool-links: v1.51 -> $CLEANHOME/.cache/solana/v1.51 ' '$T/blk' && grep -qxF 'env: CARGO_NET_OFFLINE=true' '$T/blk' && ! grep -q '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]=' '$T/blk'"
+rm -rf "$CLEANHOME/.cache"
+settings FAKE_SBF_HELP=old FAKE_SBF_TOOLS=none
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
-check "natively, a cargo build-sbf without --install-only and --skip-tools-install: exit 3, nothing installed or built" \
-  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: this cargo build-sbf has no --install-only, --skip-tools-install or --offline, which target.sh needs in native mode to keep the real HOME and the proxy variables away from the build; isolated mode builds with them; log ' '$T/err' && ! grep -q '^== cargo build-sbf --install' '$T/calls' && ! grep -q '^== cargo build-sbf --s' '$T/calls'"
-run "$TARGET" "$WT" -- anchor-build --run audit_1 --src .
-check "... and natively anchor-build stops there too: exit 3, anchor never runs" \
-  sh -c "[ '$RC' = 3 ] && grep -q 'has no --install-only, --skip-tools-install or --offline, which target.sh needs in native mode' '$T/err' && ! grep -q '^== anchor' '$T/calls' && ! grep -q '^== cargo build-sbf --install' '$T/calls'"
+check "natively, such a cargo build-sbf whose --version names no platform tools: exit 3 before the build, asking for TOOLS_VERSION" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: $LACKS, and its --version names no platform tools version to look for there; set TOOLS_VERSION to the one it uses; log ' '$T/err' && ! grep -q '^== cargo build-sbf --sbf' '$T/calls'"
+settings FAKE_SBF_HELP=old
 if [ "$ISOLATED_OK" = 1 ]; then
   OLDSBF='>> note: this cargo build-sbf has no --install-only, --skip-tools-install or --offline: in isolated mode the build runs with the real HOME and the proxy variables'
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated HTTPS_PROXY="$PROXY" -- build-sbf --run audit_1 --src .
@@ -400,9 +519,12 @@ if [ "$ISOLATED_OK" = 1 ]; then
     sh -c "awk '/^== cargo build-sbf --sbf-out-dir/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'cwd: $S/src' '$T/blk' && grep -qxF 'home: $CLEANHOME' '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk' && ! grep -q '^env: CARGO_NET_OFFLINE=' '$T/blk'"
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated TOOLS_VERSION=v1.54 HTTPS_PROXY="$PROXY" -- anchor-build --run audit_1 --src . --program demo
   check "isolated mode, anchor-build with that cargo build-sbf: anchor build without those options, TOOLS_VERSION after --" calls_are \
-    "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|anchor build --ignore-keys -p demo -- --tools-version v1.54|"
+    "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|anchor build -p demo -- --tools-version v1.54|"
   check "... with the real HOME and the proxy, and the note" \
     sh -c "[ '$RC' = 0 ] && grep -qxF '$OLDSBF' '$T/out' && awk '/^== anchor build/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'home: $CLEANHOME' '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk'"
+  run "$TARGET" "$WT" AUDITOR_STRICT=1 HTTPS_PROXY="$PROXY" -- build-sbf --run audit_1 --src .
+  check "strict mode, which is isolated, builds the same way, with the same note" \
+    sh -c "[ '$RC' = 0 ] && grep -qxF '$OLDSBF' '$T/out' && awk '/^== cargo build-sbf --sbf-out-dir/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'home: $CLEANHOME' '$T/blk'"
 fi
 settings FAKE_INSTALL_RC=1
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
@@ -465,13 +587,28 @@ run "$TARGET" "$WT" -- clippy --run audit_1 --src .
 check "clippy that is not installed: exit 3" sh -c "[ '$RC' = 3 ] && grep -q 'clippy is not installed for the pinned toolchain' '$T/err' && ! grep -q '^== cargo clippy --offline' '$T/calls'"
 settings
 run "$TARGET" "$WT" -- anchor-build --run audit_1 --src . --program demo
-check "anchor-build: the downloads, then anchor build --ignore-keys -p <program> -- --skip-tools-install --offline" \
-  calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --install-only|anchor build --ignore-keys -p demo -- --skip-tools-install --offline|"
+check "anchor-build: the downloads, anchor's own options asked, then anchor build -p <program> -- --skip-tools-install --offline (an anchor whose build has neither --ignore-keys nor --no-idl)" \
+  calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|cargo build-sbf --install-only|anchor build -p demo -- --skip-tools-install --offline|"
 check "... and the program's .so is kept from target/deploy" sh -c "grep -q '1 .so in audit_1/exec/anchor-build-[0-9]*/: demo.so' '$T/out'"
 check "... the build in the throwaway HOME, with its keypair" in_blocks '^== anchor build' '^keypair: yes$'
+check "... and with no ~/.avm, no AVM_HOME and no .avm link" sh -c "awk '/^== anchor build/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'avm: unset' '$T/blk' && grep -qxF 'avm-link: ' '$T/blk'"
+# avm's anchor shim finds its releases through AVM_HOME, which every step gets when ~/.avm exists (the K row
+# keeps no credential from it), and avm releases before AVM_HOME through the .avm the throwaway HOME links.
+AVMHOME=$T/home-avm
+mkdir -p "$AVMHOME/.avm/bin"
+run "$TARGET" "$WT" HOME="$AVMHOME" -- anchor-test --run audit_1 --src .
+check "anchor-test with ~/.avm: every anchor call (its two help calls, anchor build and anchor test) gets AVM_HOME, and the throwaway HOME links .avm" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(grep -c '^== anchor ' '$T/calls')\" = 4 ] && [ \"\$(grep -cxF 'avm: $AVMHOME/.avm' '$T/calls')\" = 4 ] && [ \"\$(grep -cxF 'avm-link: $AVMHOME/.avm' '$T/calls')\" = 4 ] && grep -qxF 'home: $S/home' '$T/calls'"
+check "... and so does every other step, with nothing written in ~/.avm" \
+  sh -c "[ \"\$(awk '/^== /{n++} /^env: AVM_HOME=/{a++} END{print (n == a)}' '$T/calls')\" = 1 ] && [ -z \"\$(ls -A '$AVMHOME/.avm/bin')\" ]"
+mkdir -p "$T/avm-own"
+run "$TARGET" "$WT" HOME="$AVMHOME" AVM_HOME="$T/avm-own" -- anchor-build --run audit_1 --src .
+check "... an AVM_HOME of the caller's that exists wins" in_blocks '^== anchor build' "^avm: $T/avm-own\$"
+run "$TARGET" "$WT" AVM_HOME="$T/no-such-avm" -- anchor-build --run audit_1 --src .
+check "... and one that does not exist is not passed" in_blocks '^== anchor build' '^avm: unset$'
 run "$TARGET" "$WT" HTTPS_PROXY="$PROXY" -- anchor-test --run audit_1 --src .
 check "anchor-test: npm ci --ignore-scripts first, then the build, then anchor test against no validator and no deploy" \
-  calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --install-only|npm ci --ignore-scripts --no-audit --no-fund|anchor build --ignore-keys -- --skip-tools-install --offline|anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet --provider.wallet $S/home/.config/solana/id.json|"
+  calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|cargo build-sbf --install-only|npm ci --ignore-scripts --no-audit --no-fund|anchor build -- --skip-tools-install --offline|anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet --provider.wallet $S/home/.config/solana/id.json|"
 check "... npm ci gets the proxy, its own empty config files and the git on PATH" \
   sh -c "awk '/^== npm ci/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk' && grep -qxF 'env: npm_config_userconfig=$S/npm/userconfig' '$T/blk' && grep -qxF 'env: npm_config_globalconfig=$S/npm/globalconfig' '$T/blk' && grep -qxF 'env: npm_config_git=$T/sys/git' '$T/blk' && grep -qxF 'env: npm_config_ignore_scripts=true' '$T/blk' && grep -qxF 'userconfig-bytes: 0' '$T/blk'"
 check "... and NODE_OPTIONS and npm's node-options preload target.sh's module into npm" \
@@ -486,6 +623,56 @@ check "anchor-test where the lockfile is yarn's: no install, and a note says so"
 settings FAKE_ANCHOR_TEST_RC=1
 run "$TARGET" "$WT" -- anchor-test --run audit_1 --src .
 check "anchor-test whose tests fail: exit 1" sh -c "[ '$RC' = 1 ] && grep -q '^>> anchor-test: anchor test failed (exit 1)' '$T/out'"
+settings
+# Anchor 0.30 and later build the IDL with cargo test, which would get the build-sbf options after -- and the
+# RUSTUP_TOOLCHAIN pin (anchor-cli 1.1 and 1.2 then try to install the toolchain and run "cargo +{toolchain}"):
+# where anchor build --help lists --no-idl and anchor idl build --help --out-ts, the build takes --no-idl, and
+# anchor-test builds the IDL in a step of its own. Anchor 1.2 asks cargo build-sbf for platform tools of its own
+# (v1.57, with --arch v3): target.sh learns which from one anchor build with a recording cargo-build-sbf first
+# on PATH, and installs those.
+settings FAKE_ANCHOR=1.2 FAKE_ANCHOR_TOOLS=v1.57
+run "$TARGET" "$WT" -- anchor-build --run audit_1 --src . --program demo
+check "Anchor 1.2: the platform tools it asks for learned and installed, then anchor build --no-idl" calls_are \
+  "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|anchor build --ignore-keys --no-idl -p demo -- --skip-tools-install --offline|cargo build-sbf --install-only --tools-version v1.57|anchor build --ignore-keys --no-idl -p demo -- --skip-tools-install --offline|cargo-build-sbf build-sbf --tools-version v1.57 --arch v3 --skip-tools-install --offline|"
+check "... exit 0, the .so kept, and the learning run built nothing (its cargo-build-sbf only recorded)" \
+  sh -c "[ '$RC' = 0 ] && grep -q '1 .so in audit_1/exec/anchor-build-[0-9]*/: demo.so' '$T/out' && [ \"\$(grep -c '^== cargo-build-sbf ' '$T/calls')\" = 1 ]"
+run "$TARGET" "$WT" TOOLS_VERSION=v1.58 -- anchor-build --run audit_1 --src . --program demo
+check "... with TOOLS_VERSION: anchor build's own --tools-version, before --, and nothing learned" calls_are \
+  "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|cargo build-sbf --install-only --tools-version v1.58|anchor build --ignore-keys --no-idl --tools-version v1.58 -p demo -- --skip-tools-install --offline|cargo-build-sbf build-sbf --tools-version v1.58 --arch v3 --skip-tools-install --offline|"
+settings FAKE_ANCHOR=1.2 FAKE_ANCHOR_TOOLS=v1.57 FAKE_SBF_NOCORE=1
+run "$TARGET" "$WT" -- anchor-build --run audit_1 --src .
+check "... platform tools that lack the program's target (no core crate for it): exit 3, naming TOOLS_VERSION" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: anchor build found no core crate for the program.s target: the platform tools it built with (v1.57) lack that target; set TOOLS_VERSION to the platform tools version this Anchor asks for (Anchor 1.2 asks for v1.57) and run this again; log ' '$T/err'"
+settings FAKE_ANCHOR=1.1
+run "$TARGET" "$WT" TOOLS_VERSION=v1.58 -- anchor-build --run audit_1 --src . --program demo
+check "Anchor 1.1 with TOOLS_VERSION: --no-idl, and TOOLS_VERSION after --, since its anchor build has no --tools-version" calls_are \
+  "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|cargo build-sbf --install-only --tools-version v1.58|anchor build --ignore-keys --no-idl -p demo -- --skip-tools-install --offline --tools-version v1.58|"
+# Anchor 0.31's anchor build has --no-idl but no --ignore-keys, which it would reject (as anchor-cli 0.31.1 does,
+# with exit 2): neither the learning run nor the build gets it, and anchor-test still builds the IDL.
+settings FAKE_ANCHOR=0.31
+run "$TARGET" "$WT" -- anchor-test --run audit_1 --src .
+check "Anchor 0.31: no --ignore-keys anywhere, --no-idl, then anchor idl build and anchor test" calls_are \
+  "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|anchor build --no-idl -- --skip-tools-install --offline|cargo build-sbf --install-only|npm ci --ignore-scripts --no-audit --no-fund|anchor build --no-idl -- --skip-tools-install --offline|anchor idl build -p demo -o $S/src/target/idl/demo.json -t $S/src/target/types/demo.ts|anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet --provider.wallet $S/home/.config/solana/id.json|"
+settings FAKE_ANCHOR=1.2 FAKE_ANCHOR_TOOLS=v1.57
+run "$TARGET" "$WT" HTTPS_PROXY="$PROXY" -- anchor-test --run audit_1 --src .
+check "anchor-test, Anchor 1.2: anchor build --no-idl, anchor idl build for the program built, then anchor test" calls_are \
+  "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|anchor build --help|anchor idl build --help|cargo build-sbf --help|anchor build --ignore-keys --no-idl -- --skip-tools-install --offline|cargo build-sbf --install-only --tools-version v1.57|npm ci --ignore-scripts --no-audit --no-fund|anchor build --ignore-keys --no-idl -- --skip-tools-install --offline|cargo-build-sbf build-sbf --tools-version v1.57 --arch v3 --skip-tools-install --offline|anchor idl build -p demo -o $S/src/target/idl/demo.json -t $S/src/target/types/demo.ts|anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet --provider.wallet $S/home/.config/solana/id.json|"
+check "... exit 0, and anchor idl build runs offline, without RUSTUP_TOOLCHAIN and without the proxy" \
+  sh -c "[ '$RC' = 0 ] && awk '/^== anchor idl build -p/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: CARGO_NET_OFFLINE=true' '$T/blk' && ! grep -q '^env: RUSTUP_TOOLCHAIN=' '$T/blk' && ! grep -q '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]=' '$T/blk'"
+check "... the pin is in a rust-toolchain.toml target.sh wrote over the copy's own, which named a path" \
+  sh -c "awk '/^== anchor idl build -p/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'toolchain-files: ./rust-toolchain.toml ' '$T/blk' && grep -qxF 'toolchain-top: [toolchain] channel = \"stable-fake\" ' '$T/blk'"
+check "... while anchor build and anchor test keep RUSTUP_TOOLCHAIN" \
+  sh -c "awk '/^== anchor (build --ignore-keys|test)/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && [ \"\$(grep -cxF 'env: RUSTUP_TOOLCHAIN=stable-fake' '$T/blk')\" = 3 ]"
+# Every rust-toolchain file of the copy goes before that step, nested ones too.
+IW=$T/idlwt
+tgit clone -q "$WT" "$IW" 2>/dev/null
+printf '[toolchain]\npath = "/nonexistent/nested"\n' > "$IW/programs/demo/rust-toolchain.toml"
+printf 'nightly\n' > "$IW/programs/rust-toolchain"
+tgit -C "$IW" add -A && tgit -C "$IW" commit -qm nested
+( cd "$IW" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$IW/audit_1/exec-mode"
+run "$TARGET" "$IW" -- anchor-test --run audit_1 --src .
+check "... a copy with nested rust-toolchain files: all of them gone, and only target.sh's at the top" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF 'toolchain-files: ./rust-toolchain.toml ' '$T/calls' && grep -qxF 'toolchain-top: [toolchain] channel = \"stable-fake\" ' '$T/calls'"
 settings
 run "$TARGET" "$WT" HTTPS_PROXY="$PROXY" -- npm-ci --run audit_1 --src .
 check "npm-ci: npm ci --ignore-scripts --no-audit --no-fund in the copy, and no Rust toolchain asked for" \
@@ -542,6 +729,25 @@ check "npm-ci --dir app, a workspace of the top: npm ci runs in app and finds no
 run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" HTTPS_PROXY="$PROXY" -- anchor-test --run audit_1 --src .
 check "anchor-test's npm ci finds no .npmrc of the copy either" \
   sh -c "[ '$RC' = 0 ] && grep -q '^== npm ci ' '$T/calls' && ! grep -q '^npmrc: [^n]' '$T/calls' && grep -qxF '$NOTE .npmrc' '$T/out'"
+# Outside strict mode the registry= and @<scope>:registry= lines of a .npmrc whose value is an https URL with no
+# space and no $ stay for npm ci, with a note; every other line goes (the token's, one naming ${HOME}, a plain
+# http one), and so does a .npmrc with no such line. $T/npmkeep is not a repository: its top and app/ each hold
+# a package.json, a lock and a .npmrc.
+NK=$T/npmkeep
+mkdir -p "$NK/app"
+for d in "$NK" "$NK/app"; do printf '{\n  "name": "nk",\n  "version": "1.0.0"\n}\n' > "$d/package.json"; cp "$WT/package-lock.json" "$d/"; done
+printf 'registry = https://registry.example.com/npm/\n@acme:registry=https://npm.acme.dev/\n//registry.example.com/:_authToken=canary-npmrc-token\nalways-auth=true\n@x:registry=https://x.invalid/${HOME}/\nregistry=http://plain.invalid/\n' > "$NK/.npmrc"
+printf 'fund=false\n' > "$NK/app/.npmrc"
+( cd "$NK" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$NK/audit_1/exec-mode"
+run "$TARGET" "$NK" PATH="$T/npmfake:$FPATH" -- npm-ci --run audit_1 --src . --dir app
+check "npm-ci where .npmrc names https registries: npm ci finds only those lines, as key=value, and app/.npmrc is gone" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF 'npmrc: .npmrc: registry=https://registry.example.com/npm/|@acme:registry=https://npm.acme.dev/|' '$T/calls' && [ \"\$(grep -c '^npmrc: ' '$T/calls')\" = 1 ] && ! grep -q 'canary-npmrc-token' '$T/calls'"
+check "... a note names the lines kept, and today's note the .npmrc removed" \
+  sh -c "grep -qxF '>> note: npm ci takes only the https registry lines of .npmrc from the code under audit: target.sh kept registry=https://registry.example.com/npm/, @acme:registry=https://npm.acme.dev/, and removed every other line' '$T/out' && grep -qxF '$NOTE app/.npmrc' '$T/out'"
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$NK" PATH="$T/npmfake:$FPATH" AUDITOR_STRICT=1 -- npm-ci --run audit_1 --src . --dir app
+  check "... strict mode keeps none of them" sh -c "[ '$RC' = 0 ] && grep -qxF 'npmrc: none' '$T/calls' && grep -qxF '$NOTE .npmrc, app/.npmrc' '$T/out'"
+fi
 mkdir -p "$T/tmp-q\"uote"
 run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" TMPDIR="$T/tmp-q\"uote" -- npm-ci --run audit_1 --src .
 check "a scratch directory whose path holds a double quote, which NODE_OPTIONS cannot quote: exit 3, npm does not run" \
@@ -747,32 +953,159 @@ run "$TARGET" "$WT" -- cargo-test --run audit_1 --src programs
 check "a directory inside a repository, not its top, is copied as files" \
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: no Cargo.toml at the top of the copy' '$T/err'"
 settings
-# A repository whose commit has a submodule.
+# A repository whose commit has a submodule, which target.sh never fetches: strict mode stops there; otherwise
+# a note says so, and the build sees the empty directory a checkout leaves.
 SM=$T/subwt
 tgit init -q "$SM" && tgit -C "$SM" symbolic-ref HEAD refs/heads/main
 printf '[package]\nname = "sm"\nversion = "0.1.0"\n' > "$SM/Cargo.toml"
 tgit -C "$SM" add Cargo.toml
 tgit -C "$SM" update-index --add --cacheinfo "160000,$V1,vendor/sub"
 tgit -C "$SM" commit -qm 'with a submodule'
+SMSHA=$(tgit -C "$SM" rev-parse HEAD)
 ( cd "$SM" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$SM/audit_1/exec-mode"
+SUBNOTE=">> note: $SMSHA has submodules (vendor/sub), which target.sh never fetches: the build sees them as empty directories; strict mode stops here (Rule 11f)"
+settings FAKE_LIST=1
 run "$TARGET" "$SM" -- cargo-test --run audit_1 --src .
-check "a revision with a submodule: exit 3, nothing fetched or built" \
-  sh -c "[ '$RC' = 3 ] && grep -q 'has submodules (vendor/sub), and target.sh never fetches them' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
+check "a revision with a submodule: exit 0, a note names it, and the build sees it as an empty directory" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '$SUBNOTE' '$T/out' && grep -q '^listing: .* ./vendor/sub \$' '$T/calls'"
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$SM" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+  check "strict mode, the same revision: exit 3, nothing fetched or built" \
+    sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: $SMSHA has submodules (vendor/sub), and target.sh never fetches them; log ' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
+fi
+settings
 # A partial clone.
 PC=$T/partwt
 tgit clone -q --no-local "$WT" "$PC" 2>/dev/null
 tgit -C "$PC" config extensions.partialClone origin
 ( cd "$PC" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$PC/audit_1/exec-mode"
+# Outside strict mode, when the revision's tree and every object in it are there (git rev-list --objects
+# --missing=print, fetching nothing), the copy comes from git's read-only plumbing, with a note; strict mode
+# stops as today.
+settings FAKE_SHOW=programs/demo/src/lib.rs
 run "$TARGET" "$PC" -- cargo-test --run audit_1 --src .
-check "a partial clone: exit 3 before anything is copied" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: . is a partial clone' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
-# git without the May-2024 clone fixes.
+PCSHA=$(tgit -C "$PC" rev-parse HEAD)
+check "a partial clone whose revision has every file: exit 0, the note, and the build sees HEAD (v2)" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF \">> note: --src . is a partial clone, and every file of $PCSHA is in it, so target.sh copies the tracked files of the commit with git's read-only plumbing, fetching nothing; strict mode stops here (Rule 11f)\" '$T/out' && grep -qxF 'show: // v2' '$T/calls'"
+settings
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$PC" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+  check "... strict mode: exit 3 before anything is copied, as today" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: . is a partial clone: a copy would lack the objects it never fetched' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+fi
+# A blobless clone with nothing checked out lacks the files of its revision: a blocker in both modes.
+PB=$T/blobless
+tgit clone -q --no-local --bare "$WT" "$T/blobless-src.git" 2>/dev/null && tgit -C "$T/blobless-src.git" config uploadpack.allowFilter true
+tgit clone -q --no-checkout --filter=blob:none "file://$T/blobless-src.git" "$PB" 2>/dev/null
+( cd "$PB" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$PB/audit_1/exec-mode"
+run "$TARGET" "$PB" -- cargo-test --run audit_1 --src .
+check "a partial clone that lacks files of its revision: exit 3, nothing fetched or copied" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: . is a partial clone that lacks files of [0-9a-f]* it never fetched, and nothing is fetched (Rule 11c) — nothing was copied or built.\$' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+# git without the May-2024 clone fixes never clones the source: strict mode stops; otherwise target.sh writes the
+# tracked files of the commit itself, from git ls-tree and git cat-file --batch, and a note says so. The
+# stand-in names its version and logs every git command it runs.
 mkdir -p "$T/oldgit"
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo "git version 2.39.3"; exit 0; }\nexec %s "$@"\n' "$(command -v git)" > "$T/oldgit/git"
+cat > "$T/oldgit/git" <<SH
+#!/bin/sh
+printf '%s\n' "\$*" >> "$T/oldgit.log"
+[ "\$1" = --version ] && { echo "git version 2.39.3"; exit 0; }
+exec $(command -v git) "\$@"
+SH
 chmod +x "$T/oldgit/git"
+OLDGIT=">> note: this git reports 2.39.3, older than 2.39.4, that line's May-2024 fixed release, so target.sh copies the tracked files of the commit with git's read-only plumbing instead of cloning; strict mode stops here (Rule 11f)"
+: > "$T/oldgit.log"
+settings FAKE_SHOW=programs/demo/src/lib.rs FAKE_LIST=1
 run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src .
-check "git 2.39.3 cannot clone the source: exit 3" sh -c "[ '$RC' = 3 ] && grep -q 'cloning --src needs git with the May-2024 clone fixes' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+check "git 2.39.3: exit 0, the note, and the build sees the committed HEAD (v2)" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF \"$OLDGIT\" '$T/out' && grep -qxF 'show: // v2' '$T/calls'"
+check "... git ran ls-tree and cat-file --batch, and never clone" \
+  sh -c "grep -q ' ls-tree -r -z --full-tree ' '$T/oldgit.log' && grep -q ' cat-file --batch\$' '$T/oldgit.log' && ! grep -qw clone '$T/oldgit.log'"
+check "... the copy holds the tracked files, no untracked one or run directory, in a repository git init made" \
+  sh -c "grep -q '^listing: .* ./Cargo.toml .* ./app/yarn.lock .* ./programs/demo/src/lib.rs ./rust-toolchain.toml ./src ./src/lib.rs \$' '$T/calls' && ! grep -qE '^listing: .* [.]/(audit_1|incident_1|linkdir|Cargo[.]lock|sub|big|[.]npmrc)[ /]' '$T/calls' && grep -q '^listing: .* ./.git/HEAD ' '$T/calls' && ! grep -q '^listing: .* ./.git/hooks' '$T/calls'"
+check "... and no program or hook the repository's config names ran" test -z "$(ls -A "$T/marks")"
+mkdir -p "$T/oldgit230"
+sed 's/git version 2[.]39[.]3/git version 2.30.1/' "$T/oldgit/git" > "$T/oldgit230/git" && chmod +x "$T/oldgit230/git"
+run "$TARGET" "$WT" PATH="$T/oldgit230:$FPATH" -- cargo-test --run audit_1 --src .
+check "... git 2.30.1, a line before 2.39: the note says older than 2.39.4, the oldest fixed release" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^>> note: this git reports 2.30.1, older than 2.39.4, the oldest May-2024 fixed release, so target.sh copies ' '$T/out'"
+run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src . --rev "$V1"
+check "... --rev checks that commit out" sh -c "[ '$RC' = 0 ] && grep -qxF 'show: // v1' '$T/calls'"
+run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src . --patch audit_1/patches/F-1.patch
+check "... --patch is applied with git apply" sh -c "[ '$RC' = 0 ] && grep -qxF 'show: // patched' '$T/calls'"
+run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src . --patch audit_1/patches/F-3.patch
+check "... a patch that does not apply: exit 3, nothing built" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: audit_1/patches/F-3.patch does not apply to $V2; log ' '$T/err' && ! grep -q '^== cargo test' '$T/calls'"
+run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src audit_1/src.git
+check "... and --src may be the copy git-ro.sh copy made" sh -c "[ '$RC' = 0 ] && grep -qxF 'show: // v2' '$T/calls'"
+run "$TARGET" "$SM" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src .
+check "... a revision with a submodule gets the note, and the empty directory" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '$SUBNOTE' '$T/out' && grep -q '^listing: .* ./vendor/sub \$' '$T/calls'"
+# A commit whose tree holds a path git checkout never writes, sub/.GIT/config here (git mktree takes it).
+CR=$T/craftwt
+tgit init -q "$CR" && tgit -C "$CR" symbolic-ref HEAD refs/heads/main
+printf '[package]\nname = "cr"\nversion = "0.1.0"\n' > "$CR/Cargo.toml"
+tgit -C "$CR" add Cargo.toml && tgit -C "$CR" commit -qm plain
+b=$(printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n' "$T" | tgit -C "$CR" hash-object -w --stdin)
+t=$(printf '100644 blob %s\tconfig\n' "$b" | tgit -C "$CR" mktree)
+t=$(printf '040000 tree %s\t.GIT\n' "$t" | tgit -C "$CR" mktree)
+t=$( { tgit -C "$CR" ls-tree HEAD; printf '040000 tree %s\tsub\n' "$t"; } | tgit -C "$CR" mktree)
+c=$(tgit -C "$CR" commit-tree "$t" -p HEAD -m crafted) && tgit -C "$CR" update-ref refs/heads/main "$c"
+( cd "$CR" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$CR/audit_1/exec-mode"
+run "$TARGET" "$CR" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src .
+check "... a commit whose tree holds sub/.GIT/config: exit 3, nothing written or built" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: $c holds a path git checkout does not write: sub/.GIT/config; log ' '$T/err' && ! grep -q '^== cargo' '$T/calls' && [ -z \"\$(ls -A '$T/marks')\" ]"
+settings
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$WT" PATH="$T/oldgit:$FPATH" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+  check "strict mode, git 2.39.3: the source is not cloned, exit 3, nothing copied" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: cloning --src needs git with the May-2024 clone fixes: 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, 2.45.1, or 2.46 or later — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+fi
 run "$TARGET" "$P" PATH="$T/oldgit:$FPATH" -- cargo-test --run audit_1 --src .
-check "... while a source that is copied file by file needs no clone" test "$RC" = 0
+check "... while a source that is copied file by file needs no clone" sh -c "[ '$RC' = 0 ] && ! grep -q 'May-2024' '$T/out'"
+# A source another user owns (git's own test knob stands for the other user): the clone keeps git's ownership
+# check on (no global config, in both modes), so in default mode target.sh copies such a source through the
+# plumbing instead, with a note, since a copy never runs the source repository's configured code, and strict
+# mode refuses it. A source this user owns is cloned as before. Each stand-in logs every git command it runs.
+REALGIT=$(command -v git)
+mkdir -p "$T/owngit" "$T/othergit"
+printf '#!/bin/sh\nprintf "%%s|%%s\\n" "${GIT_CONFIG_GLOBAL-unset}" "$*" >> "%s/owngit.log"\nexec "%s" "$@"\n' "$T" "$REALGIT" > "$T/owngit/git"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/othergit.log"\nGIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec "%s" "$@"\n' "$T" "$REALGIT" > "$T/othergit/git"
+chmod +x "$T/owngit/git" "$T/othergit/git"
+OWNNOTE=">> note: --src . belongs to another user, so git would not clone it with its ownership check on; target.sh copies the tracked files of the commit with git's read-only plumbing instead, which runs nothing the repository's config names; strict mode refuses it (Rule 11f)"
+: > "$T/owngit.log"
+settings FAKE_SHOW=programs/demo/src/lib.rs
+run "$TARGET" "$WT" PATH="$T/owngit:$FPATH" -- cargo-test --run audit_1 --src .
+check "a source this user owns: cloned as before, the clone with no global config, so git's ownership check stays on" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF 'show: // v2' '$T/calls' && grep -q '^/dev/null|.* clone --no-local --no-checkout ' '$T/owngit.log' && ! grep -q 'another user' '$T/out'"
+check "... while target.sh's own reads in default mode take the safe-directory file" \
+  grep -q '/scripts/lib/safe-directory[.]gitconfig|.* rev-parse ' "$T/owngit.log"
+: > "$T/othergit.log"
+run "$TARGET" "$WT" PATH="$T/othergit:$FPATH" -- cargo-test --run audit_1 --src .
+check "a source another user owns: exit 0, the note, and the build sees the committed HEAD (v2)" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF \"$OWNNOTE\" '$T/out' && grep -qxF 'show: // v2' '$T/calls'"
+check "... git ran ls-tree and cat-file --batch, and never clone" \
+  sh -c "grep -q ' ls-tree -r -z --full-tree ' '$T/othergit.log' && grep -q ' cat-file --batch\$' '$T/othergit.log' && ! grep -qw clone '$T/othergit.log'"
+check "... and no program or hook the repository's config names ran" test -z "$(ls -A "$T/marks")"
+# A source that borrows objects (git clone --shared writes objects/info/alternates). Outside strict mode
+# confine_repo takes it with a note, which prints on stdout as target.sh's own notes do, and the clone reads
+# the borrowed objects; strict mode refuses it, as today. (The default-mode case needs Lane 1's confine_repo,
+# lane/l1-core a36bdba.)
+AL=$T/alwt
+tgit clone -q --shared "$WT" "$AL" 2>/dev/null
+( cd "$AL" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$AL/audit_1/exec-mode"
+settings FAKE_SHOW=programs/demo/src/lib.rs
+run "$TARGET" "$AL" -- cargo-test --run audit_1 --src .
+check "a --src that borrows objects: exit 0, confine.sh's note on stdout and none on stderr, and the build sees HEAD (v2)" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '>> note: --src borrows objects from another repository (objects/info/alternates), so its history is read from there too; strict mode refuses this (Rule 11f)' '$T/out' && [ ! -s '$T/err' ] && grep -qxF 'show: // v2' '$T/calls'"
+run "$TARGET" "$AL" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+check "... strict mode refuses it, as today, before anything is copied" \
+  sh -c "[ '$RC' = 64 ] && [ \"\$(cat '$T/err')\" = 'target: refused: --src borrows objects from another repository (objects/info/alternates); audit a full copy: .' ] && [ -z \"\$(ls -A '$NT')\" ]"
+settings
+# Strict mode reads nothing of a checkout another user owns, so today's refusal comes at its first read, the
+# check that git tracks nothing under the run directory.
+run "$TARGET" "$WT" PATH="$T/othergit:$FPATH" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+check "strict mode, a source another user owns: refused, as today, before anything is copied" \
+  sh -c "[ '$RC' = 64 ] && [ \"\$(cat '$T/err')\" = 'target: refused: git cannot tell whether --run is tracked: audit_1' ] && [ -z \"\$(ls -A '$NT')\" ] && ! grep -qw clone '$T/othergit.log'"
+settings
 # Tools.
 for pair in "cargo-test:cargo" "build-sbf:cargo" "anchor-build:anchor" "npm-ci:npm"; do
   run "$TARGET" "$WT" PATH="$SPATH" -- "${pair%%:*}" --run audit_1 --src .
@@ -784,7 +1117,49 @@ run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
 check "no rustup default to pin: exit 3" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: no Rust toolchain to pin: set RUSTUP_TOOLCHAIN or a rustup default' '$T/err'"
 run "$TARGET" "$WT" RUSTUP_TOOLCHAIN=1.85.0 -- cargo-test --run audit_1 --src .
 check "the caller's RUSTUP_TOOLCHAIN is kept, and rustup is not asked" \
-  sh -c "[ '$RC' = 0 ] && ! grep -q '^== rustup' '$T/calls' && grep -qxF 'env: RUSTUP_TOOLCHAIN=1.85.0' '$T/calls'"
+  sh -c "[ '$RC' = 0 ] && ! grep -q '^== rustup' '$T/calls' && grep -qxF 'env: RUSTUP_TOOLCHAIN=1.85.0' '$T/calls' && ! grep -q 'rust-toolchain' '$T/out'"
+settings
+# Outside strict mode, with no RUSTUP_TOOLCHAIN from the caller, the plain channel the copy's top-level
+# rust-toolchain (else rust-toolchain.toml) names is pinned when rustup has it installed; otherwise the build
+# keeps rustup's default. A note says which, and a toolchain given by path is never taken. $T/tcwt is not a
+# repository: a crate and a rust-toolchain.toml with a comment, a multi-line array and a profile.
+TW=$T/tcwt
+mkdir -p "$TW/src"
+printf '[package]\nname = "tc"\nversion = "0.1.0"\n' > "$TW/Cargo.toml"
+printf '# pinned\n[toolchain]\nchannel = "1.79.0"\ncomponents = [\n  "rustfmt",\n  "clippy",\n]\nprofile = "minimal"\n' > "$TW/rust-toolchain.toml"
+( cd "$TW" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$TW/audit_1/exec-mode"
+settings FAKE_RUSTUP_INSTALLED="1.79.0 nightly-2024-01-01"
+run "$TARGET" "$TW" -- cargo-test --run audit_1 --src .
+check "a rust-toolchain.toml pinning 1.79.0, which rustup has: exit 0, a note, and the cargo steps pinned to it" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF \">> note: the copy's rust-toolchain.toml pins 1.79.0; building with it\" '$T/out'"
+check "... cargo fetch and cargo test get RUSTUP_TOOLCHAIN=1.79.0, after rustup is asked whether it has it" calls_are \
+  "rustup default|rustup which --toolchain 1.79.0 cargo|cargo fetch --manifest-path $S/src/Cargo.toml|cargo test --offline --workspace|"
+check "... (the pin)" in_blocks '^== cargo (fetch|test)' '^env: RUSTUP_TOOLCHAIN=1[.]79[.]0$'
+settings
+run "$TARGET" "$TW" -- cargo-test --run audit_1 --src .
+check "... which rustup has not installed: exit 0, a note, and rustup's default" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '>> note: the copy pins 1.79.0, which rustup has not installed; building with stable-fake (rustup toolchain install 1.79.0 adds it)' '$T/out'"
+check "... (the default)" in_blocks '^== cargo (fetch|test)' '^env: RUSTUP_TOOLCHAIN=stable-fake$'
+printf 'nightly-2024-01-01\n' > "$TW/rust-toolchain"
+settings FAKE_RUSTUP_INSTALLED="1.79.0 nightly-2024-01-01"
+run "$TARGET" "$TW" -- cargo-test --run audit_1 --src .
+check "a one-line rust-toolchain beside it wins, as rustup reads it first" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF \">> note: the copy's rust-toolchain pins nightly-2024-01-01; building with it\" '$T/out' && ! grep -q 'rust-toolchain.toml' '$T/out'"
+rm -f "$TW/rust-toolchain"
+for body in '[toolchain]\nchannel = "1.79.0"\npath = "/opt/toolchain"\n' '[toolchain]\nchannel = "1.79.0; rm"\n' 'toolchain = { channel = "1.79.0" }\n'; do
+  printf "$body" > "$TW/rust-toolchain.toml"
+  run "$TARGET" "$TW" -- cargo-test --run audit_1 --src .
+  check "a rust-toolchain.toml holding '$(printf "$body" | tr '\n' ' ')': not taken, a note, rustup's default, and rustup not asked about it" \
+    sh -c "[ '$RC' = 0 ] && grep -qxF \">> note: the copy's rust-toolchain.toml names a toolchain by path, or no plain channel, which target.sh does not take; building with stable-fake\" '$T/out' && ! grep -q '^== rustup which' '$T/calls'"
+done
+printf '[toolchain]\nchannel = "1.79.0"\n' > "$TW/rust-toolchain.toml"
+run "$TARGET" "$TW" RUSTUP_TOOLCHAIN=1.85.0 -- cargo-test --run audit_1 --src .
+check "... and with RUSTUP_TOOLCHAIN from the caller the file is not read" \
+  sh -c "[ '$RC' = 0 ] && ! grep -q 'rust-toolchain' '$T/out' && grep -qxF 'env: RUSTUP_TOOLCHAIN=1.85.0' '$T/calls'"
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$TW" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+  check "... nor in strict mode" sh -c "[ '$RC' = 0 ] && ! grep -q 'rust-toolchain' '$T/out' && ! grep -q '^== rustup which' '$T/calls'"
+fi
 settings
 # Where it runs: TMPDIR with a trailing slash, a TMPDIR inside the working directory, the installation inside
 # it, and PATH entries inside it.
@@ -806,6 +1181,29 @@ run "$TARGET" "$WT" PATH="$WT/.bin:$FPATH" -- cargo-test --run audit_1 --src .
 check "a cargo in a PATH entry inside the working directory never runs" sh -c "[ '$RC' = 0 ] && [ ! -e '$T/marks/wt-cargo' ] && grep -q '^== cargo test' '$T/calls'"
 rm -rf "$WT/.bin"
 check "no target.sh run ran a program or hook the source repository's config names" test -z "$(ls -A "$T/marks")"
+# A session started below the top level of a repository, in programs/demo: outside strict mode --src . clones
+# that repository, at its HEAD, as confine_repo . takes it, and --dir stays a path from its top; the log says
+# which directory of it the session is in. Strict mode copies the directory file by file, as before.
+SUB=$WT/programs/demo
+( cd "$SUB" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$SUB/audit_1/exec-mode"
+settings FAKE_SHOW=programs/demo/src/lib.rs
+run "$TARGET" "$SUB" -- cargo-test --run audit_1 --src .
+check "a session in programs/demo: --src . copies the repository at its top, at HEAD (v2)" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF 'show: // v2' '$T/calls'"
+check "... and builds at the copy's top" calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo test --offline --workspace|"
+log=$(sed -n 's/.*; log \(audit_1\/exec\/cargo-test-[0-9]*[.]log\).*/\1/p' "$T/out")
+check "... and its log says which directory of it the session is in" \
+  grep -qE '^>> the copy: [.] at [0-9a-f]{40}; the working directory is programs/demo in it$' "$SUB/$log"
+run "$TARGET" "$SUB" -- cargo-test --run audit_1 --src . --dir programs/demo
+check "... --dir is a path from the copy's top" \
+  calls_are "rustup default|cargo fetch --manifest-path $S/src/programs/demo/Cargo.toml|cargo test --offline --workspace|"
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$SUB" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+  check "strict mode, the same session: the directory is copied file by file, as before" \
+    sh -c "[ '$RC' = 0 ] && grep -qxF 'show: ' '$T/calls'"
+fi
+rm -rf "$SUB/audit_1"
+settings
 
 # =================================================================================================
 # target.sh in an incident's run directory: INCIDENTS.json must give the root cause, and nothing of a run
@@ -856,10 +1254,12 @@ if [ "$ISOLATED_OK" = 1 ]; then
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
   check "... and a patch of another incident of that run" test "$RC" = 0
 fi
-# Natively an incident recorded anywhere in the working directory counts, whatever --run names: every --src is
-# the working tree or a copy of it. audit_1 (exec-mode native) builds while incident_1 records the incidents;
-# incident_2, made beside it, holds an INCIDENTS.json of each kind below, or none; incident_1.old is a run moved
-# aside under another name, and incident_notes.md a file.
+# Natively an incident recorded in any run directory the auditor made in the working directory counts, whatever
+# --run names: every --src is the working tree or a copy of it. audit_1 (exec-mode native) builds while
+# incident_1 records the incidents; incident_2, made beside it, holds an INCIDENTS.json of each kind below, or
+# none. Only such a run directory counts (incident_<n>, with the .gitignore of exactly * rundir.sh writes):
+# incident_1.old (a run moved aside), a client's Incident_Response/, incident_4/ without that .gitignore and
+# incident_3, a link, are passed over, with a note, and incident_notes.md is a file.
 XRUN='so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built.'
 XREAD='nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built.'
 XLIST='the working directory cannot be listed, so target.sh cannot tell whether an incident_* directory in it records a supply_chain_or_ci incident, and nothing from it is built natively until it can be listed (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.'
@@ -918,15 +1318,34 @@ if [ "$(id -u)" != 0 ]; then
   check "natively, an incident_2 that cannot be searched stops audit_1's build: exit 3" \
     sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_2/INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ]"
 fi
-mkdir "$WT/incident_1.old"
-printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$WT/incident_1.old/INCIDENTS.json"
+SCJ='{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}]}'
+PASSED='>> note: the incident rule counts only the run directories the auditor made (incident_<n>, with a .gitignore of exactly *), so it passed over'
+mkdir -p "$WT/incident_1.old" "$WT/Incident_Response" "$WT/incident_4" "$T/elsewhere-run"
+printf '%s\n' "$SCJ" > "$WT/incident_1.old/INCIDENTS.json"
+printf '{"cases": [{"ticket": "IR-7"}]}\n' > "$WT/Incident_Response/INCIDENTS.json"
+printf '%s\n' "$SCJ" > "$WT/incident_4/INCIDENTS.json"
+printf '%s\n' "$SCJ" > "$T/elsewhere-run/INCIDENTS.json" && printf '*\n' > "$T/elsewhere-run/.gitignore"
+ln -s "$T/elsewhere-run" "$WT/incident_3"
 printf 'notes\n' > "$WT/incident_notes.md"
 run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
-check "natively, a run moved aside as incident_1.old still counts: exit 3" \
-  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_1.old/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, $XRUN' '$T/err'"
-rm -rf "$WT/incident_1.old"
+check "natively, a run moved aside, a client's Incident_Response/, an incident_4/ rundir.sh did not make and a link count for nothing: exit 0, and a note names them" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '$PASSED Incident_Response/INCIDENTS.json, incident_1.old/INCIDENTS.json, incident_3/INCIDENTS.json, incident_4/INCIDENTS.json (Rule 11a)' '$T/out' && grep -q '^== cargo test' '$T/calls'"
+rm -rf "$WT/incident_1.old" "$WT/Incident_Response" "$WT/incident_4" "$WT/incident_3"
 run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
-check "... while a file named incident_notes.md, and incident_2 without INCIDENTS.json, count for nothing" test "$RC" = 0
+check "... while a file named incident_notes.md, and incident_2 without INCIDENTS.json, count for nothing, and get no note" \
+  sh -c "[ '$RC' = 0 ] && ! grep -q 'incident rule' '$T/out'"
+# An archive, which no repository tracks: a client's Incident_Response/ in another schema is passed over there too.
+mkdir -p "$P/Incident_Response"
+printf '{"cases": []}\n' > "$P/Incident_Response/INCIDENTS.json"
+run "$TARGET" "$P" -- cargo-test --run audit_1 --src .
+check "natively, in a tree that is not a repository, a client's Incident_Response/INCIDENTS.json in another schema: exit 0, with the note" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '$PASSED Incident_Response/INCIDENTS.json (Rule 11a)' '$T/out'"
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$P" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
+  check "... and strict mode builds it isolated, with no note, as the incident rule applies natively only" \
+    sh -c "[ '$RC' = 0 ] && ! grep -q 'incident rule' '$T/out'"
+fi
+rm -rf "$P/Incident_Response" "$T/elsewhere-run"
 run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
 check "natively without python3, an INCIDENTS.json in the working directory: exit 3 before anything is copied" \
   sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so target.sh cannot tell whether incident_1 holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
@@ -935,13 +1354,14 @@ if [ "$ISOLATED_OK" = 1 ]; then
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
   check "isolated mode builds audit_1 while incident_2 records a supply_chain_or_ci incident" test "$RC" = 0
 fi
-# Only python3 tells that an INCIDENTS.json is missing, so a stat that fails for another reason stops the build:
-# a path past PATH_MAX (1024 bytes on macOS, 4096 on Linux) hides no run. In a working directory PATH_MAX-22 bytes
-# long incident_1/INCIDENTS.json lies past it; in one PATH_MAX-200 bytes long, a run moved aside under a long
-# name, whose INCIDENTS.json (a name of 190 bytes) or which itself (230) lies past it. Each file is written
-# through a relative path and records a supply_chain_or_ci incident. The incident_* directories are read in any
-# letter case, since a volume that ignores case finds incident_2 under INCIDENT_2, and a working directory that
-# cannot be listed stops the build too.
+# Only python3 tells that an INCIDENTS.json is missing, so in a run directory the auditor made a stat that fails
+# for another reason stops the build: a path past PATH_MAX (1024 bytes on macOS, 4096 on Linux) hides no run. In
+# a working directory PATH_MAX-22 bytes long incident_1/INCIDENTS.json lies past it, and so does the .gitignore
+# that says whose the directory is, which then counts as the auditor's. In one PATH_MAX-200 bytes long, a run
+# moved aside under a long name, whose INCIDENTS.json (a name of 190 bytes) or which itself (230) lies past it,
+# is passed over, since no run directory has such a name, and so are directories spelled INCIDENT_2 and
+# Incident_2, which rundir.sh never makes. Each file is written through a relative path and records a
+# supply_chain_or_ci incident. A working directory that cannot be listed stops the build too.
 PM=$(getconf PATH_MAX / 2>/dev/null)
 case "$PM" in ''|*[!0-9]*) PM=1024 ;; esac
 long() { printf '%*s' "$1" '' | tr ' ' "$2"; }
@@ -969,7 +1389,6 @@ while [ "$dlen" -lt $(( ${#T} + 422 )) ]; do
 done
 if [ -z "$dbad" ]; then ok "deep_wt makes a working directory of each of 202 lengths in a row"
 else ko "deep_wt makes a working directory of each of 202 lengths in a row: $dbad below $T"; fi
-SCJ='{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}]}'
 if DW=$(deep_wt $((PM - 22))) && [ "${#DW}" = $((PM - 22)) ]; then
   ( cd "$DW" && mkdir incident_1 && printf '*\n' > incident_1/.gitignore && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
   run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
@@ -983,12 +1402,11 @@ if DW=$(deep_wt $((PM - 200))) && [ "${#DW}" = $((PM - 200)) ]; then
   n3=incident_1.$(long 219 y)
   ( cd "$DW" && mkdir "$n2" && printf '%s\n' "$SCJ" > "$n2/INCIDENTS.json" )
   run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
-  check "natively, a run moved aside under a name of 190 bytes, its INCIDENTS.json past PATH_MAX, stops audit_1's build: exit 3, nothing copied" \
-    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: $n2/INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+  check "natively, a run moved aside under a name of 190 bytes, its INCIDENTS.json past PATH_MAX, is passed over: exit 0" \
+    sh -c "[ '$RC' = 0 ] && grep -q '^== cargo test' '$T/calls'"
   ( cd "$DW" && mv "$n2" "$n3" )
   run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
-  check "... and under a name of 230 bytes, the run itself past PATH_MAX: exit 3, the name cut after 200 bytes" \
-    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: ${n3:0:200}.../INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ]"
+  check "... and under a name of 230 bytes, the run itself past PATH_MAX: exit 0" sh -c "[ '$RC' = 0 ] && grep -q '^== cargo test' '$T/calls'"
   ( cd "$DW" && rm -rf "$n3" )
   run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
   check "... and with that run gone the same build runs: exit 0" test "$RC" = 0
@@ -999,8 +1417,8 @@ if DW=$(deep_wt $((PM - 200))) && [ "${#DW}" = $((PM - 200)) ]; then
     ( cd "$DW" && mkdir "$spelled" && printf '%s\n' "$SCJ" > "$spelled/INCIDENTS.json" )
     run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
     ( cd "$DW" && rm -rf "$spelled" )
-    check "natively, a run spelled $spelled whose INCIDENTS.json records a supply_chain_or_ci incident stops audit_1's build: exit 3, nothing copied" \
-      sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: $spelled/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, $XRUN' '$T/err' && [ ! -s '$T/calls' ]"
+    check "natively, a directory spelled $spelled whose INCIDENTS.json records a supply_chain_or_ci incident is passed over: exit 0, with the note" \
+      sh -c "[ '$RC' = 0 ] && grep -qxF '$PASSED $spelled/INCIDENTS.json (Rule 11a)' '$T/out'"
   done
   if [ "$(id -u)" != 0 ]; then
     ( cd "$DW" && cp Cargo.toml src/ && mkdir incident_1 && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
@@ -1047,27 +1465,53 @@ r1=$(rows)
 check "cargo-audit --no-fetch: --no-fetch --no-yanked, and nothing disclosed" \
   sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-fetch --no-yanked' '$T/calls' && [ '$r1' = '$r0' ]"
 # cargo-audit reads the lockfile itself, so it gets the lockfile check too: when it asks a registry which
-# releases were yanked, a lockfile naming a registry other than crates.io stops the run before anything is
-# sent; offline (--no-fetch) such a lockfile is audited. Git sources pass either way, and an escape never does.
+# releases were yanked, a lockfile naming a registry other than crates.io stops the run in strict mode before
+# anything is sent; otherwise cargo audit runs without that check (--no-yanked), with a note, and crates.io gets
+# no row. Offline (--no-fetch) such a lockfile is audited. Git sources pass either way. An escape, or text that
+# is not UTF-8, stops the run in strict mode; otherwise it is audited without the yanked check, with a note.
 mkdir -p "$WT/la"
 for lock in 'sparse+https://evil.invalid/' 'registry+https://evil.invalid/index'; do
   printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\nsource = "%s"\nchecksum = "00"\n' "$lock" > "$WT/la/Cargo.lock"
   r0=$(rows)
-  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock
-  check "cargo-audit of a lockfile naming the registry $lock: exit 3 before cargo audit runs, nothing disclosed" \
+  run "$DEPS" "$WT" AUDITOR_STRICT=1 -- cargo-audit --run audit_1 --manifest la/Cargo.lock
+  check "strict mode, cargo-audit of a lockfile naming the registry $lock: exit 3 before cargo audit runs, nothing disclosed" \
     sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: the lockfile names a registry other than crates.io, $lock, which a check for yanked releases could ask; --no-fetch audits it offline' '$T/err' &&
       ! grep -q '^== cargo audit' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
-  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock --no-fetch
-  check "... and with --no-fetch it is audited offline, exit 0" sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-fetch --no-yanked' '$T/calls'"
+  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock
+  r1=$(rows)
+  check "cargo-audit of that lockfile: exit 0, cargo audit runs with --no-yanked, a note says why, and only github.com is disclosed" \
+    sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-yanked' '$T/calls' && grep -qxF '>> note: the lockfile names a registry other than crates.io ($lock), so cargo audit ran without its yanked check, which would ask that registry; strict mode stops here (Rule 11f)' '$T/out' && [ \$(( $r1 - $r0 )) = 1 ] && sed -n '\$p' '$DT' | grep -q '	github.com	'"
+  check "... and the note is in its output too" \
+    sh -c "grep -qxF '>> note: the lockfile names a registry other than crates.io ($lock), so cargo audit ran without its yanked check, which would ask that registry; strict mode stops here (Rule 11f)' \"$WT/\$(sed -n 's/^>> cargo-audit: .*: \\(audit_1\\/deps\\/cargo-audit-[0-9]*[.]txt\\)\$/\\1/p' '$T/out')\""
+  for strict in "" 1; do
+    run "$DEPS" "$WT" ${strict:+AUDITOR_STRICT=1} -- cargo-audit --run audit_1 --manifest la/Cargo.lock --no-fetch
+    check "... and with --no-fetch it is audited offline${strict:+ in strict mode too}, exit 0, with no note" \
+      sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-fetch --no-yanked' '$T/calls' && ! grep -q 'note:' '$T/out'"
+  done
 done
 printf 'version = 3\n\n[[package]]\nname = "anchor-lang"\nversion = "0.30.1"\nsource = "git+https://github.com/coral-xyz/anchor?rev=0123#0123"\n\n[[patch.unused]]\nname = "x"\nversion = "1.0.0"\nsource = "git+https://evil.invalid/x#0123"\n' > "$WT/la/Cargo.lock"
 run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock
 check "cargo-audit of a lockfile with git sources and [[patch.unused]] runs, exit 0" sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never' '$T/calls'"
-printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\n"\\u0073ource" = "sparse+https://evil.invalid/"\n' > "$WT/la/Cargo.lock"
-for flag in "" --no-fetch; do
-  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock $flag
-  check "cargo-audit ${flag:-with fetching} of a lockfile with a unicode escape: exit 3, cargo audit never runs" \
-    sh -c "[ '$RC' = 3 ] && grep -q 'the lockfile has a .u, .U or .x escape' '$T/err' && ! grep -q '^== cargo audit' '$T/calls'"
+ESC='the lockfile has a \u, \U or \x escape, which cargo never writes; deps.sh does not read one'
+for shape in escape latin1; do
+  if [ "$shape" = escape ]; then
+    printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\n"\\u0073ource" = "sparse+https://evil.invalid/"\n' > "$WT/la/Cargo.lock"
+    why=$ESC
+  else
+    printf 'version = 3\n# caf\351\n' > "$WT/la/Cargo.lock"
+    why='la/Cargo.lock is not UTF-8 text'
+  fi
+  for flag in "" --no-fetch; do
+    run "$DEPS" "$WT" AUDITOR_STRICT=1 -- cargo-audit --run audit_1 --manifest la/Cargo.lock $flag
+    check "strict mode, cargo-audit ${flag:-with fetching} of a lockfile with $shape text: exit 3, cargo audit never runs" \
+      sh -c "[ '$RC' = 3 ] && grep -qF 'deps: blocker: $why; output ' '$T/err' && ! grep -q '^== cargo audit' '$T/calls'"
+  done
+  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock
+  check "cargo-audit of that lockfile, fetching: exit 0, with --no-yanked and a note" \
+    sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-yanked' '$T/calls' && grep -qxF '>> note: $why, so cargo audit ran without its yanked check, which could ask a registry the lockfile names; strict mode stops here (Rule 11f)' '$T/out'"
+  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock --no-fetch
+  check "... and with --no-fetch: exit 0, audited offline, and a note" \
+    sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-fetch --no-yanked' '$T/calls' && grep -qxF '>> note: $why; cargo audit ran offline (--no-fetch), so it asks no registry; strict mode stops here (Rule 11f)' '$T/out'"
 done
 settings FAKE_AUDIT_OUT="$T/audit-vuln.txt" FAKE_AUDIT_RC=1
 run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest Cargo.lock
@@ -1917,22 +2361,105 @@ check "a scan root in a project of its own: the note names its .semgrepignore, n
   sh -c "[ '$RC' = 0 ] && grep -q '; note: .semgrepignore files narrow the scan: nested/.semgrepignore\$' '$T/out'"
 rm -rf "$WT/nested" "$WT/gf" "$WT/bare" "$WT/idx" "$WT/split" "$WT/info" "$WT/unread" "$WT/exunread" "$WT/gitnox" "$WT/infonox" \
   "$T/info-real" "$T/outer" "$T/gf.git" "$WT/.semgrepignore" "$WT/programs/.semgrepignore"
+# Symbolic links under --path. Strict mode refuses one that resolves outside --path. Otherwise one that resolves
+# inside the working directory is scanned as semgrep finds it, and one that resolves outside it is left out:
+# semgrep gets, instead of --path, the entries of each folder on the way to it, never the link, and the last
+# line names it. A node_modules folder holding such a link is left out whole, and so is every folder on the way
+# below --path when the paths would pass 5000.
 mkdir -p "$WT/src/inner"
 ln -s ../lib.rs "$WT/src/inner/near.rs"
-run "$SAST" "$WT" -- semgrep --run audit_1 --path src --ruleset p/rust
-check "a link under --path that stays inside it is fine" test "$RC" = 0
+for strict in "" 1; do
+  run "$SAST" "$WT" ${strict:+AUDITOR_STRICT=1} -- semgrep --run audit_1 --path src --ruleset p/rust
+  check "a link under --path that stays inside it is fine${strict:+ in strict mode}" sh -c "[ '$RC' = 0 ] && ! grep -q 'left out' '$T/out'"
+done
 ln -s ../../a.rs "$WT/src/inner/out.rs"
-run "$SAST" "$WT" -- semgrep --run audit_1 --path src --ruleset p/rust
-check "a link under --path to another part of the working directory is refused" \
+run "$SAST" "$WT" AUDITOR_STRICT=1 -- semgrep --run audit_1 --path src --ruleset p/rust
+check "strict mode, a link under --path to another part of the working directory is refused" \
   sh -c "[ '$RC' = 64 ] && grep -qxF 'sast: refused: --path holds a symbolic link that resolves outside it, src/inner/out.rs; semgrep could read and quote what it points to, so scan a directory without it' '$T/err'"
-run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/rust
-check "... and the same link is fine when --path holds what it points to" test "$RC" = 0
+run "$SAST" "$WT" -- semgrep --run audit_1 --path src --ruleset p/rust
+check "... while outside strict mode it is scanned as semgrep finds it: --path whole, no note" \
+  sh -c "[ '$RC' = 0 ] && grep -q -- '--error -- $WT/src\$' '$T/calls' && ! grep -q 'left out' '$T/out'"
+for strict in "" 1; do
+  run "$SAST" "$WT" ${strict:+AUDITOR_STRICT=1} -- semgrep --run audit_1 --path . --ruleset p/rust
+  check "... and the same link is fine when --path holds what it points to${strict:+, in strict mode}" test "$RC" = 0
+done
 rm -f "$WT/src/inner/out.rs"
 ln -s "$CREDHOME/.ssh/id_rsa" "$WT/src/inner/key.rs"
-run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/secrets
-check "a link that resolves outside the working directory is refused before anything is sent" \
+run "$SAST" "$WT" AUDITOR_STRICT=1 -- semgrep --run audit_1 --path . --ruleset p/secrets
+check "strict mode, a link that resolves outside the working directory is refused before anything is sent" \
   sh -c "[ '$RC' = 64 ] && grep -qxF 'sast: refused: --path holds a symbolic link that resolves outside it, src/inner/key.rs; semgrep could read and quote what it points to, so scan a directory without it' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
-rm -rf "$WT/src/inner"
+r0=$(rows)
+run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/secrets
+check "a link that resolves outside the working directory: exit 0, and semgrep gets the entries around it, never the link" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^== semgrep scan --config p/secrets .* --error -- $WT/.cargo .* $WT/a.rs .* $WT/src/inner/near.rs $WT/src/lib.rs .*' '$T/calls' && ! grep -q 'key.rs' '$T/calls' && ! grep -q -- '-- $WT\$' '$T/calls'"
+check "... the last line names the link left out, and the scan was disclosed as usual" \
+  sh -c "sed -n '\$p' '$T/out' | grep -q '^>> semgrep: 0 results (exit 0): .*; note: left out 1 symbolic link that resolves outside the working directory: src/inner/key.rs\$' && [ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 1 ]"
+# A link inside the working directory to a folder that leads to such a link would hand semgrep the link it left
+# out by another name: it is left out too, under --path (alias -> src) and from a folder outside it
+# (app/shared -> ../src, scanning app), and so is a folder the check cannot read.
+ln -s src "$WT/alias"
+ln -s ../src "$WT/app/shared"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/secrets
+check "a link to a folder that holds such a link is left out, and the note names it" \
+  sh -c "[ '$RC' = 0 ] && ! grep -qE '^== semgrep .* $WT/alias( |\$)' '$T/calls' && ! grep -q 'key.rs' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '; note: left out 1 symbolic link that resolves outside the working directory: src/inner/key.rs; note: left out 2 symbolic links to folders that lead to such links: alias, app/shared\$'"
+mkdir -p "$WT/chain/a" "$WT/chain/b"
+printf 'fn c() {}\n' > "$WT/chain/a/c.rs"
+ln -s ../b "$WT/chain/a/to-b" && ln -s ../../src "$WT/chain/b/to-src" && ln -s .. "$WT/app/up"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path app --ruleset p/secrets
+check "... and from a --path the folder lies outside of, a link to an ancestor of --path among them" \
+  sh -c "[ '$RC' = 0 ] && grep -q -- '--error -- $WT/app/Anchor.toml $WT/app/Cargo.toml $WT/app/yarn.lock\$' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '; note: left out 2 symbolic links to folders that lead to such links: app/shared, app/up\$'"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path chain/a --ruleset p/secrets
+check "... and through a chain of such links" \
+  sh -c "[ '$RC' = 0 ] && grep -q -- '--error -- $WT/chain/a/c.rs\$' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '; note: left out 1 symbolic link to a folder that leads to such a link: chain/a/to-b\$'"
+rm -f "$WT/alias" "$WT/app/shared" "$WT/app/up" "$WT/src/inner/key.rs"
+ln -s ../a "$WT/chain/b/to-a" && rm -f "$WT/chain/b/to-src"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path chain --ruleset p/secrets
+check "a loop of such links with no link out of the working directory: --path whole, no note" \
+  sh -c "[ '$RC' = 0 ] && grep -q -- '--error -- $WT/chain\$' '$T/calls' && ! grep -q 'left out' '$T/out'"
+rm -rf "$WT/chain"
+if [ "$(id -u)" != 0 ]; then
+  mkdir -p "$WT/locked"
+  printf 'fn l() {}\n' > "$WT/locked/l.rs"
+  chmod 311 "$WT/locked"
+  run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/rust
+  chmod 700 "$WT/locked"
+  check "a folder the link check cannot read is left out, and the note names it" \
+    sh -c "[ '$RC' = 0 ] && ! grep -qE '^== semgrep .* $WT/locked( |\$)' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '; note: left out 1 folder or entry the link check could not read: locked\$'"
+  rm -rf "$WT/locked"
+fi
+mkdir -p "$WT/app/node_modules/pkg"
+ln -s "$CREDHOME/.ssh" "$WT/app/node_modules/keys"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path app --ruleset p/secrets
+check "a link out of the working directory in node_modules: the folder is left out whole, and the note says so" \
+  sh -c "[ '$RC' = 0 ] && grep -q -- '--error -- $WT/app/Anchor.toml $WT/app/Cargo.toml $WT/app/yarn.lock\$' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '; note: left out 1 symbolic link that resolves outside the working directory: app/node_modules/keys; note: left out whole 1 folder that holds such a link: app/node_modules\$'"
+run "$SAST" "$WT" AUDITOR_STRICT=1 -- semgrep --run audit_1 --path app --ruleset p/secrets
+check "... which strict mode refuses" \
+  sh -c "[ '$RC' = 64 ] && grep -qxF 'sast: refused: --path holds a symbolic link that resolves outside it, app/node_modules/keys; semgrep could read and quote what it points to, so scan a directory without it' '$T/err'"
+rm -rf "$WT/app/node_modules"
+mkdir -p "$WT/many/flat"
+python3 -I -c 'import sys
+for i in range(5001):
+    open("%s/f%04d.rs" % (sys.argv[1], i), "w").close()' "$WT/many/flat"
+printf 'fn m() {}\n' > "$WT/many/m.rs"
+ln -s "$CREDHOME/.ssh/id_rsa" "$WT/many/flat/key.rs"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path many --ruleset p/secrets
+check "past 5000 paths around such a link, the folder on the way is left out whole" \
+  sh -c "[ '$RC' = 0 ] && grep -q -- '--error -- $WT/many/m.rs\$' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '; note: left out 1 symbolic link that resolves outside the working directory: many/flat/key.rs; note: left out whole 1 folder that holds such a link: many/flat\$'"
+# When --path itself holds more, semgrep runs once for each 5000 of them, and one SARIF holds a run for each.
+settings FAKE_RESULTS=2 FAKE_SEMGREP_RC=1
+run "$SAST" "$WT" -- semgrep --run audit_1 --path many/flat --ruleset p/secrets
+check "... and when --path itself holds more, semgrep runs twice, never on the link, and the last line says so" \
+  sh -c "[ '$RC' = 1 ] && [ \"\$(grep -c '^== semgrep ' '$T/calls')\" = 2 ] && ! grep -q 'key[.]rs' '$T/calls' && sed -n '\$p' '$T/out' | grep -q '^>> semgrep: 4 results (exit 1): audit_1/sast/semgrep-[0-9]*[.]sarif; log .*; note: left out 1 symbolic link that resolves outside the working directory: many/flat/key.rs; note: the 5001 paths were too many for one semgrep call, so it ran 2 times, on at most 5000 each, and the SARIF holds one run for each\$'"
+kept=$(sed -n 's/^>> semgrep: [0-9]* results (exit 1): \(audit_1\/sast\/semgrep-[0-9]*[.]sarif\);.*/\1/p' "$T/out")
+check "... the kept SARIF holds both runs, two results in each" python3 -I -c 'import json, sys
+runs = json.load(open(sys.argv[1]))["runs"]
+sys.exit(0 if [len(r["results"]) for r in runs] == [2, 2] else 1)' "$WT/$kept"
+settings FAKE_SLEEP=3
+run "$SAST" "$WT" AUDITOR_RUN_TIMEOUT=5 -- semgrep --run audit_1 --path many/flat --ruleset p/secrets
+check "... AUDITOR_RUN_TIMEOUT bounds the two calls together" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^sast: blocker: semgrep passed the 5-second limit (AUDITOR_RUN_TIMEOUT) and was killed' '$T/err' && [ \"\$(grep -c '^== semgrep ' '$T/calls')\" = 2 ]"
+settings
+rm -rf "$WT/src/inner" "$WT/many"
 run "$SAST" "$WT" PATH="$SPATH" -- semgrep --run audit_1 --path . --ruleset p/rust
 check "sast without semgrep: exit 3, nothing sent" sh -c "[ '$RC' = 3 ] && grep -qxF 'sast: blocker: semgrep is not on PATH, so the scan cannot run here — nothing was sent.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 

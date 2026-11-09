@@ -92,10 +92,12 @@ while IFS=$'\t' read -r line ep cases words; do
   if [ -z "$(mode_of "$cases")" ]; then err "$at: the case file $cases is not a tracked file"
   elif [ -L "$cases" ] || [ ! -f "$cases" ]; then err "$at: the case file $cases is not a regular file in the checkout"
   else
-    # a cases.txt line starts with the exit status and a tab; a hostile-args.txt line is a name, then the arguments
+    # a cases.txt line starts with the exit status and a tab; a hostile-args.txt line is a name, then the arguments.
+    # The status may end in a mode letter: s (refused in strict mode only), g (the guard), u (a settings.local.json
+    # that is the user's own in default mode); the row is the strict-mode truth either way.
     status=""; case "$cases" in */cases.txt) status=1 ;; esac
     LC_ALL=C awk -v at="$at" -v f="$cases" -v status="$status" '/^#/ || /^$/ { next }
-      { n++; if (status && $0 !~ /^[0-9]+\t/) { printf "::error::%s: the case file %s: line %d does not start with an exit status and a tab\n", at, f, NR > "/dev/stderr"; st = 1 } }
+      { n++; if (status && $0 !~ /^[0-9]+[gsu]?\t/) { printf "::error::%s: the case file %s: line %d does not start with an exit status and a tab\n", at, f, NR > "/dev/stderr"; st = 1 } }
       END { if (n == 0) { printf "::error::%s: the case file %s holds no case\n", at, f > "/dev/stderr"; st = 1 } exit st }' "$cases" || fail=1
   fi
 done < "$T/list"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-confine.sh — self-test for scripts/lib/confine.sh, the checks the bundled entry points share: the
-# working directory and installation checks of confine_init, the cleaned PATH, confined paths (the case
+# working directory and installation checks of confine_init, the cleaned PATH, the mode (AUDITOR_STRICT,
+# strict markers, the global git config of each mode), confined paths (the case
 # file fixtures/confine/paths.txt), run-directory names and .gitignore files, noclobber writes, the
 # environment and order of the hardened git call, the repository, tracked and partial-clone checks, and
 # the named pipes git would wait on. Every case runs under each bash on the machine (/bin/bash and the
@@ -17,6 +18,7 @@ trap 'chmod -R u+rwx "$T" 2>/dev/null; rm -rf "$T"' EXIT
 REAL_GIT=$(command -v git) || { echo "FAIL - git is not on PATH"; exit 1; }
 
 export HOME="$T/home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
+unset AUDITOR_STRICT
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
 mkdir -p "$HOME"
@@ -201,6 +203,160 @@ check "confine_text shows control characters as ? and cuts after 200 bytes" \
   out_is "a?b?c?d?e|$(printf '%0200d' 0)..."
 
 # =================================================================================================
+# The mode (Rule 11f): AUDITOR_STRICT, the strict markers of run directories, confine_strict_on, and
+# the global git config hgit gives git in each mode.
+# =================================================================================================
+SAFE="$ROOT/scripts/lib/safe-directory.gitconfig"
+MODE='printf "%s|%s|%s|%s" "$CONFINE_STRICT" "$CONFINE_MODE_WHY" "$CONFINE_MARKERS" "$CONFINE_GIT_GLOBAL"'
+mkdir -p "$T/mode/plain"
+lib "$T/mode/plain" "$MODE"
+check "with AUDITOR_STRICT unset and no marker the mode is default, with the safe-directory file as git's global config" \
+  out_is "0|||$SAFE"
+for v in '' 0 false FALSE No off OFF; do
+  AUDITOR_STRICT=$v lib "$T/mode/plain" "$MODE"
+  check "AUDITOR_STRICT='$v' leaves the mode default" out_is "0|||$SAFE"
+done
+for v in 1 true TRUE Yes on ON; do
+  AUDITOR_STRICT=$v lib "$T/mode/plain" "$MODE"
+  check "AUDITOR_STRICT=$v turns strict mode on, with no global git config" out_is "1|AUDITOR_STRICT=$v||/dev/null"
+done
+for v in maybe 2 ' 1' strict; do
+  AUDITOR_STRICT=$v lib "$T/mode/plain" "$MODE; printf \"|%s\" \"\$CONFINE_MODE_NOTE\""
+  check "AUDITOR_STRICT='$v' is read as on, with one note on stderr and no refusal" \
+    test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|1|AUDITOR_STRICT=$v||/dev/null|AUDITOR_STRICT is '$v', read as on|test: note: AUDITOR_STRICT is '$v', read as on"
+done
+AUDITOR_STRICT=$'a\001b' lib "$T/mode/plain" "$MODE"
+check "... and the note shows a control character in the value as ?" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|1|AUDITOR_STRICT=a?b||/dev/null|test: note: AUDITOR_STRICT is 'a?b', read as on"
+printf '[safe]\n\tdirectory = *\n' > "$T/safe.want"
+check "the safe-directory file holds [safe] and directory = *, and nothing else" cmp -s "$SAFE" "$T/safe.want"
+lib "$T/mode/plain" 'confine_strict_on --strict; '"$MODE"
+check "confine_strict_on turns strict mode on and names its source" out_is "1|--strict||/dev/null"
+AUDITOR_STRICT=yes lib "$T/mode/plain" 'confine_strict_on --strict; '"$MODE"
+check "... but AUDITOR_STRICT, which comes first, stays the named source" out_is "1|AUDITOR_STRICT=yes||/dev/null"
+lib "$T/mode/plain" 'printf "[%s]" "$CONFINE_PREFIX"'
+check "CONFINE_PREFIX starts empty" out_is '[]'
+CONFINE_STRICT=1 CONFINE_MODE_WHY=x CONFINE_MARKERS=audit_1/strict CONFINE_GIT_GLOBAL=/etc/passwd CONFINE_PREFIX=p/ \
+  lib "$T/mode/plain" "$MODE"'; printf "|%s" "$CONFINE_PREFIX"'
+check "... and the environment sets none of the mode's variables" out_is "0|||$SAFE|"
+lib "$T/mode/plain" 'confine_note "a b"; printf ran'
+check "confine_note prints one note line on stderr" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|ran|test: note: a b"
+lib "$T/mode/plain" 'confine_strict_refuse "the reason" "the note"; printf "went on"'
+check "confine_strict_refuse notes in default mode and goes on" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|went on|test: note: the note"
+lib "$T/mode/plain" 'confine_strict_refuse "the reason" ""; printf "went on"'
+check "... silently when the note is empty" out_is 'went on'
+AUDITOR_STRICT=1 lib "$T/mode/plain" 'confine_strict_refuse "the reason" "the note"; printf "went on"'
+check "... and refuses in strict mode" refused 'the reason'
+lib "$T/mode/plain" 'confine_strict_on --strict; confine_strict_refuse "the reason" "the note"; printf "went on"'
+check "... also once confine_strict_on has run" refused 'the reason'
+
+# Markers: an entry named strict, of any kind, in a run directory of the working directory.
+mk_mode_wt() { rm -rf "$T/mode/w" && mkdir -p "$T/mode/w"; } # a fresh working directory, $T/mode/w
+mk_mode_wt; mkdir "$T/mode/w/audit_1"; printf 'strict\n' > "$T/mode/w/audit_1/strict"
+lib "$T/mode/w" "$MODE"
+check "a strict marker in a run directory turns strict mode on and is named" out_is "1|audit_1/strict|audit_1/strict|/dev/null"
+for kind in empty dir link dangling; do
+  mk_mode_wt; mkdir "$T/mode/w/incident_2"
+  case "$kind" in
+    empty) : > "$T/mode/w/incident_2/strict" ;;
+    dir) mkdir "$T/mode/w/incident_2/strict" ;;
+    link) ln -s "$T/safe.want" "$T/mode/w/incident_2/strict" ;;
+    dangling) ln -s nowhere "$T/mode/w/incident_2/strict" ;;
+  esac
+  lib "$T/mode/w" "$MODE"
+  check "... and so does a marker that is $kind" out_is "1|incident_2/strict|incident_2/strict|/dev/null"
+done
+for d in audit_x audit_ Audit_3 AUDIT_3 audit_1234567 report_1 audit_1a; do
+  mk_mode_wt; mkdir "$T/mode/w/$d"; : > "$T/mode/w/$d/strict"
+  lib "$T/mode/w" "$MODE"
+  check "a strict entry in $d, which is no run directory name, counts for nothing" out_is "0|||$SAFE"
+done
+mk_mode_wt; mkdir "$T/mode/w/audit_1"; : > "$T/mode/w/audit_1/STRICT"; : > "$T/mode/w/audit_1/strict.txt"
+if [ -e "$T/mode/w/audit_1/strict" ]; then
+  skp "this volume ignores letter case: a STRICT entry is the strict marker here"
+else
+  lib "$T/mode/w" "$MODE"
+  check "the marker's name is lowercase strict: STRICT and strict.txt count for nothing" out_is "0|||$SAFE"
+fi
+mk_mode_wt; mkdir -p "$T/mode/w/audit_2" "$T/mode/w/incident_1" "$T/mode/w/audit_3"
+: > "$T/mode/w/audit_2/strict"; : > "$T/mode/w/incident_1/strict"
+lib "$T/mode/w" "$MODE"
+check "every marker is listed, the first named as the source" \
+  out_is "1|audit_2/strict|audit_2/strict incident_1/strict|/dev/null"
+AUDITOR_STRICT=1 lib "$T/mode/w" "$MODE"
+check "... after AUDITOR_STRICT, which comes first" out_is "1|AUDITOR_STRICT=1|audit_2/strict incident_1/strict|/dev/null"
+lib "$T/mode/w" 'confine_strict_on --strict; '"$MODE"
+check "... and after --strict, which comes before a marker" out_is "1|--strict|audit_2/strict incident_1/strict|/dev/null"
+# git: asked only when a marker exists, once for them all, with the global config of strict mode.
+mkdir -p "$T/mrec"
+cat > "$T/mrec/git" <<EOF
+#!/bin/sh
+{ printf 'ARGV'; for a in "\$@"; do printf '\037%s' "\$a"; done; printf '\n'; env | sed 's/^/ENV /'; } >> "$T/mrec.log"
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$T/mrec/git"
+: > "$T/mrec.log"
+LIB_PATH="$T/mrec:$PATH" lib "$T/mode/plain" ':'
+check "with no marker the mode costs no git call" test ! -s "$T/mrec.log"
+LIB_PATH="$T/mrec:$PATH" lib "$T/mode/w" ':'
+check "with markers outside every repository git is asked once, and answers there is none" \
+  test "$(awk -F '\037' '$1 == "ARGV" { for (i = 2; i <= NF; i++) if ($i == "rev-parse" || $i == "ls-files") print $i }' "$T/mrec.log" | tr '\n' ' ')" = 'rev-parse '
+check "... with no global git config" test "$(sed -n 's/^ENV GIT_CONFIG_GLOBAL=//p' "$T/mrec.log" | sort -u)" = /dev/null
+MR="$T/mode/r"; rm -rf "$MR"; mkrepo "$MR"
+put "$MR" audit_5/REPORT.md 'tracked'; put "$MR" audit_8/strict 'strict'; commit "$MR" -m 'tracked run directories'
+mkdir -p "$MR/audit_6"; : > "$MR/audit_5/strict"; : > "$MR/audit_6/strict"
+: > "$T/mrec.log"
+LIB_PATH="$T/mrec:$PATH" lib "$MR" "$MODE"
+check "in a repository, a marker under a run directory git tracks anything under counts for nothing; one in an untracked run directory counts" \
+  out_is "1|audit_6/strict|audit_6/strict|/dev/null"
+check "... and git was asked once (one ls-files for all three)" \
+  test "$(awk -F '\037' '$1 == "ARGV" { for (i = 2; i <= NF; i++) if ($i == "rev-parse" || $i == "ls-files") print $i }' "$T/mrec.log" | tr '\n' ' ')" = 'rev-parse ls-files '
+rm "$MR/audit_6/strict"
+lib "$MR" "$MODE"
+check "... and with the untracked one gone, the mode is default" out_is "0|||$SAFE"
+mkdir -p "$MR/AUDIT_9"
+if [ -d "$MR/audit_9" ]; then
+  rmdir "$MR/AUDIT_9"
+  skp "this volume ignores letter case: a run directory tracked in other letters is one directory here"
+else
+  put "$MR" AUDIT_9/x 'tracked'; commit "$MR" -m 'other letters'
+  mkdir -p "$MR/audit_9"; : > "$MR/audit_9/strict"
+  lib "$MR" "$MODE"
+  check "... and a marker under a run directory git tracks in other letters counts for nothing" out_is "0|||$SAFE"
+  rm -rf "$MR/audit_9"
+fi
+mkdir -p "$MR/sub/audit_1" "$MR/sub/audit_2"; put "$MR" sub/audit_1/x 'tracked'; commit "$MR" -m sub
+: > "$MR/sub/audit_1/strict"; : > "$MR/sub/audit_2/strict"
+lib "$MR/sub" "$MODE"
+check "... also when the repository lies above the working directory" out_is "1|audit_2/strict|audit_2/strict|/dev/null"
+# When git cannot tell, the marker counts: a git that fails with no answer, and a checkout another user
+# owns, which git refuses to read without the safe-directory file (git's own test knob stands for the
+# other user).
+mkdir -p "$T/mode/nogit" "$T/mode/other"
+printf '#!/bin/sh\necho "fatal: something else" >&2\nexit 1\n' > "$T/mode/nogit/git"
+printf '#!/bin/sh\nGIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec "%s" "$@"\n' "$REAL_GIT" > "$T/mode/other/git"
+chmod +x "$T/mode/nogit/git" "$T/mode/other/git"
+: > "$MR/audit_5/strict"
+LIB_PATH="$T/mode/nogit:$PATH" lib "$MR" "$MODE"
+check "a marker counts when git cannot tell whether its run directory is tracked, a committed one too" \
+  out_is "1|audit_5/strict|audit_5/strict audit_8/strict|/dev/null"
+LIB_PATH="$T/mode/other:$PATH" lib "$MR" "$MODE"
+check "... so in a checkout another user owns, markers in tracked run directories count" \
+  out_is "1|audit_5/strict|audit_5/strict audit_8/strict|/dev/null"
+rm -f "$MR/audit_5/strict"
+MO="$T/mode/o"; mkrepo "$MO"; put "$MO" f 'x'; commit "$MO" -m x
+LIB_PATH="$T/mode/other:$PATH" lib "$MO" "$MODE"'; printf "|"; hgit "$CONFINE_WT" rev-parse --is-inside-work-tree'
+check "in default mode hgit reads a checkout another user owns, through the safe-directory file" out_is "0|||$SAFE|true"
+AUDITOR_STRICT=1 LIB_PATH="$T/mode/other:$PATH" lib "$MO" 'hgit "$CONFINE_WT" rev-parse --is-inside-work-tree; printf "|%s" "$?"'
+check "... and in strict mode git refuses it, as with no global config" \
+  test "$(cat "$T/out")|$(head -n 1 "$T/err")" = "|128|fatal: detected dubious ownership in repository at '$MO'"
+LIB_PATH="$T/mode/other:$PATH" lib "$MO" 'confine_strict_on --strict; hgit "$CONFINE_WT" rev-parse --is-inside-work-tree; printf "|%s" "$?"'
+check "... and so it does once confine_strict_on has run" \
+  test "$(cat "$T/out")|$(head -n 1 "$T/err")" = "|128|fatal: detected dubious ownership in repository at '$MO'"
+
+# =================================================================================================
 # confine_path: the case file, lengths and control characters among its cases.
 # =================================================================================================
 printf 'fn a() {}\n' > "$WT/a.rs"
@@ -294,7 +450,52 @@ check "... written ./audit_1" out_is audit_1
 lib "$WT" 'confine_rundir audit_2 R'
 check "a run directory without a .gitignore is refused" refused 'R has no .gitignore holding exactly *: audit_2'
 lib "$WT" 'confine_rundir audit_3 R'
-check "a run directory holding a symbolic link is refused" refused 'R holds a symbolic link: audit_3'
+check "a run directory holding a symbolic link out of it is refused" refused 'R holds a symbolic link: audit_3'
+AUDITOR_STRICT=1 lib "$WT" 'confine_rundir audit_3 R'
+check "... in strict mode too" refused 'R holds a symbolic link: audit_3'
+# In default mode a link that resolves inside the run directory, every link on the way followed, passes
+# (CONF-15); strict mode refuses any link. One that leads nowhere, in a loop, or out through another
+# link inside still counts as out.
+mkdir -p "$WT/audit_8/poc/a/b"
+printf '*\n' > "$WT/audit_8/.gitignore"
+ln -s a "$WT/audit_8/poc/latest"
+ln -s ../../.gitignore "$WT/audit_8/poc/a/gi"
+ln -s latest/b "$WT/audit_8/poc/chain"
+ln -s .. "$WT/audit_8/poc/up"
+lib "$WT" 'confine_rundir audit_8 R; printf "%s" "$CONFINE_RUN"'
+check "a run directory whose links all resolve inside it passes in default mode" out_is audit_8
+AUDITOR_STRICT=1 lib "$WT" 'confine_rundir audit_8 R'
+check "... and is refused in strict mode" refused 'R holds a symbolic link: audit_8'
+for bad in dangling:nowhere loop:loop out-through:up/.. out-abs:"$T/outside"; do
+  ln -s "${bad#*:}" "$WT/audit_8/poc/${bad%%:*}"
+  lib "$WT" 'confine_rundir audit_8 R'
+  check "... but one holding a link that leads ${bad%%:*} is refused in default mode too" refused 'R holds a symbolic link: audit_8'
+  rm "$WT/audit_8/poc/${bad%%:*}"
+done
+# When git cannot tell whether the run directory is tracked, its .gitignore of * is enough in default
+# mode (CONF-16); strict mode refuses. A git that fails with no answer stands for that.
+mkdir -p "$T/cantell"
+printf '#!/bin/sh\necho "fatal: something else" >&2\nexit 1\n' > "$T/cantell/git"
+chmod +x "$T/cantell/git"
+LIB_PATH="$T/cantell:$PATH" lib "$WT" 'confine_rundir audit_1 R; printf "%s" "$CONFINE_RUN"'
+check "a run directory git cannot tell about passes in default mode on its .gitignore of *" out_is audit_1
+LIB_PATH="$T/cantell:$PATH" lib "$WT" 'confine_rundir audit_2 R'
+check "... which it still needs" refused 'R has no .gitignore holding exactly *: audit_2'
+AUDITOR_STRICT=1 LIB_PATH="$T/cantell:$PATH" lib "$WT" 'confine_rundir audit_1 R'
+check "... and strict mode refuses it" refused 'git cannot tell whether R is tracked: audit_1'
+# The same where git finds the repository and only its ls-files fails (a broken index, say).
+mkdir -p "$T/lsfail" "$T/lswt"
+printf '#!/bin/sh
+for a in "$@"; do [ "$a" = ls-files ] && { echo "fatal: index file corrupt" >&2; exit 128; }; done
+exec "%s" "$@"
+' "$REAL_GIT" > "$T/lsfail/git"
+chmod +x "$T/lsfail/git"
+mkrepo "$T/lswt"; put "$T/lswt" f x; commit "$T/lswt" -m x
+mkdir -p "$T/lswt/audit_1"; printf '*\n' > "$T/lswt/audit_1/.gitignore"
+LIB_PATH="$T/lsfail:$PATH" lib "$T/lswt" 'confine_rundir audit_1 R; printf "%s" "$CONFINE_RUN"'
+check "... and so does one in a repository whose ls-files fails, in default mode" out_is audit_1
+AUDITOR_STRICT=1 LIB_PATH="$T/lsfail:$PATH" lib "$T/lswt" 'confine_rundir audit_1 R'
+check "... which strict mode refuses" refused 'git cannot tell whether R is tracked: audit_1'
 lib "$WT" 'confine_rundir audit_4 R'
 check "a .gitignore that lets a file through is refused" refused 'R has no .gitignore holding exactly *: audit_4'
 lib "$WT" 'confine_rundir audit_5 R'
@@ -424,21 +625,135 @@ lib "$RW" 'confine_repo gitfile R'
 check "a .git file naming a repository outside is refused" refused 'R keeps its git directory outside the working directory: gitfile'
 lib "$RW" 'confine_repo gitlink R'
 check "a .git link to a repository outside is refused" refused 'R keeps its git directory outside the working directory: gitlink'
+UNREAD='test: note: R keeps its git directory outside the working directory, and nothing there ties it back to this working tree, so its history is not read; strict mode refuses this (Rule 11f)'
+for d in gitfile gitlink; do
+  D=$d lib "$RW" 'confine_repo "$D" R 0; printf "went on"'
+  check "given a status, in default mode a git directory outside that nothing ties back ($d) gets a note, and the tool ends with it" \
+    test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0||$UNREAD"
+  D=$d AUDITOR_STRICT=1 lib "$RW" 'confine_repo "$D" R 0; printf "went on"'
+  check "... and in strict mode is refused ($d)" refused "R keeps its git directory outside the working directory: $d"
+done
 lib "$RW" 'confine_repo linked R'
 check "a symbolic link inside the git directory is refused" refused 'R has a symbolic link in its git directory: linked'
-lib "$RW" 'confine_repo alt R'
-check "a repository with alternates is refused" \
+AUDITOR_STRICT=1 lib "$RW" 'confine_repo linked R'
+check "... in strict mode too" refused 'R has a symbolic link in its git directory: linked'
+AUDITOR_STRICT=1 lib "$RW" 'confine_repo alt R'
+check "in strict mode a repository with alternates is refused" \
   refused 'R borrows objects from another repository (objects/info/alternates); audit a full copy: alt'
+lib "$RW" 'confine_repo alt R; printf "%s" "$CONFINE_BARE"'
+check "... and in default mode read, with one note (CONF-08)" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|false|test: note: R borrows objects from another repository (objects/info/alternates), so its history is read from there too; strict mode refuses this (Rule 11f)"
 lib "$RW" 'confine_repo wtree R'
 check "a repository whose work tree is elsewhere is refused" refused 'R is not the top level of its repository: wtree'
-lib "$RW" 'confine_repo grafted R'
-check "a repository that rewrites commit parents with info/grafts is refused" \
+AUDITOR_STRICT=1 lib "$RW" 'confine_repo grafted R'
+check "in strict mode a repository that rewrites commit parents with info/grafts is refused" \
   refused 'R rewrites commit parents (info/grafts), so git would show another history; review that file: grafted'
+lib "$RW" 'confine_repo grafted R; printf "%s" "$CONFINE_BARE"'
+check "... and in default mode read, with one note (CONF-09)" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|false|test: note: R rewrites commit parents (info/grafts), so git shows the history that file sets; strict mode refuses this (Rule 11f)"
+NOTHING="the working directory lies below the top level of its repository (..), which tracks nothing under it, so it is not taken for the tree under audit: start Claude Code at that top level, or in a folder the repository tracks (Rule 11c)"
 lib "$RW/plain" 'confine_repo . R'
-check "a working directory that is not a repository top level is refused (discovery stops at WT's parent)" \
+check "a working directory under which its repository tracks nothing is refused, saying so" refused "$NOTHING"
+AUDITOR_STRICT=1 lib "$RW/plain" 'confine_repo . R'
+check "... in strict mode too" refused "$NOTHING"
+mkdir -p "$T/norepo/e"
+lib "$T/norepo/e" 'confine_repo . R'
+check "... while one with no repository above it gets the reason it has today" \
   refused 'R is not a git repository that git can read (none there, or another user owns it: audit a copy): .'
 lib "$RW" 'confine_repo_top "$CONFINE_WT" && printf top; confine_repo_top "$CONFINE_WT/programs" || printf " not-top"; confine_repo_top "$CONFINE_WT/copy.git" && printf " bare-top"'
 check "confine_repo_top: a top level, a subdirectory, a bare repository" out_is 'top not-top bare-top'
+# A session started in a subdirectory of a repository that tracks something there (spec §4.2): in default
+# mode confine_repo . takes the repository at its top level, with the working directory's path in it as
+# the prefix, and hgit_tree reads from <empty>/<prefix>, so paths mean what they mean in the subdirectory.
+# Strict mode refuses it by name. An explicit --repo below a top level stays refused (above).
+lib "$RW/programs" 'confine_repo . R; printf "%s|%s|%s|%s" "$CONFINE_REPO" "$CONFINE_PREFIX" "$CONFINE_GIT_DIR" "$CONFINE_BARE"'
+check "in default mode confine_repo . from a subdirectory takes the repository at its top level, with the prefix" \
+  out_is "$RW|programs/|$RW/.git|false"
+AUDITOR_STRICT=1 lib "$RW/programs" 'confine_repo . R'
+check "... and strict mode refuses it, naming where the top level lies" \
+  refused 'the working directory lies below the top level of its repository (..); strict mode reads a repository only from its top level: start Claude Code there (Rule 11f)'
+mkdir -p "$T/tmps"
+TMPDIR="$T/tmps" lib "$RW/programs" 'confine_repo . R && hgit_tree "$CONFINE_REPO" log --format=%s -- x.rs &&
+  hgit_tree "$CONFINE_REPO" ls-tree --name-only HEAD && hgit_text_tree "$CONFINE_REPO" rev-parse --show-prefix'
+check "... where hgit_tree and hgit_text_tree read from the subdirectory, as git does there" out_is "$(printf 'x\nx.rs\nprograms/')"
+check "... and leave nothing under TMPDIR" test -z "$(ls -A "$T/tmps")"
+TMPDIR="$T/tmps" lib "$RW/programs" 'confine_repo_top "$CONFINE_WT/.." && confine_repo . R && hgit_tree "$CONFINE_REPO" ls-tree --name-only HEAD'
+check "... also when confine_repo_top took that top level first" out_is x.rs
+# A symbolic link in a hooks directory (CONF-07): git opens no hook with core.hooksPath pinned to
+# /dev/null, so default mode accepts it; any other link stays refused (above), since git reads through it.
+mkrepo "$RW/hooklink"; put "$RW/hooklink" f x; commit "$RW/hooklink" -m x
+mkdir -p "$T/hooks-src"; printf '#!/bin/sh\n' > "$T/hooks-src/pre-commit"
+ln -s "$T/hooks-src/pre-commit" "$RW/hooklink/.git/hooks/pre-commit"
+lib "$RW" 'confine_repo hooklink R; printf "%s" "$CONFINE_BARE"'
+check "in default mode a symbolic link in the hooks directory is accepted" out_is false
+AUDITOR_STRICT=1 lib "$RW" 'confine_repo hooklink R'
+check "... and strict mode refuses it" refused 'R has a symbolic link in its git directory: hooklink'
+rm -r "$RW/hooklink/.git/hooks"; ln -s "$T/hooks-src" "$RW/hooklink/.git/hooks"
+lib "$RW" 'confine_repo hooklink R; printf "%s" "$CONFINE_BARE"'
+check "... as is a hooks directory that is a link itself" out_is false
+# Alternates in default mode: each object directory they name, and those its own alternates name, is
+# checked as a git directory is; a quoted path, which these checks do not read as git does, is refused.
+mkrepo "$RW/alt2"; put "$RW/alt2" f x; commit "$RW/alt2" -m x
+git clone -q --bare "$O" "$T/alt-store.git"
+git clone -q --bare "$O" "$T/alt-store2.git"
+printf '# a comment\n\n%s/objects\n' "$T/alt-store.git" > "$RW/alt2/.git/objects/info/alternates"
+lib "$RW" 'confine_repo alt2 R 2>/dev/null; printf "%s" "$CONFINE_BARE"'
+check "in default mode alternates naming a plain object directory are read" out_is false
+ln -s "$O/.git/HEAD" "$T/alt-store.git/objects/pick"
+lib "$RW" 'confine_repo alt2 R'
+check "... but not one that holds a symbolic link" \
+  refused 'R borrows objects from a directory that holds a symbolic link, named pipe or device (objects/info/alternates): alt2'
+rm "$T/alt-store.git/objects/pick"
+printf '%s/objects\n' "$T/alt-store2.git" > "$T/alt-store.git/objects/info/alternates"
+ln -s "$O/.git/HEAD" "$T/alt-store2.git/objects/pick"
+lib "$RW" 'confine_repo alt2 R'
+check "... nor one whose own alternates name such a directory" \
+  refused 'R borrows objects from a directory that holds a symbolic link, named pipe or device (objects/info/alternates): alt2'
+rm "$T/alt-store2.git/objects/pick" "$T/alt-store.git/objects/info/alternates"
+printf '"%s/objects"\n' "$T/alt-store.git" > "$RW/alt2/.git/objects/info/alternates"
+lib "$RW" 'confine_repo alt2 R'
+check "... nor a quoted path" \
+  refused 'R borrows objects through a quoted path in objects/info/alternates, which these checks do not read: alt2'
+# Git's own layouts with a git directory outside (addendum I). In default mode a linked worktree whose main
+# checkout lies elsewhere, a submodule opened from inside, and a separate git directory whose
+# core.worktree names the working tree are read; strict mode refuses each. A gitdir file naming another
+# tree, a separate git directory with no core.worktree (git init writes none), and a submodule its
+# superproject does not track are not tied back.
+MO2="$T/main-out"; mkrepo "$MO2"; put "$MO2" f main; commit "$MO2" -m main
+git -C "$MO2" worktree add -q -b lw "$RW/lwout" >/dev/null 2>&1
+lib "$RW" 'confine_repo lwout R 0; printf "%s|%s" "$CONFINE_GIT_DIR" "$CONFINE_COMMON_DIR"'
+check "in default mode a linked worktree whose main checkout lies outside is read" out_is "$MO2/.git/worktrees/lwout|$MO2/.git"
+AUDITOR_STRICT=1 lib "$RW" 'confine_repo lwout R 0'
+check "... and refused in strict mode" refused 'R keeps its git directory outside the working directory: lwout'
+cp "$MO2/.git/worktrees/lwout/gitdir" "$T/gitdir.kept"
+printf '%s/.git\n' "$O" > "$MO2/.git/worktrees/lwout/gitdir"
+lib "$RW" 'confine_repo lwout R 0; printf "went on"'
+check "... but not one whose gitdir file names another tree" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0||$UNREAD"
+cp "$T/gitdir.kept" "$MO2/.git/worktrees/lwout/gitdir"
+SUP="$T/super"; mkrepo "$SUP"; put "$SUP" top.txt t; commit "$SUP" -m top
+mkdir -p "$SUP/.git/modules"
+git init -q --separate-git-dir="$SUP/.git/modules/sub" "$SUP/sub"
+printf 'gitdir: ../.git/modules/sub\n' > "$SUP/sub/.git"
+git -C "$SUP/sub" config core.worktree ../../../sub
+git -C "$SUP/sub" symbolic-ref HEAD refs/heads/main; put "$SUP/sub" s.txt s; commit "$SUP/sub" -m sub
+git -C "$SUP" update-index --add --cacheinfo "160000,$(git -C "$SUP/sub" rev-parse HEAD),sub"; commit "$SUP" -m 'add sub'
+lib "$SUP/sub" 'confine_repo . R 0; printf "%s" "$CONFINE_GIT_DIR"'
+check "in default mode a submodule opened from inside, whose core.worktree names it, is read" out_is "$SUP/.git/modules/sub"
+AUDITOR_STRICT=1 lib "$SUP/sub" 'confine_repo . R 0'
+check "... and refused in strict mode" refused 'R keeps its git directory outside the working directory: .'
+git -C "$SUP/sub" config --unset core.worktree
+lib "$SUP/sub" 'confine_repo . R 0; printf "%s" "$CONFINE_GIT_DIR"'
+check "... and so is one with no core.worktree inside the top level of the superproject, which tracks it" out_is "$SUP/.git/modules/sub"
+git -C "$SUP" rm -q --cached sub
+lib "$SUP/sub" 'confine_repo . R 0; printf "went on"'
+check "... but not once the superproject tracks it no more" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0||$UNREAD"
+git init -q --separate-git-dir="$T/sep.git" "$RW/sep"
+git -C "$RW/sep" symbolic-ref HEAD refs/heads/main; put "$RW/sep" f x; commit "$RW/sep" -m x
+lib "$RW" 'confine_repo sep R 0; printf "went on"'
+check "a separate git directory outside with no core.worktree is not tied back" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0||$UNREAD"
+git --git-dir="$T/sep.git" config core.worktree "$RW/sep"
+lib "$RW" 'confine_repo sep R 0; printf "%s" "$CONFINE_GIT_DIR"'
+check "... while one whose core.worktree names the working tree is read" out_is "$T/sep.git"
 lib "$RW" 'confine_partial_clone "$CONFINE_WT"; printf "%s" "$?"'
 check "confine_partial_clone: not partial (1)" out_is 1
 git -C "$RW/linked" config remote.origin.promisor true
@@ -677,26 +992,47 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
   # link to one, is refused; a link to a regular file passes.
   mkrepo "$RW/wtpipe"; put "$RW/wtpipe" src/f x; put "$RW/wtpipe" src/g y; commit "$RW/wtpipe" -m x
   printf 'z\n' >> "$RW/wtpipe/src/f"; git -C "$RW/wtpipe" commit -q -am y
+  # Strict mode searches the work tree for them (CONF-11); default mode does not, since hgit_tree's reads
+  # open no file of it and its questions have a time limit, and the same fixtures read at once.
   wtmsg='a named pipe or device is where git reads its own files in the work tree, and git would wait on it for good'
   mkfifo "$RW/wtpipe/.mailmap"
-  lib_bounded "$RW/wtpipe/.mailmap" "$RW" 'confine_repo wtpipe R'
-  check "a named pipe as the work tree's .mailmap is refused" refused "$wtmsg: $(shown "$RW/wtpipe/.mailmap")"
-  bounded "$RW/wtpipe/.mailmap" script "$RW" git-ro.sh --repo wtpipe log -1
+  AUDITOR_STRICT=1 lib_bounded "$RW/wtpipe/.mailmap" "$RW" 'confine_repo wtpipe R'
+  check "in strict mode a named pipe as the work tree's .mailmap is refused" refused "$wtmsg: $(shown "$RW/wtpipe/.mailmap")"
+  AUDITOR_STRICT=1 bounded "$RW/wtpipe/.mailmap" script "$RW" git-ro.sh --repo wtpipe log -1
   check "... so git-ro.sh log refuses at once" refused_by git-ro
-  bounded "$RW/wtpipe/.mailmap" script "$RW" git-ro.sh --repo wtpipe shortlog HEAD
+  AUDITOR_STRICT=1 bounded "$RW/wtpipe/.mailmap" script "$RW" git-ro.sh --repo wtpipe shortlog HEAD
   check "... and so does git-ro.sh shortlog" refused_by git-ro
+  lib_bounded "$RW/wtpipe/.mailmap" "$RW" 'confine_repo wtpipe R; printf "%s" "$CONFINE_BARE"'
+  check "in default mode confine_repo takes that repository" out_is false
+  bounded "$RW/wtpipe/.mailmap" script "$RW" git-ro.sh --repo wtpipe log -1
+  check "... and git-ro.sh log reads it at once" sh -c "[ '$RC' = 0 ] && [ ! -s '$T/err' ] && grep -q '^commit ' '$T/out'"
+  bounded "$RW/wtpipe/.mailmap" script "$RW" git-ro.sh --repo wtpipe shortlog HEAD
+  check "... and so does git-ro.sh shortlog" sh -c "[ '$RC' = 0 ] && [ ! -s '$T/err' ] && grep -q '^fixture (2):' '$T/out'"
   rm "$RW/wtpipe/.mailmap"
   mkfifo "$RW/wtpipe/src/.gitattributes"
-  bounded "$RW/wtpipe/src/.gitattributes" script "$RW" git-ro.sh --repo wtpipe diff HEAD~1 HEAD
-  check "... and a named pipe as a .gitattributes below: git-ro.sh diff refuses at once" refused_by git-ro
-  lib_bounded "$RW/wtpipe/src/.gitattributes" "$RW" 'confine_repo_top "$CONFINE_WT/wtpipe" && printf top || printf not-top'
+  AUDITOR_STRICT=1 bounded "$RW/wtpipe/src/.gitattributes" script "$RW" git-ro.sh --repo wtpipe diff HEAD~1 HEAD
+  check "in strict mode a named pipe as a .gitattributes below: git-ro.sh diff refuses at once" refused_by git-ro
+  AUDITOR_STRICT=1 lib_bounded "$RW/wtpipe/src/.gitattributes" "$RW" 'confine_repo_top "$CONFINE_WT/wtpipe" && printf top || printf not-top'
   check "... and confine_repo_top fails there" out_is not-top
+  bounded "$RW/wtpipe/src/.gitattributes" script "$RW" git-ro.sh --repo wtpipe diff HEAD~1 HEAD
+  check "in default mode git-ro.sh diff reads past it at once" sh -c "[ '$RC' = 0 ] && [ ! -s '$T/err' ] && grep -q '^+z' '$T/out'"
+  lib_bounded "$RW/wtpipe/src/.gitattributes" "$RW" 'confine_repo_top "$CONFINE_WT/wtpipe" && printf top || printf not-top'
+  check "... and confine_repo_top takes that repository" out_is top
   rm "$RW/wtpipe/src/.gitattributes"
   mkfifo "$RW/wtpipe/pipe"
   ln -s pipe "$RW/wtpipe/.gitignore"
-  lib_bounded "$RW/wtpipe/pipe" "$RW" 'confine_repo wtpipe R'
-  check "... and a .gitignore that is a link to a named pipe" refused "$wtmsg: $(shown "$RW/wtpipe/.gitignore")"
+  AUDITOR_STRICT=1 lib_bounded "$RW/wtpipe/pipe" "$RW" 'confine_repo wtpipe R'
+  check "in strict mode a .gitignore that is a link to a named pipe is refused" refused "$wtmsg: $(shown "$RW/wtpipe/.gitignore")"
+  lib_bounded "$RW/wtpipe/pipe" "$RW" 'confine_repo wtpipe R; printf "%s" "$CONFINE_BARE"'
+  check "... and taken in default mode" out_is false
   rm "$RW/wtpipe/.gitignore" "$RW/wtpipe/pipe"
+  # A question that opens such a file in default mode meets its time limit: a named pipe as the top-level
+  # .gitignore, which ls-files -o reads.
+  mkfifo "$RW/wtpipe/.gitignore"
+  BOUND=150 bounded "$RW/wtpipe/.gitignore" script "$RW" git-ro.sh --repo wtpipe ls-files -o --exclude-standard
+  check "in default mode a question that opens a named pipe in the work tree is cut off by its time limit, refused" \
+    sh -c "[ '$RC' = 64 ] && grep -q '^git-ro: refused: git has not answered within 10 s' '$T/err'"
+  rm "$RW/wtpipe/.gitignore"
   ln -s src/g "$RW/wtpipe/.gitignore"
   lib "$RW" 'confine_repo wtpipe R; printf "%s" "$CONFINE_BARE"'
   check "... while a .gitignore that is a link to a regular file passes" out_is false
@@ -856,6 +1192,45 @@ os.execvp(sys.argv[1], sys.argv[1:])' "${SHELLS[0]}")
 else
   skp "mkfifo is not available: the named pipe cases"
 fi
+# A walk of a git directory that meets an entry that vanished, as when git's gc prunes loose objects while
+# find walks them: the walk stands, since what is gone cannot be waited on; any other failure is tried
+# again and refused only when it persists. Each stand-in find walks as find does, then fails as named.
+REAL_FIND=$(command -v find)
+mkrepo "$T/walkrepo"; put "$T/walkrepo" f x; commit "$T/walkrepo" -m x
+for m in vanish-once vanish-always deny-twice deny-always; do
+  mkdir -p "$T/$m"
+  case "$m" in
+    vanish-*) why='No such file or directory' ;;
+    *) why='Permission denied' ;;
+  esac
+  case "$m" in
+    *-once) upto=1 ;;
+    *-twice) upto=2 ;;
+    *) upto=999999 ;;
+  esac
+  printf '#!/bin/sh\n"%s" "$@"; rc=$?\nn=$(cat "%s" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "%s"\n[ "$n" -gt %s ] || { echo "find: $1/objects/ab: %s" >&2; exit 1; }\nexit "$rc"\n' \
+    "$REAL_FIND" "$T/$m/calls" "$T/$m/calls" "$upto" "$why" > "$T/$m/find"
+  chmod +x "$T/$m/find"
+done
+for st in 0 1; do
+  for m in vanish-once vanish-always deny-twice; do
+    rm -f "$T/$m/calls"
+    AUDITOR_STRICT=$st LIB_PATH="$T/$m:$PATH" lib_once "$T/walkrepo" 'confine_repo . R; printf "%s" "$CONFINE_BARE"'
+    check "a walk of the git directory that fails as $m still takes the repository (strict $st)" out_is false
+  done
+  check "... the one denied twice, after it was tried again (strict $st)" test "$(cat "$T/deny-twice/calls")" -ge 3
+  rm -f "$T/deny-always/calls"
+  AUDITOR_STRICT=$st LIB_PATH="$T/deny-always:$PATH" lib_once "$T/walkrepo" 'confine_repo . R'
+  check "... but one that keeps failing for another reason is refused, after three tries (strict $st)" \
+    refused "the git directory holds a directory that cannot be read, so a named pipe or device in it cannot be ruled out: $(shown "$T/walkrepo/.git")"
+  check "... whose walks were tried three times (strict $st)" test "$(cat "$T/deny-always/calls")" = 3
+  if mkfifo "$T/walkrepo/.git/pipe" 2>/dev/null; then
+    AUDITOR_STRICT=$st LIB_PATH="$T/vanish-always:$PATH" lib_bounded "$T/walkrepo/.git/pipe" "$T/walkrepo" 'confine_repo . R'
+    check "... and a named pipe that is still there is refused, whatever vanished beside it (strict $st)" \
+      refused "a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$T/walkrepo/.git")"
+    rm "$T/walkrepo/.git/pipe"
+  fi
+done
 # A git directory holding 2000 symbolic links: one find lists them and the shell tests each, so rundir.sh
 # and confine_repo end within 5 s (a find -exec per link took minutes).
 mkrepo "$RW/links"; put "$RW/links" f x; commit "$RW/links" -m x

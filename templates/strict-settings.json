@@ -1,0 +1,70 @@
+{
+  "env": {
+    "AUDITOR_STRICT": "1",
+    "AUDITOR_EXEC_MODE": "isolated",
+    "CLAUDE_CODE_FORK_SUBAGENT": "0"
+  },
+  "permissions": {
+    "blockReadsOutsideWorkingDirectories": true,
+    "ask": ["Bash(dangerouslyDisableSandbox:true)"],
+    "allow": [
+      "Skill(auditor:audit-cycle *)", "Skill(auditor:audit-assist *)", "Skill(auditor:intake *)",
+      "Skill(auditor:threat-model *)", "Skill(auditor:triage *)", "Skill(auditor:poc *)",
+      "Skill(auditor:patch *)", "Skill(auditor:audit-report *)", "Skill(auditor:hunt *)",
+      "Skill(auditor:respond *)", "Skill(auditor:dnr-analyze *)", "Skill(auditor:audit *)",
+      "Skill(auditor:quick-scan *)", "Skill(auditor:deep-review *)", "Skill(auditor:diff-audit *)",
+      "Skill(auditor:spec-audit *)", "Skill(auditor:economic-sim *)", "Skill(auditor:re-audit *)",
+      "Skill(auditor:auditor-skill)", "Skill(auditor:auditor-skill *)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": false,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "filesystem": {
+      "allowRead": ["~/.cargo", "~/.rustup", "~/.local/share/solana", "~/.cache/solana", "~/.avm"]
+    },
+    "network": {
+      "strictAllowlist": true,
+      "allowedDomains": [
+        "crates.io", "index.crates.io", "static.crates.io", "registry.npmjs.org",
+        "pypi.org", "files.pythonhosted.org", "github.com", "semgrep.dev"
+      ]
+    },
+    "credentials": {
+      "files": [
+        { "path": "~/.ssh", "mode": "deny" },
+        { "path": "~/.config/solana", "mode": "deny" },
+        { "path": "~/.aws", "mode": "deny" },
+        { "path": "~/.config/gcloud", "mode": "deny" },
+        { "path": "~/.azure", "mode": "deny" },
+        { "path": "~/.kube", "mode": "deny" },
+        { "path": "~/.docker/config.json", "mode": "deny" },
+        { "path": "~/.npmrc", "mode": "deny" },
+        { "path": "~/.yarnrc.yml", "mode": "deny" },
+        { "path": "~/.gem", "mode": "deny" },
+        { "path": "~/.pypirc", "mode": "deny" },
+        { "path": "~/.cargo/credentials", "mode": "deny" },
+        { "path": "~/.cargo/credentials.toml", "mode": "deny" },
+        { "path": "~/.git-credentials", "mode": "deny" },
+        { "path": "~/.config/git/credentials", "mode": "deny" },
+        { "path": "~/.netrc", "mode": "deny" },
+        { "path": "~/.config/gh", "mode": "deny" },
+        { "path": "~/.gnupg", "mode": "deny" },
+        { "path": "~/.claude/.credentials.json", "mode": "deny" },
+        { "path": "~/.claude.json", "mode": "deny" },
+        { "path": "~/.claude/backups", "mode": "deny" },
+        { "path": "~/.config/anthropic", "mode": "deny" },
+        { "path": "~/.vault-token", "mode": "deny" },
+        { "path": "~/.terraform.d", "mode": "deny" },
+        { "path": "~/.terraformrc", "mode": "deny" },
+        { "path": "~/.gitcookies", "mode": "deny" },
+        { "path": "~/.docker/key.pem", "mode": "deny" },
+        { "path": "~/.docker/contexts/tls", "mode": "deny" },
+        { "path": "~/.1password", "mode": "deny" },
+        { "path": "~/Library/Group Containers/2BUA8C4S2C.com.1password", "mode": "deny" }
+      ]
+    }
+  }
+}

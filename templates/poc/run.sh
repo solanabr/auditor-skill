@@ -11,9 +11,9 @@
 # directory under audit, takes the crate and its inputs as arguments (ARGUMENTS below):
 # that is the form a command pre-approves. A copy inside a crate, run as ./run.sh, builds
 # the crate it sits in and reads its inputs from the environment: AUDITOR_EXEC_MODE,
-# VULNERABLE_SO, FIXED_SO, UPDATE_PINS, CARGO_TARGET_DIR and KEEP_POC_BUILD (and, for a
-# crate at <R>/poc/<ID>, <R>/exec-mode). Both read TOOLS_VERSION and POC_LOCK_WAIT from
-# the environment.
+# AUDITOR_STRICT, VULNERABLE_SO, FIXED_SO, UPDATE_PINS, CARGO_TARGET_DIR and
+# KEEP_POC_BUILD (and, for a crate at <R>/poc/<ID>, <R>/exec-mode and <R>/strict). Both
+# read TOOLS_VERSION and POC_LOCK_WAIT from the environment.
 #
 # Reproduces the finding from a clean checkout of THIS crate. It builds both arms to SBF
 # and both test binaries first, then:
@@ -91,20 +91,25 @@
 #     directory --new-cache made: $TMPDIR/auditor-poc-target.XXXXXX, outside the
 #     working directory, yours, mode 0700, holding the marker file .auditor-poc-cache.
 #     --new-cache prints its path and exits 0; record it next to the execution mode.
-#   * the execution mode is the stricter of AUDITOR_EXEC_MODE and the exec-mode of
-#     each run directory an argument names (one word, none, isolated or native,
-#     written when the human answers Q46): the crate's <R>, and that of --vulnerable-so
-#     and --fixed-so. none is the strictest and native the least. With no mode
-#     recorded, with none, or with a --mode that names another mode than that, run.sh
+#   * the execution mode is the stricter of AUDITOR_EXEC_MODE, the exec-mode of each
+#     run directory an argument names (one word, none, isolated or native, written
+#     when the human answers Q46: the crate's <R>, and that of --vulnerable-so and
+#     --fixed-so) and strict mode, which counts as isolated (OUTPUT-RULES.md Rule 11f:
+#     AUDITOR_STRICT, or a strict entry in a run directory of the working directory,
+#     as scripts/lib/confine.sh reads them). none is the strictest and native the
+#     least; when none of them says anything the mode is native, and a >> note: line
+#     says so. With none, or with a --mode that names another mode than that, run.sh
 #     exits 3 before it copies anything; --mode catches a mode that changed without
 #     the human.
 #   * in isolated mode the credential self-check of scripts/lib/isolation.sh runs
 #     first: a readable key, cloud or registry credential, or a reachable agent socket
 #     means this is not the isolated runner, and the run stops with exit 3, as it does
-#     when the check cannot finish. Variables of run.sh's own environment whose names
-#     look like credentials get a warning line. In native mode the same check prints,
-#     as a warning, what the code this run builds can read, by kind and count; neither
-#     line names a path.
+#     when the check cannot finish. The blocker ends with what the human changes to
+#     build natively instead (AUDITOR_EXEC_MODE, an exec-mode file, or both), or, in
+#     strict mode, says that strict mode builds only on an isolated runner. Variables
+#     of run.sh's own environment whose names look like credentials get a warning
+#     line. In native mode the same check prints, as a warning, what the code this run
+#     builds can read, by kind and count; neither line names a path.
 #   * every cargo call and test binary runs under env -i with only what
 #     scripts/lib/isolation.sh passes: a throwaway HOME holding a fresh Solana keypair,
 #     TMPDIR in the scratch copy, the cleaned PATH and the user's CARGO_HOME and
@@ -125,15 +130,17 @@
 #
 # EXECUTION MODE. Building this crate runs code on the machine that builds it: the
 # build scripts and proc-macros of every dependency, then the tests. So every run
-# needs the execution mode recorded for the audit or incident (OUTPUT-RULES.md Rule
-# 11a, QUESTIONS.md Q46): AUDITOR_EXEC_MODE=isolated inside the isolated runner, or
-# AUDITOR_EXEC_MODE=native (the report then states that the PoC build ran on this
-# host). The installation's copy takes the stricter of it and <R>/exec-mode
-# (ARGUMENTS), and so does ./run.sh in a crate at <R>/poc/<ID>; none stops either.
-# Without a mode, run.sh exits 3 before it copies or compiles anything. The agent
-# writes <R>/exec-mode and could write another word there, so a human who chose
-# isolated also sets AUDITOR_EXEC_MODE=isolated where Claude Code runs: the stricter
-# mode then holds whatever the file says.
+# names the execution mode it runs in (OUTPUT-RULES.md Rule 11a, QUESTIONS.md Q46):
+# isolated inside the isolated runner, or native on this host, which the report then
+# states. The installation's copy takes the stricter of AUDITOR_EXEC_MODE, <R>/exec-mode
+# and strict mode (ARGUMENTS), and so does ./run.sh in a crate at <R>/poc/<ID>, which
+# reads strict mode from AUDITOR_STRICT and a strict entry in its own <R> (a crate
+# anywhere else reads the environment alone); none stops either. When nothing is
+# recorded and strict mode is off, the mode is native: the >> execution mode: line
+# says so, and a >> note: line after it. The agent writes <R>/exec-mode and could
+# write another word there; for a source the human does not trust, strict mode
+# started with the launch line holds isolated mode where no file can loosen it
+# (OUTPUT-RULES.md Rule 11f).
 #
 # WHERE IT BUILDS. This crate normally sits inside the audited repo
 # (audit_<n>/poc/…, incident_<n>/poc/…). Built there, cargo would read the target's
@@ -300,10 +307,13 @@
 #     resolved Cargo.lock again after the downloads, before anything compiles; and it
 #     stops before a test runs when the build compiled code from outside the crate.
 #     In native mode it builds no crate, an audit's included, while the INCIDENTS.json
-#     of any incident_* directory in the working directory (its name in any letter
-#     case) records a supply_chain_or_ci incident or cannot be read, or the working
-#     directory cannot be listed: any PoC can build the target's crates. A directory
-#     without that file, or whose file records no incident, counts for nothing.
+#     of any run directory the auditor made in the working directory (incident_<n>,
+#     with the .gitignore of * that scripts/rundir.sh writes) records a
+#     supply_chain_or_ci incident or cannot be read, or the working directory cannot be
+#     listed: any PoC can build the target's crates. A run directory without that file,
+#     or whose file records no incident, counts for nothing. Any other incident_* folder,
+#     in any letter case (a client's Incident_Response/, a run moved aside), is passed
+#     over, and a >> note: line names those that hold an INCIDENTS.json.
 #     ./run.sh does not read INCIDENTS.json.
 
 set -Eeuo pipefail
@@ -480,12 +490,42 @@ mode_file() {
   MODE_TEXT="${text}"
 }
 
-# exec_mode <--mode value or nothing>: MODE becomes the stricter of AUDITOR_EXEC_MODE and
-# the exec-mode of every run directory an argument names (none, then isolated, then
-# native), and must be --mode when that is given.
+# resolve_mode <words> <AUDITOR_EXEC_MODE> <why strict mode is on, or nothing>: MODE becomes
+# the stricter of the words (the exec-mode of each run directory read), the variable and
+# strict mode, which counts as isolated (none, then isolated, then native), and native when
+# none of them says anything (MODE_DEFAULT=1). MODE_SOURCES gains the variable and strict
+# mode. none stops here.
+resolve_mode() {
+  local words="$1" env="$2" why="$3"
+  MODE_SOURCES="${MODE_SOURCES}AUDITOR_EXEC_MODE: ${env:-unset}; strict mode: off"
+  if [[ -n "${why}" ]]; then MODE_SOURCES="${MODE_SOURCES%off}on (${why})"; words="${words} isolated"; fi
+  MODE_DEFAULT=0
+  case " ${words} ${env} " in
+    *" none "*) MODE=none ;;
+    *" isolated "*) MODE=isolated ;;
+    *" native "*) MODE=native ;;
+    *) MODE=native; MODE_DEFAULT=1 ;;
+  esac
+  if [[ "${MODE}" == none ]]; then
+    blocker "the recorded execution mode is none (${MODE_SOURCES}): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
+  fi
+}
+
+# say_mode: the mode line, and a note when nothing was recorded.
+say_mode() {
+  echo ">> execution mode: ${MODE} (the stricter of ${MODE_SOURCES}; native when none is recorded)"
+  if [[ "${MODE_DEFAULT}" == 1 ]]; then
+    echo ">> note: no execution mode is recorded, so this PoC builds and runs natively, on this machine (OUTPUT-RULES.md Rule 11a)"
+  fi
+}
+
+# exec_mode <--mode value or nothing>: MODE becomes the stricter of AUDITOR_EXEC_MODE, the
+# exec-mode of every run directory an argument names and strict mode (resolve_mode), and
+# must be --mode when that is given. GO_NATIVE says what the human changes to build
+# natively instead, for the self-check's blockers.
 exec_mode() {
-  local want="$1" run seen=" " words=""
-  ENV_MODE="${AUDITOR_EXEC_MODE:-}"; MODE_SOURCES=""
+  local want="$1" run seen=" " words="" files=""
+  ENV_MODE="${AUDITOR_EXEC_MODE:-}"; MODE_SOURCES=""; GO_NATIVE=""; STRICT_WHY=""
   case "${ENV_MODE}" in
     ''|none|isolated|native) ;;
     *) refuse "AUDITOR_EXEC_MODE is '$(confine_text "${ENV_MODE}")', not none, isolated or native" ;;
@@ -496,19 +536,12 @@ exec_mode() {
     mode_file "${WT}/${run}" "${run}"
     words="${words} ${MODE_TEXT}"
     MODE_SOURCES="${MODE_SOURCES}${run}/exec-mode: ${MODE_TEXT:-absent}; "
+    if [[ "${MODE_TEXT}" == isolated ]]; then files="${files:+${files} and }${run}/exec-mode"; fi
   done
-  MODE_SOURCES="${MODE_SOURCES}AUDITOR_EXEC_MODE: ${ENV_MODE:-unset}"
-  if [[ -z "${words// /}${ENV_MODE}" ]]; then
-    blocker "no recorded mode: ${CRATE_RUN}/exec-mode is missing and AUDITOR_EXEC_MODE is not set (OUTPUT-RULES.md Rule 11a, QUESTIONS.md Q46). Record the human's answer in ${CRATE_RUN}/exec-mode and run this again — nothing was copied or built."
-  fi
-  case " ${words} ${ENV_MODE} " in
-    *" none "*) MODE=none ;;
-    *" isolated "*) MODE=isolated ;;
-    *) MODE=native ;;
-  esac
-  if [[ "${MODE}" == none ]]; then
-    blocker "the recorded execution mode is none (${MODE_SOURCES}): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
-  fi
+  if [[ "${ENV_MODE}" == isolated ]]; then GO_NATIVE="unsets AUDITOR_EXEC_MODE where Claude Code runs"; fi
+  if [[ -n "${files}" ]]; then GO_NATIVE="${GO_NATIVE:+${GO_NATIVE} and }writes native to ${files}"; fi
+  if [[ "${CONFINE_STRICT}" == 1 ]]; then STRICT_WHY="${CONFINE_MODE_WHY}"; fi
+  resolve_mode "${words}" "${ENV_MODE}" "${STRICT_WHY}"
   if [[ -n "${want}" && "${want}" != "${MODE}" ]]; then
     blocker "--mode is ${want}, but the recorded execution mode is ${MODE} (${MODE_SOURCES}); the mode changes only when the human answers again — nothing was copied or built."
   fi
@@ -548,19 +581,22 @@ incident_rule() {
 }
 
 # native_rule: natively nothing from the working directory is built, whichever run directory the
-# crate is in, while the INCIDENTS.json of any incident_* directory there records a
+# crate is in, while the INCIDENTS.json of a run directory the auditor made there records a
 # supply_chain_or_ci incident or cannot be read: any PoC can build the target's crates, which may
 # then be the payload (OUTPUT-RULES.md Rule 11a). target.sh applies the same rule, through the same
-# iso_incident_runs of scripts/lib/isolation.sh: a directory without INCIDENTS.json, or whose file
-# records no incident (a hunt that ruled everything out), counts for nothing, and a directory that
-# cannot be searched is read, so that its refusal stops the run.
+# iso_incident_runs of scripts/lib/isolation.sh: a run directory without INCIDENTS.json, or whose
+# file records no incident (a hunt that ruled everything out), counts for nothing, a directory that
+# cannot be searched is read, so that its refusal stops the run, and any other incident_* folder is
+# passed over, with a note naming those that hold an INCIDENTS.json.
 native_rule() {
   local rc=0
   iso_incident_runs "${WT}" || rc=$?
   case "${rc}:${ISO_CLASS}" in
     0:supply_chain_or_ci)
       blocker "${ISO_INCIDENTS} records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." ;;
-    0:*) ;;
+    0:*)
+      [[ -z "${ISO_PASSED:-}" ]] ||
+        echo ">> note: the incident rule counts only the run directories the auditor made (incident_<n>, with a .gitignore of exactly *), so it passed over ${ISO_PASSED} (Rule 11a)" ;;
     2:*) blocker "python3 is not on PATH, so run.sh cannot tell whether ${ISO_INCIDENTS%/INCIDENTS.json} holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." ;;
     '3:cannot be listed') blocker "the working directory cannot be listed, so run.sh cannot tell whether an incident_* directory in it records a supply_chain_or_ci incident, and nothing from it is built natively until it can be listed (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." ;;
     *) blocker "${ISO_INCIDENTS} ${ISO_CLASS}: nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built." ;;
@@ -570,14 +606,21 @@ native_rule() {
 
 # self_check: in isolated mode nothing the credential check reads may be readable, and
 # variables of run.sh's own environment that look like credentials are named; in native
-# mode what is readable is printed as a warning.
+# mode what is readable is printed as a warning. An isolated-mode blocker ends by saying
+# how the human builds natively instead or, in strict mode, that strict mode builds only
+# on an isolated runner.
 self_check() {
-  local rc=0
+  local rc=0 ending=""
   iso_credentials || rc=$?
+  if [[ -n "${STRICT_WHY}" ]]; then
+    ending=". Strict mode is on (${STRICT_WHY}), so this PoC builds only on an isolated runner (Rule 11f)"
+  elif [[ -n "${GO_NATIVE}" ]]; then
+    ending=". To build natively instead, on this machine, the human ${GO_NATIVE}"
+  fi
   case "${MODE}:${rc}" in
     *:0) ;;
-    isolated:1) blocker "isolated mode, but these are readable here: ${ISO_KINDS}; this is not the isolated runner (Rule 11a), and scripts/runner/probe.sh --only isolation lists them — nothing was copied or built." ;;
-    isolated:*) blocker "isolated mode, but the credential self-check could not finish (${ISO_WHY}), so run.sh cannot tell that this is the isolated runner (Rule 11a) — nothing was copied or built." ;;
+    isolated:1) blocker "isolated mode, but these are readable here: ${ISO_KINDS}; this is not the isolated runner (Rule 11a), and scripts/runner/probe.sh --only isolation lists them${ending} — nothing was copied or built." ;;
+    isolated:*) blocker "isolated mode, but the credential self-check could not finish (${ISO_WHY}), so run.sh cannot tell that this is the isolated runner (Rule 11a)${ending} — nothing was copied or built." ;;
     *:1) echo ">> warning: native mode, and these are readable here, to the code this run builds and runs too: ${ISO_KINDS} (Rule 11a)" ;;
     *) echo ">> warning: native mode, and the credential check could not finish (${ISO_WHY}), so what the code this run builds can read here is not known (Rule 11a)" ;;
   esac
@@ -700,7 +743,7 @@ take_args() {
     refuse "TOOLS_VERSION is '$(confine_text "${TOOLS_VERSION}")', not v<n>.<n> or v<n>.<n>.<n>"
   fi
   exec_mode "${mode}"
-  echo ">> execution mode: ${MODE} (the stricter of ${MODE_SOURCES})"
+  say_mode
   incident_rule
   self_check
   HERE="${WT}/${CRATE_REL}"
@@ -712,36 +755,55 @@ take_args() {
   CLEAN=1
 }
 
-# crate_mode: ./run.sh in a crate at <R>/poc/<ID>, with <R> and <ID> as --crate takes
-# them, reads <R>/exec-mode as well and takes the stricter of it and AUDITOR_EXEC_MODE
-# (see EXECUTION MODE above). Without that file, or with an AUDITOR_EXEC_MODE that is not
-# none, isolated or native, the mode gate below decides from the environment alone.
+# strict_env: STRICT_WHY is AUDITOR_STRICT=<its value> when that variable turns strict mode
+# on (OUTPUT-RULES.md Rule 11f), as scripts/lib/confine.sh reads it for the installation's
+# copy: 1, true, yes or on, in any letter case, turn it on; 0, false, no or off, an empty
+# value or none at all leave it off; any other value turns it on too, shown as
+# confine_shown shows a value, and a note on stderr says so, as confine.sh's does.
+strict_env() {
+  local LC_ALL=C v="${AUDITOR_STRICT:-}"
+  STRICT_WHY=""
+  case "${v}" in
+    ''|0|[Ff][Aa][Ll][Ss][Ee]|[Nn][Oo]|[Oo][Ff][Ff]) ;;
+    1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) STRICT_WHY="AUDITOR_STRICT=${v}" ;;
+    *)
+      v="${v//[[:cntrl:]]/?}"
+      if [[ "${#v}" -gt 200 ]]; then v="${v:0:200}..."; fi
+      STRICT_WHY="AUDITOR_STRICT=${v}"
+      echo "run.sh: note: AUDITOR_STRICT is '${v}', read as on" >&2 ;;
+  esac
+}
+
+# crate_mode: ./run.sh. In a crate at <R>/poc/<ID>, with <R> and <ID> as --crate takes them,
+# it reads <R>/exec-mode and a strict entry in <R> as well; a crate anywhere else reads
+# the environment alone. The mode is the stricter of them (resolve_mode), native when none
+# of them says anything (see EXECUTION MODE above). An AUDITOR_EXEC_MODE that is not none,
+# isolated or native is left to the mode gate below, which stops on it.
 crate_mode() {
   local run="${HERE%/poc/*}" id="${HERE##*/}" name env="${AUDITOR_EXEC_MODE:-}" n
   name="${run##*/}"
-  [[ "${HERE}" == "${run}/poc/${id}" ]] || return 0
+  [[ "${HERE}" == "${run}/poc/${id}" ]] || name=""
   case "${name}" in
-    audit_*|incident_*) digits "${name#*_}" 6 || return 0 ;;
-    *) return 0 ;;
+    audit_*|incident_*) digits "${name#*_}" 6 || name="" ;;
+    *) name="" ;;
   esac
   case "${id}" in
-    F-*) digits "${id#F-}" 4 || return 0 ;;
-    INC-*.*) n="${id#INC-}"; { digits "${n%%.*}" 6 && digits "${n#*.}" 4; } || return 0 ;;
-    *) return 0 ;;
+    F-*) digits "${id#F-}" 4 || name="" ;;
+    INC-*.*) n="${id#INC-}"; { digits "${n%%.*}" 6 && digits "${n#*.}" 4; } || name="" ;;
+    *) name="" ;;
   esac
-  mode_file "${run}" "${name}"
-  [[ -n "${MODE_TEXT}" ]] || return 0
-  case "${env}" in ''|none|isolated|native) ;; *) return 0 ;; esac
-  case " ${MODE_TEXT} ${env} " in
-    *" none "*) MODE=none ;;
-    *" isolated "*) MODE=isolated ;;
-    *) MODE=native ;;
-  esac
-  MODE_SOURCES="${name}/exec-mode: ${MODE_TEXT}; AUDITOR_EXEC_MODE: ${env:-unset}"
-  if [[ "${MODE}" == none ]]; then
-    blocker "the recorded execution mode is none (${MODE_SOURCES}): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
+  MODE_TEXT=""; MODE_SOURCES=""
+  if [[ -n "${name}" ]]; then
+    mode_file "${run}" "${name}"
+    MODE_SOURCES="${name}/exec-mode: ${MODE_TEXT:-absent}; "
   fi
-  echo ">> execution mode: ${MODE} (the stricter of ${MODE_SOURCES})"
+  case "${env}" in ''|none|isolated|native) ;; *) return 0 ;; esac
+  strict_env
+  if [[ -z "${STRICT_WHY}" && -n "${name}" ]] && [[ -e "${run}/strict" || -L "${run}/strict" ]]; then
+    STRICT_WHY="${name}/strict"
+  fi
+  resolve_mode "${MODE_TEXT}" "${env}" "${STRICT_WHY}"
+  say_mode
   AUDITOR_EXEC_MODE="${MODE}"
 }
 
@@ -769,11 +831,13 @@ TOOLS_VERSION="${TOOLS_VERSION:-v1.54}"
 unset AUDITOR_POC_MARKERS
 
 # ── Execution mode (see EXECUTION MODE above) ───────────────────────────────────
+# take_args and crate_mode have set it; what is left to stop on is a value that names no
+# mode.
 case "${AUDITOR_EXEC_MODE:-}" in
   isolated|native) ;;
   *)
     echo "[PoC-ATTEMPTED] blocker: AUDITOR_EXEC_MODE is '${AUDITOR_EXEC_MODE:-}', not isolated or native — nothing was copied or built." >&2
-    echo "Building this crate runs code (dependency build scripts and proc-macros, then the tests), so every run needs the execution mode recorded at intake (OUTPUT-RULES.md Rule 11a, QUESTIONS.md Q46): AUDITOR_EXEC_MODE=isolated inside the isolated runner, or AUDITOR_EXEC_MODE=native (the report then states that the PoC build ran on this host)." >&2
+    echo "Building this crate runs code (dependency build scripts and proc-macros, then the tests), so AUDITOR_EXEC_MODE holds isolated, inside the isolated runner, or native, on this host (the report then states that the PoC build ran on this host); unset, it means native, or isolated in strict mode (OUTPUT-RULES.md Rules 11a and 11f, QUESTIONS.md Q46)." >&2
     exit 3
     ;;
 esac

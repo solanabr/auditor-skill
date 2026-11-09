@@ -10,8 +10,9 @@
 //! workflow's `unknown` with the lines it covers, which are not read; an anchor is
 //! listed too, though its node is read. A line it cannot place (YAML that does not
 //! parse, a tab in indentation, a character YAML parsers read differently) ends
-//! the read, and `unknown` says the file is not read from that line to the end. A
-//! workflow is read whole only when its `unknown` is empty. The parser never
+//! the read, and `unknown` says the file is not read from that line to the end.
+//! A fact cut at `MAX_WF_SCALAR` characters is listed there too, with its key
+//! path. A workflow is read whole only when its `unknown` is empty. The parser never
 //! expands an alias. A file with a second YAML document, or more structure than
 //! the caps allow, is listed in `skipped`.
 //!
@@ -51,6 +52,7 @@ pub const MAX_WF_FILES: usize = 256;
 
 /// The longest a scalar or a key is kept: its whitespace collapsed to single
 /// spaces and cut after this many characters with `...`, as a report snippet is.
+/// A fact so cut is listed in `unknown` (`cut`).
 const MAX_WF_SCALAR: usize = 200;
 
 /// The word audit-scan starts itself with, as its only argument, to parse
@@ -80,8 +82,9 @@ pub struct Workflow {
     /// when the key is absent.
     pub permissions: Vec<String>,
     pub jobs: Vec<Job>,
-    /// Every construct in this file outside the parser's subset, and every line
-    /// it did not read, with its line: empty only when the whole file was read.
+    /// Every construct in this file outside the parser's subset, every line it
+    /// did not read, and every fact above it cut, with its line: empty only when
+    /// the whole file was read.
     pub unknown: Vec<Unknown>,
 }
 
@@ -1826,6 +1829,24 @@ fn not_a(key: &str, line: usize, what: &str, unknown: &mut Vec<Unknown>) {
     });
 }
 
+/// Whether the parser cut `s` (`Clip`): it keeps at most `MAX_WF_SCALAR`
+/// characters of a scalar it does not cut, and that many and `...` of one it
+/// cuts.
+fn was_cut(s: &str) -> bool {
+    s.ends_with("...") && s.chars().count() == MAX_WF_SCALAR + 3
+}
+
+/// A fact at `path`, a value or a key (`what`) from `line`, that the parser cut
+/// is listed, since the report does not hold it whole.
+fn cut(path: &str, what: &str, line: usize, s: &str, unknown: &mut Vec<Unknown>) {
+    if was_cut(s) {
+        unknown.push(Unknown {
+            line,
+            what: format!("{path}: a {what} cut at {MAX_WF_SCALAR} characters, from line {line}"),
+        });
+    }
+}
+
 fn build(label: &str, entries: Vec<Entry>, mut unknown: Vec<Unknown>) -> Workflow {
     let mut wf = Workflow {
         file: label.to_string(),
@@ -1846,12 +1867,12 @@ fn build(label: &str, entries: Vec<Entry>, mut unknown: Vec<Unknown>) -> Workflo
         );
         match key.as_str() {
             "name" => {
-                if let Some(s) = text(&key, &value, &mut unknown) {
+                if let Some(s) = text(&key, &key, &value, &mut unknown) {
                     wf.name.get_or_insert(s);
                 }
             }
             "on" => events(&value, &mut wf.triggers, &mut unknown),
-            "permissions" => perms(&value, &mut wf.permissions, &mut unknown),
+            "permissions" => perms(&key, &value, &mut wf.permissions, &mut unknown),
             "jobs" => match value.kind {
                 NodeKind::Map(jobs) => wf
                     .jobs
@@ -1867,10 +1888,14 @@ fn build(label: &str, entries: Vec<Entry>, mut unknown: Vec<Unknown>) -> Workflo
     wf
 }
 
-/// A scalar's text; `None` for no value, and for a collection, which is listed.
-fn text(key: &str, node: &Node, unknown: &mut Vec<Unknown>) -> Option<String> {
+/// A scalar's text, the value of `key` at `path`; `None` for no value, and for
+/// a collection, which is listed.
+fn text(key: &str, path: &str, node: &Node, unknown: &mut Vec<Unknown>) -> Option<String> {
     match &node.kind {
-        NodeKind::Scalar(s) => Some(s.clone()),
+        NodeKind::Scalar(s) => {
+            cut(path, "value", node.line, s, unknown);
+            Some(s.clone())
+        }
         NodeKind::Null | NodeKind::Unknown => None,
         NodeKind::Map(_) | NodeKind::Seq(_) => {
             not_a(key, node.line, "a scalar", unknown);
@@ -1881,23 +1906,37 @@ fn text(key: &str, node: &Node, unknown: &mut Vec<Unknown>) -> Option<String> {
 
 fn events(node: &Node, out: &mut Vec<String>, unknown: &mut Vec<Unknown>) {
     match &node.kind {
-        NodeKind::Scalar(s) => out.push(s.clone()),
+        NodeKind::Scalar(s) => {
+            cut("on", "value", node.line, s, unknown);
+            out.push(s.clone());
+        }
         NodeKind::Seq(items) => {
             for item in items {
-                out.extend(text("on", item, unknown));
+                out.extend(text("on", "on", item, unknown));
             }
         }
-        NodeKind::Map(entries) => out.extend(entries.iter().map(|e| e.key.clone())),
+        NodeKind::Map(entries) => {
+            for e in entries {
+                cut("on", "key", e.line, &e.key, unknown);
+                out.push(e.key.clone());
+            }
+        }
         NodeKind::Null | NodeKind::Unknown => {}
     }
 }
 
-fn perms(node: &Node, out: &mut Vec<String>, unknown: &mut Vec<Unknown>) {
+/// `permissions` at `path`.
+fn perms(path: &str, node: &Node, out: &mut Vec<String>, unknown: &mut Vec<Unknown>) {
     match &node.kind {
-        NodeKind::Scalar(s) => out.push(s.clone()),
+        NodeKind::Scalar(s) => {
+            cut(path, "value", node.line, s, unknown);
+            out.push(s.clone());
+        }
         NodeKind::Map(entries) => {
             for e in entries {
-                out.push(match text("permissions", &e.value, unknown) {
+                cut(path, "key", e.line, &e.key, unknown);
+                let at = format!("{path}.{}", e.key);
+                out.push(match text("permissions", &at, &e.value, unknown) {
                     Some(v) => format!("{}: {}", e.key, v),
                     None => e.key.clone(),
                 });
@@ -1909,6 +1948,8 @@ fn perms(node: &Node, out: &mut Vec<String>, unknown: &mut Vec<Unknown>) {
 }
 
 fn job(entry: Entry, unknown: &mut Vec<Unknown>) -> Job {
+    cut("jobs", "key", entry.line, &entry.key, unknown);
+    let path = format!("jobs.{}", entry.key);
     let mut j = Job {
         id: entry.key,
         line: entry.line,
@@ -1928,14 +1969,19 @@ fn job(entry: Entry, unknown: &mut Vec<Unknown>) -> Job {
                     &mut seen,
                     unknown,
                 );
+                let at = format!("{path}.{key}");
                 match key.as_str() {
-                    "if" => j.cond = j.cond.take().or(text(&key, &value, unknown)),
-                    "permissions" => perms(&value, &mut j.permissions, unknown),
-                    "uses" => j.uses = j.uses.take().or(text(&key, &value, unknown)),
+                    "if" => j.cond = j.cond.take().or(text(&key, &at, &value, unknown)),
+                    "permissions" => perms(&at, &value, &mut j.permissions, unknown),
+                    "uses" => j.uses = j.uses.take().or(text(&key, &at, &value, unknown)),
                     "steps" => match value.kind {
-                        NodeKind::Seq(items) => j
-                            .steps
-                            .extend(items.into_iter().map(|item| step(item, unknown))),
+                        NodeKind::Seq(items) => {
+                            let first = j.steps.len();
+                            j.steps
+                                .extend(items.into_iter().enumerate().map(|(i, item)| {
+                                    step(&format!("{at}[{}]", first + i), item, unknown)
+                                }));
+                        }
                         NodeKind::Null | NodeKind::Unknown => {}
                         _ => not_a("steps", value.line, "a sequence", unknown),
                     },
@@ -1949,7 +1995,8 @@ fn job(entry: Entry, unknown: &mut Vec<Unknown>) -> Job {
     j
 }
 
-fn step(node: Node, unknown: &mut Vec<Unknown>) -> Step {
+/// The step at `path`.
+fn step(path: &str, node: Node, unknown: &mut Vec<Unknown>) -> Step {
     let mut s = Step {
         line: node.line,
         cond: None,
@@ -1969,12 +2016,13 @@ fn step(node: Node, unknown: &mut Vec<Unknown>) -> Step {
                     &mut seen,
                     unknown,
                 );
+                let at = format!("{path}.{key}");
                 match key.as_str() {
-                    "if" => s.cond = s.cond.take().or(text(&key, &value, unknown)),
-                    "uses" => s.uses = s.uses.take().or(text(&key, &value, unknown)),
-                    "run" => s.run = s.run.take().or(text(&key, &value, unknown)),
-                    "with" => pairs(&key, &value, &mut s.with, unknown),
-                    "env" => pairs(&key, &value, &mut s.env, unknown),
+                    "if" => s.cond = s.cond.take().or(text(&key, &at, &value, unknown)),
+                    "uses" => s.uses = s.uses.take().or(text(&key, &at, &value, unknown)),
+                    "run" => s.run = s.run.take().or(text(&key, &at, &value, unknown)),
+                    "with" => pairs(&key, &at, &value, &mut s.with, unknown),
+                    "env" => pairs(&key, &at, &value, &mut s.env, unknown),
                     _ => {}
                 }
             }
@@ -1985,13 +2033,16 @@ fn step(node: Node, unknown: &mut Vec<Unknown>) -> Step {
     s
 }
 
-fn pairs(key: &str, node: &Node, out: &mut Vec<Pair>, unknown: &mut Vec<Unknown>) {
+/// The pairs of `key` at `path`.
+fn pairs(key: &str, path: &str, node: &Node, out: &mut Vec<Pair>, unknown: &mut Vec<Unknown>) {
     match &node.kind {
         NodeKind::Map(entries) => {
             for e in entries {
+                cut(path, "key", e.line, &e.key, unknown);
                 out.push(Pair {
                     key: e.key.clone(),
-                    value: text(key, &e.value, unknown).unwrap_or_default(),
+                    value: text(key, &format!("{path}.{}", e.key), &e.value, unknown)
+                        .unwrap_or_default(),
                 });
             }
         }
@@ -2623,6 +2674,52 @@ mod tests {
         let w = wf(&format!("on:\n  {long}:\n"));
         assert_eq!(w.triggers[0].chars().count(), MAX_WF_SCALAR + 3);
         assert!(w.triggers[0].ends_with("..."));
+        assert_eq!(
+            unknown(&w),
+            [(2, "on: a key cut at 200 characters, from line 2")]
+        );
+    }
+
+    #[test]
+    fn each_fact_cut_at_200_characters_is_listed_in_unknown() {
+        // A value of exactly 200 characters is kept whole; one longer is cut, and
+        // listed with its key path and the line it starts on, wherever the report
+        // keeps it.
+        let at = "x".repeat(MAX_WF_SCALAR);
+        let over = "y".repeat(MAX_WF_SCALAR + 1);
+        let script = (0..40)
+            .map(|i| format!("echo {i}"))
+            .collect::<Vec<_>>()
+            .join("\n          ");
+        let w = wf(&format!(
+            "name: {over}\non: [push, {over}]\npermissions:\n  contents: {over}\njobs:\n  b:\n    if: {at}\n    uses: {over}\n    steps:\n      - run: {at}\n      - run: |\n          {script}\n        with:\n          ref: {over}\n        env:\n          K: {at}\n"
+        ));
+        assert_eq!(w.jobs[0].cond.as_deref(), Some(at.as_str()));
+        assert_eq!(w.jobs[0].steps[0].run.as_deref(), Some(at.as_str()));
+        assert!(w.jobs[0].steps[1].run.as_deref().is_some_and(was_cut));
+        assert_eq!(
+            unknown(&w),
+            [
+                (1, "name: a value cut at 200 characters, from line 1"),
+                (2, "on: a value cut at 200 characters, from line 2"),
+                (
+                    4,
+                    "permissions.contents: a value cut at 200 characters, from line 4"
+                ),
+                (8, "jobs.b.uses: a value cut at 200 characters, from line 8"),
+                (
+                    11,
+                    "jobs.b.steps[1].run: a value cut at 200 characters, from line 11"
+                ),
+                (
+                    53,
+                    "jobs.b.steps[1].with.ref: a value cut at 200 characters, from line 53"
+                ),
+            ]
+        );
+        // A short value that ends in ... is no cut.
+        let w = wf("name: wait...\non: push\n");
+        assert_eq!(unknown(&w), []);
     }
 
     #[test]

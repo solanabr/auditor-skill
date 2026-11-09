@@ -31,8 +31,10 @@
   It never checks out, builds, runs, fetches into or modifies the target, and runs every git call hardened per
   `OUTPUT-RULES.md` Rule 11c (no pager, fsmonitor, signature helpers, textconv or external diff; lazy fetching
   (`GIT_NO_LAZY_FETCH=1`) and every transport protocol off; grep, colour, big-file, hunk, context and root-commit settings
-  pinned; diffs and searches forced to text). A partial clone is refused (exit 3), because reading its missing
-  objects would fetch from its promisor remote: make a full copy you control first. The target's `.git/config` and
+  pinned; diffs and searches forced to text). A partial clone is read for what it holds, since nothing it lacks
+  can be fetched: a `collect.sh: note:` line and a "Partial clone" line in `history.md` say so. Strict mode refuses
+  it (exit 3), and a target whose config git cannot read, which could hide one (`OUTPUT-RULES.md` Rule 11f): make a
+  full copy you control first. The target's `.git/config` and
   attributes are untrusted; `history.md` states which attributes can still shape R4's function names. It works from
   a temp directory, never from the target, and its python3 helper runs isolated (`-I`), so no module or config file
   shipped in the target is loaded.
@@ -97,7 +99,7 @@ path relative to the working directory: the audited repo may ship a same-named f
 | Flag | Meaning |
 |------|---------|
 | `--detect`, `--offline`, `--network` | the mode, as the first argument: T3/T4 only (writes nothing); collect without the network; collect, fetching the given https URLs and reading paths outside the working directory |
-| `--repo <dir>` | required: the target, at the top level of its repository (or a bare repository); in `--detect` and `--offline`, relative to the working directory, with no link on the way |
+| `--repo <dir>` | required: the target, at the top level of its repository (or a bare repository); in `--detect` and `--offline`, relative to the working directory, with no link on the way. In default mode, `--repo .` in a session started below the top level reads that repository, history above the working directory included, as git does from the working directory: pathspecs and printed paths are relative to it, and changes and files outside it are left out. Strict mode refuses that session |
 | `--out audit_<n>/bootstrap` | required: the output directory, in the run directory `audit_<n>` directly in the working directory: a real directory holding no symbolic link, untracked in any letter case, with a `.gitignore` holding exactly `*` (`rundir.sh new audit` makes one); `bootstrap/` is made when missing. `--detect` writes nothing, so its run directory need not exist yet |
 | `--pin <rev>` | the commit to analyse (default `HEAD`); only its ancestry is mined. Pass the intake pin |
 | `--paths <pathspec>` | target pathspec, repeatable; default `programs/*.rs` when the commit has a `programs/` dir, else `*.rs` |
@@ -117,9 +119,10 @@ path relative to the working directory: the audited repo may ship a same-named f
 <reason>`: a mode that is not first, an unknown or repeated option, a value out of bounds, a path the mode does not
 take, an `--import` that is not a commit, a run directory that fails the checks above or that git or find cannot
 check, a `TMPDIR` inside the working directory, a disclosure that cannot be recorded, or an output that cannot be
-written. 3: `--repo` is not the top level of a git repository git can read (or a bare repository), the pin does not
-resolve, the target is a partial clone (reading it could fetch from its promisor remote), or git cannot read its
-config.
+written. 3: `--repo` is not the top level of a git repository git can read (or a bare repository; strict mode refuses
+`--repo .` below a top level so, in a `collect.sh: refused:` line), the pin does not
+resolve, or, in strict mode, the target is a partial clone or git cannot read its config (default mode notes either
+and goes on).
 
 - **Scope.** Pass the in-scope program dirs as `--paths`, and the parent's as `--parent-paths` when the fork renamed
   them. `--cap`, `--small` and `--fix-ceiling` tune volume.
@@ -168,7 +171,7 @@ config.
 | `history.md` | the sections below; the header records target, pinned commit, paths, parent and network mode |
 | `inputs.tsv` | one row per input: source, format, sha256, stored file, status |
 | `inputs/` | converted or copied inputs and the allowlisted incident extracts |
-| `diffs/` | `target-<sha>.diff` behind REMOVED / ADDED-QUIET rows; `parent-<sha>.diff` behind absent parent guards (20 commits each). Each holds the commit's full id, date, subject and up to 20 body lines, then its diff limited to the files its rows name, up to 400 lines. Every cut ends in a `TRUNCATED (…)` line naming the command for the rest, the read-only git of `OUTPUT-RULES.md` Rule 11c: `"<auditor-skill root>/scripts/git-ro.sh" [--repo '<dir>'] show <full id> -- '<path>'`, each path escaped like other target text and single-quoted (`--no-patch` and no path for a cut message); for a repository outside the working directory it names a copy inside it, given with `--repo` |
+| `diffs/` | `target-<sha>.diff` behind REMOVED / ADDED-QUIET rows; `parent-<sha>.diff` behind absent parent guards (20 commits each). Each holds the commit's full id, date, subject and up to 20 body lines, then its diff limited to the files its rows name, up to 400 lines. Every cut ends in a `TRUNCATED (…)` line naming the command for the rest, the read-only git of `OUTPUT-RULES.md` Rule 11c: `"<auditor-skill root>/scripts/git-ro.sh" [--repo '<dir>'] show <full id> -- '<path>'`, each path escaped like other target text and single-quoted (`--no-patch` and no path for a cut message); for a repository outside the working directory it names a copy inside it, given with `--repo`; in a session below the repository's top level, each path is relative to the working directory, as the call reads it there |
 | `audit-mem-warm.json` | standing rulings for the program id, when available |
 
 | Section | What it lists | Read it as |

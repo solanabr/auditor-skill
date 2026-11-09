@@ -30,28 +30,30 @@ Probe what is actually installed before choosing a framework. A missing tool is 
 **Execution gate ([`OUTPUT-RULES.md` Rule 11a](../../OUTPUT-RULES.md#rule-11-operating-safety)).**
 Building a PoC runs code — the build scripts and proc-macros of its dependencies, then
 its tests — and the crate can carry target code or crates taken from the target's
-manifest. So every PoC runs in the execution mode recorded at intake (for an incident,
-the mode the command recorded in the ledger header). The command writes it as one
-word (`isolated` inside the isolated runner, `native`, or `none`) to `<R>/exec-mode`,
-and `"<auditor-skill root>/templates/poc/run.sh" --crate <R>/poc/<ID>` takes the
-stricter of `AUDITOR_EXEC_MODE` and the `exec-mode` of every run directory its
+manifest. So every PoC runs in the execution mode in force: the one intake recorded (for an
+incident, the mode the ledger header records), written as one word (`isolated`
+inside the isolated runner, `native`, or `none`) to `<R>/exec-mode`, and native when
+nothing is recorded. `"<auditor-skill root>/templates/poc/run.sh" --crate <R>/poc/<ID>`
+takes the stricter of `AUDITOR_EXEC_MODE`, strict mode (`OUTPUT-RULES.md` Rule 11f,
+which makes it isolated at least) and the `exec-mode` of every run directory its
 arguments name, `none` being the strictest; a copy inside the crate, run as
-`./run.sh`, reads `AUDITOR_EXEC_MODE` and its own `<R>/exec-mode`. With no mode, with
-`none`, or with a `--mode` that names another mode, it exits 3 before it compiles
-anything, which makes the PoC `[PoC-ATTEMPTED]`. The agent writes `<R>/exec-mode`, so
-a human who chose isolated also sets `AUDITOR_EXEC_MODE=isolated` where Claude Code
-runs: the stricter mode then holds whatever the file says. In isolated mode `run.sh`
+`./run.sh`, reads `AUDITOR_EXEC_MODE`, `AUDITOR_STRICT` and its own `<R>/exec-mode` and
+`<R>/strict`. With `none`, or with a `--mode` that names another mode, it exits 3
+before it compiles anything, which makes the PoC `[PoC-ATTEMPTED]`; with nothing
+recorded it builds natively and a `>> note:` line says so. The agent can write
+`<R>/exec-mode`, so for a source you do not trust start Claude Code with the strict
+launch line (Rule 11f), whose `AUDITOR_STRICT=1` and `AUDITOR_EXEC_MODE=isolated` no
+file can loosen. In isolated mode `run.sh`
 first checks that no key, cloud or registry credential is readable and no agent
 socket reachable (`scripts/lib/isolation.sh`), and stops if one is or if the check
 cannot finish; in native mode it prints their kinds and counts as a `>> warning:`
 line, which the report records as it stands. Every cargo call and test binary then
 runs in a cleaned environment with a throwaway `HOME` and Solana keypair, and every
-build and test runs offline, after the downloads. With no recorded mode, or in a run
-directory an earlier session made, the command asks once (a non-interactive run cannot
-ask: it uses the stricter of the recorded mode and native, writes it to the run
-directory's `exec-mode` when that file is missing, and the report says so) and
-hands the mode on; `poc-engineer` and `patch-engineer` use the mode the command hands them and
-never ask. Build and test the crate only through `run.sh`. As a second layer, `run.sh`
+build and test runs offline, after the downloads. Nothing asks for the mode after
+intake: the command reads `<R>/exec-mode`, writes there a mode only an older run
+directory's `intake.md` §8 or one-word ledger header records (never a ledger's
+`in force:` part), and hands the mode on;
+`poc-engineer` and `patch-engineer` use the mode the command hands them and never ask. Build and test the crate only through `run.sh`. As a second layer, `run.sh`
 never builds inside the target tree: cargo reads `.cargo/config*` and rustup reads `rust-toolchain*` from every
 parent directory, so a crate built under `audit_<n>/poc/` or `incident_<n>/poc/`
 would pick up the target's rustc wrapper, runner, linker, `[env]` and toolchain.
@@ -78,7 +80,7 @@ build; what a dependency's proc macro reads on its own is not listed, nor what i
 An incident whose root cause is supply chain / CI is never built natively, and its PoC
 never builds or links the target's crates in any mode, since they may be the payload:
 it runs on the dumped program bytes alone (`run.sh` prebuilt mode), with the
-template's own crates. In native mode no PoC runs while the `INCIDENTS.json` of any `incident_*` directory in the working directory (its name in any letter case) records such an incident or cannot be read. If the recorded mode cannot run the PoC, record
+template's own crates. In native mode no PoC runs while the `INCIDENTS.json` of any of the auditor's own incident directories in the working directory (an `incident_<n>` as `rundir.sh` makes it, its `.gitignore` holding exactly `*`) records such an incident or cannot be read; another `Incident*` folder, such as a client's in an archive, is passed over with a note. If the recorded mode cannot run the PoC, record
 `[PoC-ATTEMPTED]` with the blocker "no isolated runner" and keep the prose PoC.
 
 **Build cache.** `run.sh` builds every run in a fresh scratch directory, so each run
@@ -114,8 +116,9 @@ Trident or cargo-fuzz target or a Surfpool scenario has no template, so `poc-eng
 writes its `run.sh` in its crate, `<R>/poc/<ID>/run.sh`, and that runner keeps both rules
 above. It starts with these lines verbatim (`agents/poc-engineer.md` gives them with the
 installation's path filled in). Like `run.sh --crate`, they find `<R>` from the runner's
-own path, wherever the runner is started from, and take the stricter of `<R>/exec-mode` and
-`AUDITOR_EXEC_MODE`. They stop the run when `exec-mode` is not a regular file holding one
+own path, wherever the runner is started from, and take the stricter of `<R>/exec-mode`,
+`AUDITOR_EXEC_MODE` and strict mode (`AUDITOR_STRICT`, read as Rule 11f reads it, or a
+`strict` entry in their own `<R>`), native when none of them says anything. They stop the run when `exec-mode` is not a regular file holding one
 word, none, isolated or native, and at most one newline after it, as `run.sh` reads it; an
 `AUDITOR_EXEC_MODE` other than none, isolated or native is left as it is, and `run.sh`'s
 mode gate, which they apply next, stops on it. In isolated mode they then run the credential
@@ -138,12 +141,23 @@ if [ -e "$RUN_DIR/exec-mode" ] || [ -L "$RUN_DIR/exec-mode" ]; then
       ;;
   esac
 fi
+STRICT=
+case "${AUDITOR_STRICT:-}" in
+  ''|0|[Ff][Aa][Ll][Ss][Ee]|[Nn][Oo]|[Oo][Ff][Ff]) ;;
+  1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) STRICT=isolated ;;
+  *)
+    STRICT=isolated STRICT_SHOWN=${AUDITOR_STRICT//[[:cntrl:]]/?}
+    [ "${#STRICT_SHOWN}" -le 200 ] || STRICT_SHOWN="${STRICT_SHOWN:0:200}..."
+    echo ">> note: AUDITOR_STRICT is '$STRICT_SHOWN', read as on"
+    ;;
+esac
+if [ -e "$RUN_DIR/strict" ] || [ -L "$RUN_DIR/strict" ]; then STRICT=isolated; fi
 case "${AUDITOR_EXEC_MODE:-none}" in
   none|isolated|native)
-    case " $RECORDED ${AUDITOR_EXEC_MODE:-} " in
+    case " $RECORDED ${AUDITOR_EXEC_MODE:-} $STRICT " in
       *" none "*) AUDITOR_EXEC_MODE=none ;;
       *" isolated "*) AUDITOR_EXEC_MODE=isolated ;;
-      *" native "*) AUDITOR_EXEC_MODE=native ;;
+      *) AUDITOR_EXEC_MODE=native ;;
     esac
     ;;
 esac
@@ -151,7 +165,7 @@ case "${AUDITOR_EXEC_MODE:-}" in
   isolated|native) ;;
   *)
     echo "[PoC-ATTEMPTED] blocker: AUDITOR_EXEC_MODE is '${AUDITOR_EXEC_MODE:-}', not isolated or native — nothing was copied or built." >&2
-    echo "Building this crate runs code (dependency build scripts and proc-macros, then the tests), so every run needs the execution mode recorded at intake (OUTPUT-RULES.md Rule 11a, QUESTIONS.md Q46): AUDITOR_EXEC_MODE=isolated inside the isolated runner, or AUDITOR_EXEC_MODE=native (the report then states that the PoC build ran on this host)." >&2
+    echo "Building this crate runs code (dependency build scripts and proc-macros, then the tests), so AUDITOR_EXEC_MODE holds isolated, inside the isolated runner, or native, on this host (the report then states that the PoC build ran on this host); unset, it means native, or isolated in strict mode (OUTPUT-RULES.md Rules 11a and 11f, QUESTIONS.md Q46)." >&2
     exit 3
     ;;
 esac

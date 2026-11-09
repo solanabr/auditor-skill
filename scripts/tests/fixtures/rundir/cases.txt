@@ -7,8 +7,12 @@
 64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store	-x
 64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store	NEW
 64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store	create
-64	rundir: refused: new takes one word: audit or incident	new
-64	rundir: refused: new takes one word: audit or incident	new	audit	x
+64	rundir: refused: new takes audit or incident, then --strict or nothing	new
+64	rundir: refused: new takes audit or incident, then --strict or nothing, not x	new	audit	x
+64	rundir: refused: new takes audit or incident, then --strict or nothing, not x	new	audit	--strict	x
+64	rundir: refused: new takes audit or incident, then --strict or nothing, not --strict	new	audit	--strict	--strict
+64	rundir: refused: new takes audit or incident, then --strict or nothing, not --Strict	new	audit	--Strict
+64	rundir: refused: new takes audit or incident, not --strict	new	--strict	audit
 64	rundir: refused: new takes audit or incident, not project	new	project
 64	rundir: refused: new takes audit or incident, not Audit	new	Audit
 64	rundir: refused: new takes audit or incident, not AUDIT	new	AUDIT

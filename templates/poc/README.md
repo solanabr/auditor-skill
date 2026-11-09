@@ -38,23 +38,26 @@ as an argument:
 or, inside this crate, with its inputs in the environment:
 
 ```bash
-AUDITOR_EXEC_MODE=isolated ./run.sh   # or native: the execution mode recorded for the run
+AUDITOR_EXEC_MODE=isolated ./run.sh   # or native; with neither, native unless strict mode is on
 ```
 
 Building this crate runs code — dependency build scripts and proc-macros, then the
-tests — so every run needs the execution mode recorded at intake (`OUTPUT-RULES.md`
-Rule 11a): `isolated` inside a container, VM or sandbox with no keys mounted, or
-`native` on this machine, which the report then states. `run.sh` takes the stricter
-of `AUDITOR_EXEC_MODE` and `<R>/exec-mode`, the one word recorded when the human
-answered (`none`, `isolated` or `native`), `none` being the strictest. The
-installation's copy reads the `exec-mode` of every run directory its arguments name,
-and `./run.sh` that of the run directory this crate sits in; a `--mode <mode>` must
-name the mode that results. With no mode, with `none`, or with a `--mode` that names
-another, `run.sh` exits `3` before it copies or compiles anything. The agent writes
-`<R>/exec-mode` and could write another word there, so if you chose `isolated`, also
-set `AUDITOR_EXEC_MODE=isolated` in the environment Claude Code runs in: the stricter
-mode then holds whatever the file says. `--mode` catches a mode that changed without
-you, not an agent that writes both.
+tests — so every run names the execution mode it runs in (`OUTPUT-RULES.md` Rule
+11a): `isolated` inside a container, VM or sandbox with no keys mounted, or `native`
+on this machine, which the report then states. `run.sh` takes the stricter of
+`AUDITOR_EXEC_MODE`, `<R>/exec-mode` (the one word recorded when the human answered:
+`none`, `isolated` or `native`) and strict mode (Rule 11f), which counts as
+`isolated`; `none` is the strictest. When none of them says anything, it runs
+natively and a `>> note:` line says so. The installation's copy reads the `exec-mode`
+of every run directory its arguments name, and strict mode from `AUDITOR_STRICT` and
+a `strict` entry in any run directory of the working directory; `./run.sh` reads
+`AUDITOR_STRICT` and the `exec-mode` and `strict` entry of the run directory this
+crate sits in. A `--mode <mode>` must name the mode that results. With `none`, or
+with a `--mode` that names another, `run.sh` exits `3` before it copies or compiles
+anything. The agent writes `<R>/exec-mode`; for a source you do not trust, strict
+mode started with the launch line holds isolated mode where no file can loosen it
+(Rule 11f). `--mode` catches a mode that changed without you, not an agent that
+writes both.
 
 **The installation's copy** is the form a command pre-approves, so it checks every
 argument before it copies anything, and refuses what does not fit (exit `3`, on one
@@ -64,8 +67,11 @@ and `--fixed-so` a file under a run directory's `bin/` or `exec/`, `--update-pin
 pins in one argument, and `--cache` only a directory `--new-cache` made. In isolated
 mode it first runs the credential self-check of `scripts/lib/isolation.sh`: a readable
 key, cloud or registry credential, or a reachable agent socket stops the run, since
-this is then not the isolated runner, and so does a check that cannot finish; in
-native mode it prints, as a warning, what is readable by kind and count, never a path.
+this is then not the isolated runner, and so does a check that cannot finish. That
+blocker ends with what you change to build natively instead (`AUDITOR_EXEC_MODE`, the
+`exec-mode` file, or both), or, in strict mode, says that strict mode builds only on an
+isolated runner. In native mode it prints, as a warning, what is readable by kind and
+count, never a path.
 Every cargo call and test binary runs in a cleaned environment, with a throwaway
 `HOME` holding a fresh Solana keypair, so no token, `RPC_URL`, SSH agent or default
 wallet reaches this crate's code. The dependencies are downloaded first
@@ -293,9 +299,12 @@ a target built from outside it, or a build that compiled code from outside it st
 run, the dependencies before anything compiles (the resolved `Cargo.lock` is read again
 after the downloads) and the build before any test runs.
 In native mode no crate runs, an audit's included, while the `INCIDENTS.json` of any
-`incident_*` directory in the working directory (its name in any letter case) records a
-`supply_chain_or_ci` incident or cannot be read: any PoC can build the target's crates.
-A directory without that file, or whose file records no incident, counts for nothing.
+run directory the auditor made in the working directory (`incident_<n>`, with the
+`.gitignore` of `*` that `scripts/rundir.sh` writes) records a `supply_chain_or_ci`
+incident or cannot be read: any PoC can build the target's crates. A run directory
+without that file, or whose file records no incident, counts for nothing. Any other
+`incident_*` folder, in any letter case (a client's `Incident_Response/`, a run moved
+aside), is passed over, and a `>> note:` line names those that hold an `INCIDENTS.json`.
 `./run.sh` does not read `INCIDENTS.json`.
 
 ## Evidence tier

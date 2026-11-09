@@ -33,8 +33,9 @@
 #       and in the corpus C6 reads alike. A command inside $( ) or backticks, in a quoted bash -c string, or in
 #       the body of a function written as function <name> { ... }, with no (), is not read.
 #   C4  Every command, and the root SKILL.md, runs preflight.sh as step 0: the first entry point its body names
-#       is "<root>/scripts/preflight.sh", with no arguments, in a paragraph that starts "0. **Preflight" (in the
-#       root SKILL.md, "**Step 0 — Preflight") and says that a refusal, and a call that is denied, stop the run;
+#       is "<root>/scripts/preflight.sh", with no arguments (the --strict form a user's --strict asks for comes
+#       after it), in a paragraph that starts "0. **Preflight" (in the root SKILL.md, "**Step 0 — Preflight") and
+#       says that a refusal, and a call that is denied, stop the run, in both modes (OUTPUT-RULES.md Rule 11e);
 #       its body says that a resumed invocation (--resume) runs step 0 again; and the allowed-tools of every
 #       command, and of the root SKILL.md, pre-approve that call.
 #   C5  Every rooted call in a command's body, and in the bodies of the agents it spawns, is one of that
@@ -62,18 +63,22 @@
 #       bare name is one a repository's .claude/agents/<agent>.md answers to, ahead of the plugin's agent. An
 #       agent's own body, which starts no agent, may name one bare.
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
-#       it, inside a command's grant, and what asks Q46 again, once a session, for a run directory an earlier
-#       session made, before the agent that builds starts, keeps a non-interactive run there from loosening the
-#       recorded mode and has it write that mode to the exec-mode file the runners read when the file is missing
-#       (in respond's and hunt's wrapped steps too, each read as one line); every command that starts agents
-#       keeps them in the foreground and resumes in the turn an agent's result arrives in; wording that copied
-#       an earlier run's mode forward, wrote only native, or passed the file's mode as run.sh --mode, stays gone
-#       (the GONE list); and no body names the environment form of a PoC run (VULNERABLE_SO and the rest), which
-#       run.sh --crate does not read.
+#       it, inside a command's grant; that Q46 is asked at intake only, a run directory's recorded mode being
+#       used as it stands since the runners take the stricter of it, AUDITOR_EXEC_MODE and strict mode, while
+#       Q47 and the scope confirmations are still asked again for a reused one; that a mode only an older run
+#       directory's intake.md §8 or ledger header records is written to the exec-mode file the runners read (in
+#       respond's and hunt's wrapped steps too, each read as one line); how the resume prompt is answered, and
+#       that a resumed invocation keeps the user's --strict.
+#       Every command that starts agents keeps them in the foreground and resumes in the turn an agent's result
+#       arrives in; wording that asked Q46 again, called isolated recommended, copied an earlier run's mode
+#       forward, wrote only native, or passed the file's mode as run.sh --mode, stays gone (the GONE list); and
+#       no body names the environment form of a PoC run (VULNERABLE_SO and the rest), which run.sh --crate does
+#       not read.
 #   G   The lines agents/poc-engineer.md gives a runner it writes, run as the first lines of such a runner in a
 #       crate, from the working directory and from the crate, find <R> from the runner's path and take the
-#       stricter of <R>/exec-mode and AUDITOR_EXEC_MODE as run.sh --crate does; they stop on none, on no mode, on
-#       an exec-mode that is not a regular file holding one word and at most one newline, and on an
+#       stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT, or a strict entry in their
+#       own <R>) as run.sh --crate does, native when none of them says anything; they stop on none, on an
+#       exec-mode that is not a regular file holding one word and at most one newline, and on an
 #       AUDITOR_EXEC_MODE that names no mode, and in isolated mode unless probe.sh --only isolation finds nothing
 #       readable. poc-harness.md §1 shows the same lines.
 #   I   Every python3 call in the bodies and the corpus, in a code span or a code line that starts with python3
@@ -1188,29 +1193,30 @@ commands/hunt.md	the Bash tool's longest timeout, in the foreground, never with 
 commands/respond.md	Give each runner call (`run.sh`, `target.sh`) and the `git-ro.sh copy` call
 commands/respond.md	the Bash tool's longest timeout, in the foreground, never with `run_in_background`:
 commands/threat-model.md	Give it the Bash tool's longest timeout, in the foreground, never with `run_in_background`: on a long history it can outlast the two-minute default
-commands/audit.md	A reused directory's `exec-mode` and its `intake.md` §5, §6 and §8 are an earlier run's answers: ask `QUESTIONS.md` Q46 and Q47 again, confirm §5 and §6 with the human, and write the answers in their place before a step uses them.
-commands/threat-model.md	A reused directory's `exec-mode` and its `intake.md` §5, §6 and §8 are an earlier run's answers: ask `QUESTIONS.md` Q46 and Q47 again, confirm §5 and §6 with the human, and write the answers in their place before a step uses them.
-commands/hunt.md	directory's `exec-mode` is an earlier run's answer: ask for the mode again,
-commands/respond.md	run's answer: ask for the mode again, as step 5 does, before a runner uses it.
-commands/poc.md	A run directory this session did not make, an earlier session's or one that came with the tree, holds an earlier run's answers
-commands/poc.md	or `<R>` is a run directory this session did not make and whose `exec-mode` it has not written, ask
-commands/poc.md	A non-interactive run cannot ask, so an earlier answer can only make it stricter: it uses the stricter of the recorded mode (`<R>/exec-mode`, or without it `intake.md` §8 or the ledger header) and `native`, writes that mode to `<R>/exec-mode` when the file is missing, `native` when no mode is recorded at all
-commands/poc.md	a mode an earlier session recorded was that run's answer, so never hand it on unasked.
-commands/patch.md	A run directory this session did not make, an earlier session's or one that came with the tree, holds an earlier run's answers
-commands/patch.md	or `<R>` is a run directory this session did not make and whose `exec-mode` it has not written, ask
-commands/patch.md	A non-interactive run cannot ask, so an earlier answer can only make it stricter: it uses the stricter of the recorded mode (`<R>/exec-mode`, or without it `intake.md` §8 or the ledger header) and `native`, writes that mode to `<R>/exec-mode` when the file is missing, `native` when no mode is recorded at all
-commands/patch.md	a mode an earlier session recorded was that run's answer, so never hand it on unasked.
-commands/patch.md	are asked again in step 2, once per session, before `auditor:patch-engineer` starts.
-commands/poc.md	are asked again in step 5, once per session, before a runner uses them.
+commands/audit.md	ask `QUESTIONS.md` Q47 again, confirm §5 and §6 with the human, and write the answers in their place before a step uses them.
+commands/audit.md	Its `exec-mode` stays as it is, and nothing asks Q46 again: the runners take the stricter of that file, `AUDITOR_EXEC_MODE` and strict mode, so a `native` there loosens nothing
+commands/threat-model.md	ask `QUESTIONS.md` Q47 again, confirm §5 and §6 with the human, and write the answers in their place before a step uses them.
+commands/threat-model.md	Its `exec-mode` stays as it is, and nothing asks Q46 again: the runners take the stricter of that file, `AUDITOR_EXEC_MODE` and strict mode, so a `native` there loosens nothing
+commands/intake.md	ask Q47 again, and confirm §5 and §6 with the human, before writing them as this run's.
+commands/intake.md	Also write the answer with the Write tool, as one word, `native`, `isolated` or `none`, to `audit_<n>/exec-mode`
+commands/intake.md	("untrusted source" writes `isolated`, and `audit_<n>/strict` too, a file holding the word `strict`)
+commands/hunt.md	directory's `exec-mode` stands as it is, and nothing asks for the mode again
+commands/respond.md	`ok incident_<n>`. A reused incident directory's `exec-mode` stands as it is,
+commands/poc.md	Read that file, and hand `auditor:poc-engineer` `isolated` or `none` when it says so, and `native` otherwise.
+commands/poc.md	so a `native` there, from any session, loosens nothing, and nothing asks `QUESTIONS.md` Q46 again
+commands/poc.md	When `<R>` has no `exec-mode` but its `intake.md` §8, or a ledger header in the older form (one word, with no `recorded:` part), records a mode (a run directory made before 7.7.0), first write that mode to `<R>/exec-mode` with the Write tool, as one word
+commands/poc.md	a ledger header's `in force:` part is never written back.
+commands/patch.md	a ledger header's `in force:` part is never written back.
+commands/patch.md	Settle it as `/auditor:poc` step 5 does: Read `<R>/exec-mode`, and hand `isolated` or `none` when it says so, and `native` otherwise
+commands/patch.md	so a `native` there, from any session, loosens nothing, and nothing asks `QUESTIONS.md` Q46 again
 commands/patch.md	First settle the execution mode that the rebuild and every PoC re-run in step 3 use
 commands/patch.md	`auditor:patch-engineer` runs them itself, with the mode you hand it, and never asks.
 commands/re-audit.md	check it with `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check audit_<n>`: unless it prints `ok audit_<n>`, nothing is written in it
-commands/re-audit.md	`audit_<n>/exec-mode` and its `intake.md` §8 are an earlier run's answers, never this run's consent
-commands/re-audit.md	have the human confirm that `audit_<n>` is a run directory they made, not one that came with the tree
+commands/re-audit.md	write the mode `audit_<n>` records (its `exec-mode`, or its `intake.md` §8 without it), when it records one, to `audit_<n+1>/exec-mode`
+commands/re-audit.md	In strict mode (preflight's first line says which), first have the human confirm that `audit_<n>` is a run directory they made, not one that came with the tree
 commands/re-audit.md	no crate of `audit_<n>` runs and nothing is written in it
-commands/re-audit.md	A non-interactive run cannot ask, so the earlier answer can only make it stricter: it writes the stricter of `native` and the mode `audit_<n>` records (its `exec-mode`, or its `intake.md` §8 without it) to `audit_<n+1>/exec-mode`
-QUESTIONS.md	and again before a later session uses a run directory an earlier one made
-QUESTIONS.md	(a non-interactive run cannot ask again, so it takes the stricter of that answer and native)
+QUESTIONS.md	Asked once, at intake; nothing asks it again later.
+QUESTIONS.md	for this and every later audit in this directory, until you delete the `strict` files
 agents/poc-engineer.md	When the command handed you `isolated`, pass `--mode isolated`, so a run whose recorded mode has since become less strict stops; with `native`, pass no `--mode`
 agents/patch-engineer.md	adding `--mode isolated` when the command handed you `isolated`, as `poc-engineer` does
 commands/intake.md	so the report states the mode their `>> execution mode:` line shows
@@ -1241,12 +1247,12 @@ agents/economic-analyst.md	only into `grep`, `head`, `tail` or `wc`
 agents/peer-reviewer.md	only into `grep`, `head`, `tail` or `wc`
 PINS
 
-# Wording that must not come back, file <TAB> text: a flow never copies an earlier run's recorded mode forward,
-# an agent never hands run.sh the file's mode as --mode, which stops every run a stricter AUDITOR_EXEC_MODE
-# holds to isolated mode, patch resumes after the mode answer in step 2, where it asks, not in step 3, and a
-# non-interactive run on an earlier session's run directory never loosens its recorded mode to native, nor
-# reads that mode from audit_<n>/exec-mode alone: an audit made before 7.7.0 records it only in intake.md §8,
-# and a run that wrote only native to the missing file left the runners, which read the file, no mode at all.
+# Wording that must not come back, file <TAB> text: an agent never hands run.sh the file's mode as --mode, which
+# stops every run a stricter AUDITOR_EXEC_MODE holds to isolated mode, and the older wording that copied a mode
+# forward, wrote only native, or let a non-interactive run loosen a recorded mode stays gone. Since 7.7.2 nothing
+# asks Q46 after intake, for a run directory an earlier session made or mid-run (spec §4.7, CMD-03): the runners
+# take the stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode, so a native there loosens nothing, and
+# isolated is no longer the recommended answer.
 while IFS='	' read -r f gone; do
   [ -n "$f" ] || continue
   if [ -f "$f" ] && ! grep -qF -- "$gone" "$f"; then ok "gone from $f: $gone"; else bad "P $f says: $gone"; fi
@@ -1261,33 +1267,45 @@ commands/re-audit.md	Q46 again (a non-interactive run is native
 commands/re-audit.md	and the mode `audit_<n>/exec-mode` records to
 commands/poc.md	writes `native` only when no mode is recorded
 commands/patch.md	writes `native` only when no mode is recorded
+commands/audit.md	ask `QUESTIONS.md` Q46 and Q47 again
+commands/threat-model.md	ask `QUESTIONS.md` Q46 and Q47 again
+commands/intake.md	ask Q46 and Q47 again
+commands/intake.md	(recommended:
+commands/re-audit.md	ask `QUESTIONS.md` Q46 again
+commands/re-audit.md	isolated recommended
+commands/poc.md	ask `QUESTIONS.md` Q46 once
+commands/patch.md	ask `QUESTIONS.md` Q46 once
+commands/poc.md	auditor:poc --resume 5
+commands/patch.md	auditor:patch --resume 2
+commands/hunt.md	ask for the mode again
+commands/respond.md	ask for the mode again
+commands/audit-assist.md	ask once at Checkpoint 1
+SKILL.md	isolated recommended
+QUESTIONS.md	and again before a later session uses a run directory an earlier one made
+QUESTIONS.md	**Isolated** (recommended)
 GONE
 
-# poc and patch ask Q46, when they ask it, in the step that spawns their engineer agent: the agent builds and runs
-# the PoC itself, with the mode it is handed, so the mode is settled before it starts.
-for fa in 'commands/poc.md|poc-engineer' 'commands/patch.md|patch-engineer'; do
-  f=${fa%%|*}; a=${fa#*|}
-  step=$(grep -E "^[0-9]+\\. \\*\\*Spawn \`auditor:$a\`" "$f")
-  case "$step" in
-    *'ask `QUESTIONS.md` Q46 once'*) ok "$f asks Q46 in the step that spawns $a" ;;
-    *) bad "P $f does not ask Q46 in the step that spawns $a, before the agent starts" ;;
-  esac
-done
-
 # respond's step 5 and hunt's step 6 settle the mode as poc's step 5 does, each step read as one line so wording
-# that wraps still matches: a non-interactive run never loosens the mode the incident directory records, in its
-# exec-mode or, in a directory older than that file, its ledger header, never falls back to native over it, and
-# writes a mode only its ledger header records to the exec-mode file run.sh and target.sh read.
-INC_MODE='A non-interactive run cannot ask, so an earlier answer can only make it stricter: it uses the stricter of the recorded mode (`incident_<n>/exec-mode`, or the mode in its ledger header without it) and `native`, writes that mode to `incident_<n>/exec-mode` when the file is missing, `native` when no mode is recorded at all, and the report says which mode ran and that Q46 was not asked again.'
+# that wraps still matches: nothing asks Q46 there, the runners take the stricter of the incident directory's
+# exec-mode, AUDITOR_EXEC_MODE and strict mode, and a mode only its ledger header records (a directory older than
+# that file) is written to the exec-mode file run.sh and target.sh read. The ask, and the wording that let a
+# non-interactive run fall back to native over a recorded mode, stay gone.
+INC_MODE='runs in the Rule 11a mode in force, and nothing asks Q46 for it: the runners take the stricter of `incident_<n>/exec-mode`, `AUDITOR_EXEC_MODE` and strict mode, native when none of them says anything, so a `native` there loosens nothing. When `incident_<n>` has no `exec-mode` but its ledger header records a mode in the older form, one word with no `recorded:` part (a run directory made before 7.7.0), first write that mode as one word to `incident_<n>/exec-mode` with the Write tool,'
+INC_REC='(`recorded:`, or `none recorded`) and the mode the runners'"'"' `>> execution mode:` line shows (`in force:`), which is never written back'
 for fs in 'commands/respond.md|5' 'commands/hunt.md|6'; do
   f=${fs%|*}; s=${fs#*|}
   step=$(awk -v s="$s. **" 'index($0, s) == 1 { on = 1 } on && /^[0-9]+[a-z]?\. \*\*/ && index($0, s) != 1 { exit } on' "$f" |
     tr '\n' ' ' | tr -s ' ')
   case "$step" in
-    *"$INC_MODE"*) ok "$f step $s: a non-interactive run never loosens the incident directory's recorded mode" ;;
+    *"$INC_MODE"*) ok "$f step $s: the incident directory's mode is used as recorded, and nothing asks for it" ;;
     *) bad "P $f step $s lost: $INC_MODE" ;;
   esac
-  for gone in 'ask once (a non-interactive run is native' 'writes `native` only when no mode is recorded'; do
+  case "$step" in
+    *"$INC_REC"*) ok "$f step $s: the ledger keeps the recorded mode apart from the mode in force" ;;
+    *) bad "P $f step $s lost: $INC_REC" ;;
+  esac
+  for gone in 'ask once (a non-interactive run is native' 'writes `native` only when no mode is recorded' \
+              'mode: ask Q46 once' 'that Q46 was not asked again'; do
     case "$(tr '\n' ' ' < "$f" | tr -s ' ')" in
       *"$gone"*) bad "P $f says: $gone" ;;
       *) ok "gone from $f: $gone" ;;
@@ -1295,13 +1313,23 @@ for fs in 'commands/respond.md|5' 'commands/hunt.md|6'; do
   done
 done
 
-# Each command's resume text, and the root SKILL.md's, says how to answer the prompt its re-invocation brings, and
-# that the file "don't ask again" writes stops that resumed invocation, whose step 0 runs again, not only the next run.
+# Each command's resume text, and the root SKILL.md's, says what stops the prompt its re-invocation brings (the
+# user-level rules), and that "Yes, and don't ask again" no longer breaks the resumed invocation, whose step 0 runs
+# again: preflight takes an untracked .claude/settings.local.json for the user's own (spec §4.8, Rule 11e). The old
+# advice, which told the human to avoid that answer because step 0 refused the file, stays gone.
 for f in commands/*.md SKILL.md; do
-  if grep -qF -- 'tell the human to answer "Yes", not "don'"'"'t ask again"' "$f"; then ok "$f: the resume text names the answer"
-  else bad "P $f: the resume text does not tell the human to answer \"Yes\", not \"don't ask again\""; fi
-  if grep -qiF -- 'a file step 0 refuses, from that resumed invocation on' "$f"; then ok "$f: the saved rule stops the resumed invocation"
-  else bad "P $f: the resume text does not say that step 0 refuses the saved rule's file from that resumed invocation on"; fi
+  if grep -qiF -- 'That invocation asks unless the user-level rules in' "$f"; then ok "$f: the resume text names the rules that stop its prompt"
+  else bad "P $f: the resume text does not name the user-level rules that stop its prompt"; fi
+  if grep -qiF -- 'which step 0 no longer refuses while git does not track it' "$f"; then ok "$f: the saved rule's file no longer stops the resumed invocation"
+  else bad "P $f: the resume text does not say that step 0 no longer refuses the saved rule's untracked file"; fi
+  for gone in 'tell the human to answer "Yes", not "don'"'"'t ask again"' 'a file step 0 refuses, from that resumed invocation on'; do
+    if grep -qiF -- "$gone" "$f"; then bad "P $f says: $gone"; else ok "gone from $f: $gone"; fi
+  done
+  # A resumed invocation keeps the user's --strict, so its step 0 and its rundir.sh new stay strict (Rule 11f).
+  keep='and `--strict` when the user'"'"'s arguments held it'
+  [ "$f" = SKILL.md ] && keep='and `--strict` when the user'"'"'s request held it or asked for strict mode'
+  if grep -qF -- "$keep" "$f"; then ok "$f: the resumed invocation keeps --strict"
+  else bad "P $f: the resume text does not carry --strict: $keep"; fi
 done
 # Each command that starts agents (Task in its allowed-tools), and the root SKILL.md, keeps them in the foreground,
 # and resumes in the turn that brings an agent's result when Claude Code ran it in the background anyway (it cannot
@@ -1379,10 +1407,12 @@ else bad "the python3 -I check could not read the tree"; fi
 # ---- 6. the mode lines a runner poc-engineer writes starts with -------------------------------------------
 # Run as the first lines of a runner in a crate at audit_1/poc/F-1, started from the working directory and from
 # the crate itself, with a stand-in installation whose probe.sh prints the isolation line FAKE_ISOLATION holds:
-# like run.sh --crate, they take the stricter of <R>/exec-mode and AUDITOR_EXEC_MODE; they stop on none, on no
-# mode, on an exec-mode that is not a regular file holding one word and at most one newline (run.sh's mode_file
-# reads it so), and on an AUDITOR_EXEC_MODE that names no mode, and in isolated mode unless the self-check finds
-# nothing readable. poc-harness.md §1 shows the same lines, with the corpus's name for the root.
+# like run.sh --crate, they take the stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT,
+# read as Rule 11f reads it, with a note for a value that is no word for on or off, or a strict entry of any kind
+# in their own <R>, not in another run directory), native when none of them says anything (spec §4.7); they stop
+# on none, on an exec-mode that is not a regular file holding one word and at most one newline (run.sh's
+# mode_file reads it so), and on an AUDITOR_EXEC_MODE that names no mode, and in isolated mode unless the
+# self-check finds nothing readable. poc-harness.md §1 shows the same lines, with the corpus's name for the root.
 G="$T/gate"
 mkdir -p "$G/inst/scripts/runner" "$G/ws/audit_1/poc/F-1" "$G/home"
 printf '#!/bin/bash\nprintf "%%s\\n" "${FAKE_ISOLATION:-isolation: readable: SSH keys (1); ~/.ssh/id_ed25519}"\n' \
@@ -1407,12 +1437,14 @@ fi
   awk -v root="$G/inst" '$0 == "AUDITOR_ROOT=\047${CLAUDE_PLUGIN_ROOT}\047" { print "AUDITOR_ROOT=\047" root "\047"; next } { print }' "$G/lines"
   printf 'echo "past the gate: $AUDITOR_EXEC_MODE"\n'; } > "$G/ws/audit_1/poc/F-1/run.sh"
 CLEAN='isolation: none of the credentials the self-check reads is readable'
-# <exec-mode>|<AUDITOR_EXEC_MODE>|<self-check>|<want>: an empty exec-mode is none at all, @dir a directory,
-# @link:<word> a symbolic link to a file that holds <word>, @bytes:<format> the bytes printf writes from <format>
-# (\n a newline), and any other a file that holds the word and one newline.
-while IFS='|' read -r file env iso want; do
+# <exec-mode>|<AUDITOR_EXEC_MODE>|<AUDITOR_STRICT>|<marker>|<self-check>|<want>|<note>: an empty exec-mode is none
+# at all, @dir a directory, @link:<word> a symbolic link to a file that holds <word>, @bytes:<format> the bytes
+# printf writes from <format> (\n a newline), and any other a file that holds the word and one newline. The
+# marker is audit_1/strict as an empty file, a directory or a dangling link, or (other) incident_1/strict, which is
+# not this runner's <R>. A run that goes on prints <note>, when given, on the line before the gate's.
+while IFS='|' read -r file env strict marker iso want note; do
   [ -n "$want" ] || continue
-  rm -rf "$G/ws/audit_1/exec-mode" "$G/ws/audit_1/linked"
+  rm -rf "$G/ws/audit_1/exec-mode" "$G/ws/audit_1/linked" "$G/ws/audit_1/strict" "$G/ws/incident_1"
   case "$file" in
     '') ;;
     @dir) mkdir "$G/ws/audit_1/exec-mode" ;;
@@ -1420,49 +1452,73 @@ while IFS='|' read -r file env iso want; do
     @bytes:*) printf -- "${file#@bytes:}" > "$G/ws/audit_1/exec-mode" ;;
     *) printf '%s\n' "$file" > "$G/ws/audit_1/exec-mode" ;;
   esac
+  case "$marker" in
+    file) : > "$G/ws/audit_1/strict" ;;
+    dir) mkdir "$G/ws/audit_1/strict" ;;
+    dangling) ln -s nowhere "$G/ws/audit_1/strict" ;;
+    other) mkdir -p "$G/ws/incident_1" && : > "$G/ws/incident_1/strict" ;;
+  esac
   set -- FAKE_ISOLATION="$CLEAN"
   [ "$iso" = readable ] && set -- FAKE_ISOLATION="isolation: readable: SSH keys (1); ~/.ssh/id_ed25519"
   [ -n "$env" ] && set -- "$@" AUDITOR_EXEC_MODE="$env"
+  [ -n "$strict" ] && set -- "$@" AUDITOR_STRICT="$strict"
+  expect="past the gate: $want"
+  [ -n "$note" ] && expect="$note
+$expect"
   for from in 'working directory' crate; do
     if [ "$from" = crate ]; then
       out=$(cd "$G/ws/audit_1/poc/F-1" && env -i PATH="$PATH" HOME="$G/home" "$@" bash ./run.sh 2>&1); rc=$?
     else
       out=$(cd "$G/ws" && env -i PATH="$PATH" HOME="$G/home" "$@" bash audit_1/poc/F-1/run.sh 2>&1); rc=$?
     fi
-    label="runner gate, started from the $from: exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}', self-check $iso"
+    label="runner gate, started from the $from: exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}', AUDITOR_STRICT '${strict:-unset}', strict marker ${marker:-none}, self-check $iso"
     case "$want" in
       stop) if [ "$rc" = 3 ] && [ "${out#*past the gate}" = "$out" ] && [ "${out#*'[PoC-ATTEMPTED] blocker:'}" != "$out" ]; then
               ok "$label -> exit 3, nothing past the gate"
             else bad "$label: exit $rc, want 3 before anything else: ${out:0:300}"; fi ;;
-      *)    if [ "$rc" = 0 ] && [ "$out" = "past the gate: $want" ]; then ok "$label -> runs in $want mode"
+      *)    if [ "$rc" = 0 ] && [ "$out" = "$expect" ]; then ok "$label -> runs in $want mode"
             else bad "$label: exit $rc, want a run in $want mode: ${out:0:300}"; fi ;;
     esac
   done
 done <<'CASES'
-native||clean|native
-|native|clean|native
-||clean|stop
-none|native|clean|stop
-native|none|clean|stop
-isolated|native|clean|isolated
-isolated|native|readable|stop
-native|isolated|readable|stop
-native|isolated|clean|isolated
-|isolated|readable|stop
-native|Isolated|clean|stop
-native|NONE|clean|stop
-isolated|isolate|clean|stop
-|Isolated|clean|stop
-Isolated|native|clean|stop
-isolated native|native|clean|stop
-@dir|native|clean|stop
-@link:native|native|clean|stop
-@link:isolated||clean|stop
-@bytes:native||clean|native
-@bytes:native\n\n||clean|stop
-@bytes:native\n\n\n\nnone||clean|stop
-@bytes:native\n\n\n\nisolated||clean|stop
-@bytes:isolated\n\n|native|clean|stop
+native||||clean|native
+|native|||clean|native
+||||clean|native
+none|native|||clean|stop
+native|none|||clean|stop
+isolated|native|||clean|isolated
+isolated|native|||readable|stop
+native|isolated|||readable|stop
+native|isolated|||clean|isolated
+|isolated|||readable|stop
+native|Isolated|||clean|stop
+native|NONE|||clean|stop
+isolated|isolate|||clean|stop
+|Isolated|||clean|stop
+Isolated|native|||clean|stop
+isolated native|native|||clean|stop
+@dir|native|||clean|stop
+@link:native|native|||clean|stop
+@link:isolated||||clean|stop
+@bytes:native||||clean|native
+@bytes:native\n\n||||clean|stop
+@bytes:native\n\n\n\nnone||||clean|stop
+@bytes:native\n\n\n\nisolated||||clean|stop
+@bytes:isolated\n\n|native|||clean|stop
+||1||clean|isolated
+||1||readable|stop
+native||1||clean|isolated
+|native|yes||clean|isolated
+none||1||clean|stop
+||0||clean|native
+||OFF||clean|native
+||maybe||clean|isolated|>> note: AUDITOR_STRICT is 'maybe', read as on
+native|||file|clean|isolated
+native|||dir|clean|isolated
+native|||dangling|clean|isolated
+native|||file|readable|stop
+native|||other|clean|native
+|Isolated|1||clean|stop
 CASES
 
 echo "---- command forms: $pass passed, $failn failed"

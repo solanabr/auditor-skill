@@ -24,6 +24,7 @@ mkdir -p "$W" "$T/bin" "$T/marks"
 export HOME="$T/home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 GIT_CEILING_DIRECTORIES="$T"
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
+unset AUDITOR_STRICT
 mkdir -p "$HOME"
 
 pass=0 fail=0 skip=0
@@ -56,6 +57,22 @@ collect() {
 rc() { (cd "$W" && "$COLLECT" "$@") >/dev/null 2>"$T/rc.err"; echo $?; }
 rc_in() { local d=$1; shift; (cd "$d" && "$COLLECT" "$@") >/dev/null 2>"$T/rc.err"; echo $?; }
 refused_with() { [ "$(cat "$T/rc.err")" = "collect.sh: refused: $1" ]; }
+# link_leaves <link> <run directory>: status 0 when the link, followed to its end, leads outside the run
+# directory or to nothing, which default and strict mode both refuse; one that ends inside it is refused
+# in strict mode only.
+link_leaves() {
+  local p=$1 t r n=0
+  [ -L "$p" ] || return 1
+  [ -e "$p" ] || return 0
+  while [ -L "$p" ] && [ "$n" -lt 40 ]; do
+    t=$(readlink "$p") || return 1
+    case "$t" in /*) p=$t ;; *) p=${p%/*}/$t ;; esac
+    n=$((n + 1))
+  done
+  if [ -d "$p" ]; then p=$(cd -P "$p" && pwd -P)/; else p=$(cd -P "${p%/*}" && pwd -P)/${p##*/}/ || return 1; fi
+  r=$(cd -P "$2" && pwd -P)/ || return 1
+  case "$p" in "$r"*) return 1 ;; esac
+}
 
 # =================================================================================================
 # Target fixture: guard edits, attribute anchoring, quiet fix, whole-message keyword, revert.
@@ -216,7 +233,7 @@ collect --offline --repo tgt --keywords --network
 check "an option-shaped word after --keywords is its value, not a mode (exit 0, still offline)" \
   sh -c "grep -q '^| Network | offline |' '$OUT/history.md' && grep -q 'oracle|--network' '$OUT/history.md'"
 check "--help prints the whole header, exit statuses included" \
-  sh -c "cd '$W' && '$COLLECT' --help | grep -q 'Exit status:' && '$COLLECT' --help | grep -q 'promisor remote)'"
+  sh -c "cd '$W' && '$COLLECT' --help | grep -q 'Exit status:' && '$COLLECT' --help | grep -q 'default mode notes either and goes on)'"
 check "--help names the mode-first forms" sh -c "cd '$W' && '$COLLECT' --help | grep -q 'collect.sh\" --offline --repo <dir> --out audit_<n>/bootstrap'"
 
 # =================================================================================================
@@ -1002,6 +1019,7 @@ check "T-n: a bootstrap dir that is a symbolic link is refused (exit 2)" test "$
 check "T-n: ... also when --out ends in a slash" test "$(rc_in "$RD" --offline --repo . --out audit_1/bootstrap/)" = 2
 check "T-n: a bootstrap dir that holds a symbolic link is refused (exit 2)" test "$(rc_in "$RD" --offline --repo . --out audit_2/bootstrap)" = 2
 check "T-n: ... saying the run directory holds one" refused_with "the run directory holds a symbolic link: audit_2"
+check "T-n: ... a link that leads outside it, which both modes refuse" link_leaves "$RD/audit_2/bootstrap/.gitignore" "$RD/audit_2"
 check "T-n: an audit_<n> that is a symbolic link is refused (exit 2)" test "$(rc_in "$RD" --offline --repo . --out audit_4/bootstrap)" = 2
 check "T-n: a . component cannot hide the audit_<n> parent (exit 2)" test "$(rc_in "$RD" --offline --repo . --out audit_4/./bootstrap)" = 2
 check "T-n: --detect refuses an --out through a symbolic link too (exit 2)" test "$(rc_in "$RD" --detect --repo . --out audit_4/bootstrap)" = 2
@@ -1062,15 +1080,28 @@ if command -v jq >/dev/null 2>&1; then
   check "T-n: a link that appears during the run is refused before any output is copied in (exit 2)" \
     test "$(cd "$RD" && PATH="$T/plantjq:$PATH" TM_JSON_TOOL=jq "$COLLECT" --offline --repo . --out audit_10/bootstrap --vulns late.json >/dev/null 2>"$T/rc.err"; echo $?)" = 2
   check "T-n: ... saying the run directory holds a link" refused_with "the run directory holds a symbolic link: audit_10"
+  check "T-n: ... a link that leads outside it, which both modes refuse" link_leaves "$RD/audit_10/late" "$RD/audit_10"
   check "T-n: ... and nothing was copied in" test ! -e "$RD/audit_10/bootstrap"
   check "T-n: ... nor through the link" test -z "$(ls -A "$T/elsewhere")"
 else
   skp "T-n late link: needs jq"
 fi
+# Default mode takes a run directory holding a link that ends inside it; strict mode refuses any link.
+# Either way the collector writes through none: a history.md that is such a link becomes a file.
+mkrun audit_11; mkdir "$RD/audit_11/bootstrap"; printf 'decoy\n' > "$RD/audit_11/decoy.md"
+ln -s ../decoy.md "$RD/audit_11/bootstrap/history.md"
+check "T-n (strict): a run directory holding a link that ends inside it is refused (exit 2)" \
+  test "$(cd "$RD" && AUDITOR_STRICT=1 "$COLLECT" --offline --repo . --out audit_11/bootstrap >/dev/null 2>"$T/rc.err"; echo $?)" = 2
+check "T-n (strict): ... saying it holds a symbolic link" refused_with "the run directory holds a symbolic link: audit_11"
+check "T-n: in default mode that run directory is written to (exit 0)" test "$(rc_in "$RD" --offline --repo . --out audit_11/bootstrap)" = 0
+check "T-n: ... the history.md link replaced by a file of its own" \
+  sh -c "[ ! -L '$RD/audit_11/bootstrap/history.md' ] && [ -s '$RD/audit_11/bootstrap/history.md' ]"
+check "T-n: ... and nothing written through the link" test "$(cat "$RD/audit_11/decoy.md")" = decoy
 
 # =================================================================================================
-# T-p: partial and shallow clones. A partial clone is refused (exit 3) before any object is read, so
-# its promisor remote is never contacted; a shallow clone is collected with a note that history is cut.
+# T-p: partial and shallow clones. A partial clone is read for what it holds, with a note, and never
+# contacts its promisor remote; strict mode refuses it (exit 3) before any object is read. A shallow
+# clone is collected with a note that history is cut.
 # =================================================================================================
 git_at_least() { # git_at_least <major> <minor>
   local v; v=$(git --version | sed -E 's/^git version ([0-9]+)\.([0-9]+).*/\1 \2/')
@@ -1096,11 +1127,25 @@ else
   else skp "T-p sanity: this git did not fetch a missing object"; fi
   rm -f "$T/marks/promisor-fetch"
   PRUN=$(newrun)
-  check "T-p: a partial clone is refused in --detect (exit 3)" test "$(rc --detect --repo partial --out audit_900/bootstrap)" = 3
-  check "T-p: ... and in a full run (exit 3)" test "$(rc --offline --repo partial --out "$PRUN/bootstrap")" = 3
-  check "T-p: ... with a message naming the promisor remote" has "$T/rc.err" "the target is a partial clone"
+  check "T-p (strict): a partial clone is refused in --detect (exit 3)" test "$(AUDITOR_STRICT=1 rc --detect --repo partial --out audit_900/bootstrap)" = 3
+  check "T-p (strict): ... and in a full run (exit 3)" test "$(AUDITOR_STRICT=1 rc --offline --repo partial --out "$PRUN/bootstrap")" = 3
+  check "T-p (strict): ... with today's line, naming the promisor remote" test "$(cat "$T/rc.err")" = \
+    "collect.sh: the target is a partial clone: reading missing objects would fetch from its promisor remote. Make a full copy you control first (OUTPUT-RULES Rule 11c)."
+  check "T-p (strict): the promisor remote is never contacted" test ! -e "$T/marks/promisor-fetch"
+  check "T-p (strict): nothing is written for a refused target" test ! -e "$W/$PRUN/bootstrap"
+  PNOTE="collect.sh: note: the target is a partial clone: missing objects are not fetched, so history and contents may be incomplete; strict mode stops here (Rule 11f)"
+  DP=$(cd "$W" && "$COLLECT" --detect --repo partial --out audit_900/bootstrap 2>"$T/rc.err"); DRC=$?
+  check "T-p: --detect reads a partial clone (exit 0)" test "$DRC" = 0
+  check "T-p: ... with the note as stderr's one line" test "$(cat "$T/rc.err")" = "$PNOTE"
+  check "T-p: ... and prints both triggers, from the objects the clone holds" \
+    test "$(printf '%s\n' "$DP" | cut -d' ' -f1-3 | tr '\n' ' ')" = "T3 yes readme-phrase T4 no none "
+  collect --offline --repo partial; PRC=$?
+  check "T-p: a full run reads a partial clone (exit 0)" test "$PRC" = 0
+  check "T-p: ... with the note as stderr's first line" test "$(sed -n 1p "$T/stderr.log")" = "$PNOTE"
+  check "T-p: ... and history.md says what that means" \
+    has "$OUT/history.md" "Partial clone: the objects it lacks are not fetched, so a NOT FOUND or a short list below may only mean that they are missing."
+  check "T-p: ... and that nothing a partial clone lacks is fetched" has "$OUT/history.md" "every transport protocol off (nothing a partial clone lacks is fetched)"
   check "T-p: the promisor remote is never contacted" test ! -e "$T/marks/promisor-fetch"
-  check "T-p: nothing is written for a refused target" test ! -e "$W/$PRUN/bootstrap"
   rm -f "$T/marks/promisor-fetch"
   collect --offline --repo tgt --parent partial
   check "T-p: a local --parent that is a partial clone is not used" has "$OUT/history.md" "is a partial clone"
@@ -1325,10 +1370,11 @@ check "T-u: ... and the parent's fix the fork never applied is listed as absent"
   sh -c "grep -q 'require!(amount > 0, AmmError::ZeroAmount);.*\[text absent from target @ pin - verify\]' '$OUTFO/history.md'"
 
 # =================================================================================================
-# T-v: the run-directory and partial-clone checks refuse when git or find cannot answer, rather than
-# treating "no answer" as "not tracked" or "no links". A stand-in git reports the error git gives for a
-# repository owned by another user (safe.directory) for the calls under test and runs the real git
-# for everything else.
+# T-v: the run-directory and partial-clone checks never take "no answer" from git or find for "not
+# tracked", "no links" or "not partial". A stand-in git reports the error git gives for a repository
+# owned by another user (safe.directory) for the calls under test and runs the real git for everything
+# else. Strict mode refuses each such run. Default mode refuses a run directory find cannot read, takes
+# one git cannot place when its .gitignore holds *, and notes a config git cannot read (Rule 11f).
 # =================================================================================================
 mkdir -p "$T/gitwrap-tracked" "$T/gitwrap-config"
 printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --is-inside-work-tree|ls-files) echo "fatal: detected dubious ownership in repository at '"'"'$PWD'"'"'" >&2; exit 128 ;; esac; done\nexec "%s" "$@"\n' "$REALGIT" > "$T/gitwrap-tracked/git"
@@ -1338,19 +1384,28 @@ FC="$T/failclosed"; mkrepo "$FC"
 put "$FC" programs/f/src/lib.rs 'pub fn f() {}'
 commit "$FC" -m "initial"
 FR1=$(newrun "$FC"); FR2=$(newrun "$FC"); FR3=$(newrun "$FC")
-check "T-v: when git cannot say whether the run directory is tracked, it is refused (exit 2)" \
-  test "$(cd "$FC" && PATH="$T/gitwrap-tracked:$PATH" "$COLLECT" --offline --repo . --out "$FR1/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 2
-check "T-v: ... saying so" refused_with "git cannot tell whether the run directory is tracked: $FR1"
-check "T-v: ... and nothing is written" test ! -e "$FC/$FR1/bootstrap"
+check "T-v (strict): when git cannot say whether the run directory is tracked, it is refused (exit 2)" \
+  test "$(cd "$FC" && AUDITOR_STRICT=1 PATH="$T/gitwrap-tracked:$PATH" "$COLLECT" --offline --repo . --out "$FR1/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 2
+check "T-v (strict): ... saying so" refused_with "git cannot tell whether the run directory is tracked: $FR1"
+check "T-v (strict): ... and nothing is written" test ! -e "$FC/$FR1/bootstrap"
+check "T-v: in default mode that run directory, whose .gitignore holds *, is written to (exit 0)" \
+  test "$(cd "$FC" && PATH="$T/gitwrap-tracked:$PATH" "$COLLECT" --offline --repo . --out "$FR1/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 0
+check "T-v: ... with no note, and history.md is written" \
+  sh -c "[ \"\$(cat '$T/rc.err')\" = 'collect.sh: wrote $FR1/bootstrap/history.md' ] && [ -s '$FC/$FR1/bootstrap/history.md' ]"
 mkdir -p "$FC/$FR2/bootstrap/sub"; ln -s "$T/elsewhere" "$FC/$FR2/bootstrap/sub/link"
 chmod 0300 "$FC/$FR2/bootstrap/sub"
 check "T-v: a run directory that cannot be fully read (a 0300 subdirectory) is refused (exit 2)" \
   test "$(rc_in "$FC" --offline --repo . --out "$FR2/bootstrap")" = 2
 chmod 0700 "$FC/$FR2/bootstrap/sub"
 check "T-v: ... and nothing is written through the link it hides" test -z "$(ls -A "$T/elsewhere")"
-check "T-v: when git cannot read the target's config, the partial-clone check refuses (exit 3)" \
-  test "$(cd "$FC" && PATH="$T/gitwrap-config:$PATH" "$COLLECT" --offline --repo . --out "$FR3/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 3
-check "T-v: ... and nothing is written" test ! -e "$FC/$FR3/bootstrap"
+check "T-v (strict): when git cannot read the target's config, the partial-clone check refuses (exit 3)" \
+  test "$(cd "$FC" && AUDITOR_STRICT=1 PATH="$T/gitwrap-config:$PATH" "$COLLECT" --offline --repo . --out "$FR3/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 3
+check "T-v (strict): ... and nothing is written" test ! -e "$FC/$FR3/bootstrap"
+check "T-v: in default mode a config git cannot read is noted, and the run goes on (exit 0)" \
+  test "$(cd "$FC" && PATH="$T/gitwrap-config:$PATH" "$COLLECT" --offline --repo . --out "$FR3/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 0
+check "T-v: ... the note is stderr's first line" test "$(sed -n 1p "$T/rc.err")" = \
+  "collect.sh: note: git cannot read the target's config, so a partial clone cannot be ruled out: missing objects are not fetched, so history and contents may be incomplete; strict mode stops here (Rule 11f)"
+check "T-v: ... and history.md says what that means" has "$FC/$FR3/bootstrap/history.md" "git could not read the target's config, so it may be a partial clone"
 check "T-v: git missing from PATH is refused (exit 2)" \
   test "$(cd "$FC" && PATH="$T/bin" /bin/bash "$COLLECT" --offline --repo . --out "$FR3/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 2
 
@@ -1416,18 +1471,102 @@ if [ "$VXU" != "$VX" ] && [ "$VXU" -ef "$VX" ]; then
   check "T-x: ... and so is that path spelled in other letters, where the volume folds case" \
     sh -c "! grep -rq 'VX-SECRET-DIR' '$OUT/inputs/' && grep -F 'reports/report.md' '$OUT/inputs.tsv' | grep -q 'skipped: symbolic link'"
 fi
-# A --repo whose work tree holds a named pipe where git reads its own files is refused before git starts,
-# and the refusal names the pipe.
+# A --repo whose work tree holds a named pipe where git reads its own files: strict mode refuses it
+# before git starts, naming the pipe. Default mode skips that walk (Rule 11f) and reads past the pipe at
+# once, since its git reads take an empty work tree (hgit_text_tree) and open no file of the target's.
 FW="$W/fifo-wt"; mkrepo "$FW"; put "$FW" a.txt 'a'; commit "$FW" -m "initial"; mkfifo "$FW/.gitattributes"
-check "T-x: a --repo with a named pipe as its .gitattributes is refused (exit 3)" \
-  test "$(rc --network --repo fifo-wt --out "$(newrun)/bootstrap")" = 3
-check "T-x: ... naming the pipe" grep -qF "collect.sh: a named pipe or device is where git reads its own files in the work tree, and git would wait on it for good: " "$T/rc.err"
+check "T-x (strict): a --repo with a named pipe as its .gitattributes is refused (exit 3)" \
+  test "$(AUDITOR_STRICT=1 rc --network --repo fifo-wt --out "$(newrun)/bootstrap")" = 3
+check "T-x (strict): ... naming the pipe" grep -qF "collect.sh: a named pipe or device is where git reads its own files in the work tree, and git would wait on it for good: " "$T/rc.err"
+FWR=$(newrun)
+(cd "$W" && exec "$COLLECT" --network --repo fifo-wt --out "$FWR/bootstrap") >/dev/null 2>"$T/rc.err" &
+fpid=$!; n=0
+while kill -0 "$fpid" 2>/dev/null && [ "$n" -lt 600 ]; do sleep 0.1; n=$((n + 1)); done
+if kill -0 "$fpid" 2>/dev/null; then
+  kill -KILL "$fpid" 2>/dev/null; wait "$fpid" 2>/dev/null; FRC=hung
+  ( : > "$FW/.gitattributes" ) & sleep 1; kill -KILL $! 2>/dev/null
+else
+  wait "$fpid"; FRC=$?
+fi
+check "T-x: in default mode the collector reads past that pipe at once (exit 0)" test "$FRC" = 0
+check "T-x: ... and writes history.md" test -s "$W/$FWR/bootstrap/history.md"
 rm -rf "$FW"
+
+# =================================================================================================
+# T-y: --repo . in a session started below the top level of a repository (OUTPUT-RULES.md Rule 11c).
+# Default mode reads that repository as git does from the working directory: pathspecs and the paths
+# printed are relative to it, and what lies outside it is left out, so a TRUNCATED line's git-ro.sh call
+# works as pasted there. Strict mode refuses the session, and any other --repo is still a top level.
+# =================================================================================================
+MONO="$T/mono"; mkrepo "$MONO"
+YPAD=$(i=0; while [ $i -lt 450 ]; do printf '// padding line %s\n' "$i"; i=$((i + 1)); done)
+put "$MONO" README.md 'Example pool, forked from the upstream reference pool.'
+put "$MONO" audits/top-audit.md '# audit of the whole repository'
+put "$MONO" programs/bar/src/lib.rs '#[account(mut, has_one = bar_admin)]'
+put "$MONO" programs/foo/src/lib.rs '#[account(mut, has_one = foo_admin)]'
+put "$MONO" programs/foo/src/big.rs "$YPAD
+#[account(mut, has_one = big_admin)]"
+put "$MONO" programs/foo/audits/foo-audit.md '# audit of foo'
+commit "$MONO" -m "initial"
+put "$MONO" programs/bar/src/lib.rs '#[account(mut)]'
+put "$MONO" programs/foo/src/lib.rs '#[account(mut)]'
+commit "$MONO" -m "Rework accounts"
+put "$MONO" programs/foo/src/big.rs '// emptied'
+commit "$MONO" -m "Empty the big module"
+C_YBIG=$(short "$MONO" HEAD); F_YBIG=$(git -C "$MONO" rev-parse HEAD)
+SUB="$MONO/programs/foo"
+YR=$(newrun "$SUB")
+check "T-y: from a subdirectory of a repository, --offline --repo . reads that repository (exit 0)" \
+  test "$(rc_in "$SUB" --offline --repo . --out "$YR/bootstrap")" = 0
+YH="$SUB/$YR/bootstrap/history.md"
+check "T-y: ... the Target row names the working directory and the repository" \
+  has "$YH" "| Target | \`$SUB\`, which is \`programs/foo/\` in the repository at \`$MONO\`: the paths below are relative to it, and what lies outside it is left out |"
+check "T-y: ... the default pathspec is taken from the working directory" has "$YH" "| Target paths | \`*.rs\` |"
+section_of "$YH" "R3" > "$T/r3y.txt"
+check "T-y: ... R3 names a removed guard by its path from the working directory" \
+  has "$T/r3y.txt" "REMOVED x1 src/lib.rs: #[account(mut, has_one = foo_admin)]"
+check "T-y: ... and leaves out the guard removed outside it" hasnt "$T/r3y.txt" "bar_admin"
+check "T-y: ... R4 counts files by that path, and none outside it" \
+  sh -c "awk '/^## R4/,/^## R5/' '$YH' | grep -q ' src/lib.rs\$' && ! awk '/^## R4/,/^## R5/' '$YH' | grep -q 'programs/'"
+check "T-y: ... R6 lists the report below the working directory, and neither the report nor the README above it" \
+  sh -c "awk '/report-like files in the pinned tree/,/^\`\`\`\$/' '$YH' | grep -qx 'audits/foo-audit.md' && ! grep -q 'top-audit.md\|forked from' '$YH'"
+check "T-y: ... and R7 copies that report from the pinned tree" \
+  sh -c "grep -F 'pinned tree: audits/foo-audit.md' '$SUB/$YR/bootstrap/inputs.tsv' | grep -q copied && grep -rq 'audit of foo' '$SUB/$YR/bootstrap/inputs/'"
+YHINT=$(rest_cmd "$SUB/$YR/bootstrap/diffs/target-$C_YBIG.diff")
+check "T-y: a cut diff's TRUNCATED line names its file by the path from the working directory" \
+  test "$YHINT" = "$GITRO show $F_YBIG -- 'src/big.rs'"
+( cd "$SUB" && bash -c "$YHINT" ) > "$T/y-hint.out" 2>&1
+check "T-y: ... and, run there as pasted, git-ro.sh shows the rest of that file's diff" \
+  grep -qF -- '-#[account(mut, has_one = big_admin)]' "$T/y-hint.out"
+YD=$(cd "$SUB" && "$COLLECT" --detect --repo . --out "$YR/bootstrap" 2>/dev/null)
+check "T-y: --detect from there finds the report below the working directory (T4)" \
+  test "$(printf '%s\n' "$YD" | sed -n 2p)" = "T4 yes in-tree-report"
+YN=$(newrun "$SUB")
+check "T-y: --network --repo . reads the repository the same way (exit 0)" \
+  sh -c "[ \"\$(cd '$SUB' && '$COLLECT' --network --repo . --out '$YN/bootstrap' 2>/dev/null; echo \$?)\" = 0 ] && grep -qF 'REMOVED x1 src/lib.rs: #[account(mut, has_one = foo_admin)]' '$SUB/$YN/bootstrap/history.md'"
+YS=$(newrun "$SUB")
+check "T-y (strict): the session is refused with the status for a --repo that is no top level (exit 3)" \
+  test "$(cd "$SUB" && AUDITOR_STRICT=1 "$COLLECT" --offline --repo . --out "$YS/bootstrap" >/dev/null 2>"$T/rc.err"; echo $?)" = 3
+check "T-y (strict): ... in one line saying strict mode reads a repository only from its top level" \
+  sh -c "[ \"\$(grep -c . '$T/rc.err')\" = 1 ] && grep -q '^collect.sh: refused: .*strict mode reads a repository only from its top level' '$T/rc.err'"
+check "T-y (strict): ... and nothing is written" test ! -e "$SUB/$YS/bootstrap"
+check "T-y: an explicit --repo naming that subdirectory, from the top level, is still refused (exit 3)" \
+  test "$(rc_in "$MONO" --offline --repo programs/foo --out "$(newrun "$MONO")/bootstrap")" = 3
+# A repository that tracks nothing under the working directory, such as dotfiles in a home directory,
+# is not taken for the target of what was unpacked below it.
+DOT="$T/dotfiles"; mkrepo "$DOT"; put "$DOT" .profile 'export EDITOR=vi'; commit "$DOT" -m "dotfiles"
+mkdir -p "$DOT/unpacked"; printf 'pub fn u() {}\n' > "$DOT/unpacked/lib.rs"
+YU=$(newrun "$DOT/unpacked")
+check "T-y: below a repository that tracks nothing there, --repo . is refused, as no top level (exit 3)" \
+  test "$(rc_in "$DOT/unpacked" --offline --repo . --out "$YU/bootstrap")" = 3
+check "T-y: ... and nothing is written" test ! -e "$DOT/unpacked/$YU/bootstrap"
 
 # =================================================================================================
 # The case file: hostile argument vectors, each refused with one stderr line, nothing on stdout, and
 # nothing changed in the working directory. It runs in $CW, which holds the repository tgt, the run
 # directory audit_1 (made by rundir.sh), and the links tgt-link (to tgt) and audit_2 (to audit_1).
+# Every case is refused in both modes, so the file runs in default mode and again with AUDITOR_STRICT=1,
+# and must print the same.
 # =================================================================================================
 SHELLS=("$BASH")
 if [ -x /bin/bash ] && [ "$(/bin/bash -c 'printf %s "$BASH_VERSION"')" != "$BASH_VERSION" ]; then
@@ -1440,27 +1579,29 @@ newrun "$CW" >/dev/null
 ln -s tgt "$CW/tgt-link"; ln -s audit_1 "$CW/audit_2"
 ctree() { (cd "$CW" && find . -path ./tgt/.git -prune -o -print | LC_ALL=C sort); }
 ctree > "$T/ctree.before"
-ncase=0
-while IFS= read -r line; do
-  case "$line" in ''|'#'*) continue ;; esac
-  want_rc=${line%%$'\t'*}
-  rest=${line#*$'\t'}
-  want_err=${rest%%$'\t'*}
-  rest=${rest#*$'\t'}
-  IFS=$'\t' read -r -a args <<< "$rest"
-  ncase=$((ncase + 1))
-  i=0
-  for sh in "${SHELLS[@]}"; do
-    (cd "$CW" && "$sh" "$COLLECT" "${args[@]}") >"$T/case.out" 2>"$T/case.err" </dev/null
-    got=$?
-    if [ "$got" = "$want_rc" ] && [ "$(cat "$T/case.err")" = "$want_err" ] && [ ! -s "$T/case.out" ]; then
-      [ "$i" -gt 0 ] || ok "case: collect.sh ${args[*]}"
-    else
-      ko "case ($sh): collect.sh ${args[*]} -> status $got, stderr: $(cat "$T/case.err")"
-    fi
-    i=$((i + 1))
-  done
-done < "$CASES"
+for mode in default strict; do
+  ncase=0
+  while IFS= read -r line; do
+    case "$line" in ''|'#'*) continue ;; esac
+    want_rc=${line%%$'\t'*}
+    rest=${line#*$'\t'}
+    want_err=${rest%%$'\t'*}
+    rest=${rest#*$'\t'}
+    IFS=$'\t' read -r -a args <<< "$rest"
+    ncase=$((ncase + 1))
+    i=0
+    for sh in "${SHELLS[@]}"; do
+      (cd "$CW" && { [ "$mode" = default ] || export AUDITOR_STRICT=1; } && "$sh" "$COLLECT" "${args[@]}") >"$T/case.out" 2>"$T/case.err" </dev/null
+      got=$?
+      if [ "$got" = "$want_rc" ] && [ "$(cat "$T/case.err")" = "$want_err" ] && [ ! -s "$T/case.out" ]; then
+        [ "$i" -gt 0 ] || ok "case ($mode): collect.sh ${args[*]}"
+      else
+        ko "case ($mode, $sh): collect.sh ${args[*]} -> status $got, stderr: $(cat "$T/case.err")"
+      fi
+      i=$((i + 1))
+    done
+  done < "$CASES"
+done
 check "the case file has cases ($ncase)" test "$ncase" -gt 40
 ctree > "$T/ctree.after"
 check "no case changed anything in the working directory" cmp -s "$T/ctree.before" "$T/ctree.after"

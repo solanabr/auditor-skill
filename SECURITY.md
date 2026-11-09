@@ -14,8 +14,17 @@ it, and once to the machines that run it.
   lists). Each is meant to be safe whatever arguments it gets. A way to make one write outside the places its
   documentation names (run directories, the `audit-mem` store, its own scratch), run a program its arguments or
   the audited repository name, take a path outside the working directory that its grammar does not allow, reach
-  a host its documentation does not name, or run the project's code outside the recorded execution mode is a
-  security issue. So is an allow rule that reaches a program outside that set.
+  a host its documentation does not name, or run the project's code in a mode less strict than the one Rule 11a
+  sets (the stricter of the recorded mode, `AUDITOR_EXEC_MODE` and strict mode, native when none is recorded) is
+  a security issue. So is an allow rule that reaches a program outside that set. A session started below a
+  repository's top level, in a folder that holds tracked files, reads that repository's history and committed
+  files, paths above the working directory included: that is by design (`OUTPUT-RULES.md` Rule 11c).
+- **Strict mode**: in default mode the checks that would refuse a repository for what it contains print notes
+  instead, by design (`OUTPUT-RULES.md` Rule 11f). In a session started with the strict launch line (Rule 11f), a
+  way to make strict mode refuse less than Rule 11f lists, or to turn it off from inside the audited repository, is
+  a security issue. Third-party plugins beside auditor-skill are out of scope: what they run, such as a language
+  server that runs a project's build scripts, is theirs. The strict launch line loads none of the plugins you
+  enabled.
 - **Corpus content that could steer an auditor or an AI agent into a dangerous action** — for example a
   "verification step" that instructs running a destructive command, sending data to an external
   endpoint, or that materially misdescribes a vulnerability so that a real finding is dismissed.

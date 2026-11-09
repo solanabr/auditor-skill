@@ -6,6 +6,8 @@
 //! `.github/workflows`) into the report's `workflows` key, each as trigger → job
 //! → step facts; `<dir>` is a confined directory like the one to scan, and the
 //! files are read with the same walk (no link, a regular file of at most 4 MiB).
+//! In default mode (`confine::mode`) a `<dir>` that is not an existing directory
+//! skips that pass, listed in `skipped`; strict mode refuses it.
 //!
 //! It is built to be pre-approved as one rule on its absolute path followed by
 //! `--contract=1`, the marker of its contract, which a build made before it
@@ -170,7 +172,7 @@ fn check_out(wt: &Path, arg: &OsStr) -> Result<Out, Stop> {
         return Err(shape());
     }
     let mut git = Git::new(wt);
-    let dir_md = confine::run_dir(wt, &mut git, dir, "--out")?;
+    let dir_md = confine::run_dir(wt, &mut git, dir, "--out", false)?;
     let s = rel.shown();
     match std::fs::symlink_metadata(rel.full(wt)) {
         Ok(md) if md.file_type().is_symlink() => {
@@ -221,6 +223,9 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
     let wt = confine::working_tree()?;
     confine::plain_working_tree(&wt)?;
     confine::self_check(&wt)?;
+    if let Some(note) = &confine::mode().note {
+        eprintln!("audit-scan: note: {note}");
+    }
     let call = parse(args)?;
     let dir = confine::rel("the directory to scan", &call.dir, true)?;
     if confine::check(&wt, &dir, "the directory to scan")? != Kind::Dir {
@@ -229,16 +234,27 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
             dir.shown()
         )));
     }
+    // In default mode a --workflows that names no directory skips the workflow
+    // pass, in `skipped`; strict mode refuses it.
+    let mut no_workflows = None;
     let workflows = match &call.workflows {
         Some(arg) => {
             let wdir = confine::rel("--workflows", arg, false)?;
-            if confine::check(&wt, &wdir, "--workflows")? != Kind::Dir {
+            if confine::check(&wt, &wdir, "--workflows")? == Kind::Dir {
+                Some(wdir)
+            } else if confine::strict() {
                 return Err(refuse(format!(
                     "--workflows is not an existing directory: {}",
                     wdir.shown()
                 )));
+            } else {
+                no_workflows = Some(scan::Skipped {
+                    file: wdir.path().display().to_string(),
+                    reason: "--workflows is not an existing directory, so no workflow was read"
+                        .into(),
+                });
+                None
             }
-            Some(wdir)
         }
         None => None,
     };
@@ -256,6 +272,7 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
         report.workflows = parsed;
         report.skipped.extend(skipped);
     }
+    report.skipped.extend(no_workflows);
     let json = if call.pretty {
         serde_json::to_string_pretty(&report)
     } else {

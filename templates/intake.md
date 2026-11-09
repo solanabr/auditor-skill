@@ -196,12 +196,15 @@ text for report §4.6.}
 
 <!--
 Q46. OUTPUT-RULES Rule 11a: where target-controlled code (builds, tests, installs,
-Anchor.toml [scripts], and every PoC build) may run. Asked once per audit;
-every later step that executes target code or builds a PoC uses this answer, and
-the answer is also written as one word to audit_<n>/exec-mode, where
-templates/poc/run.sh --crate reads it (the stricter of it and AUDITOR_EXEC_MODE). In the auto flow an
-unanswered Q46 is "native" and goes in §9 with its basis. Outside services are not
-gated — they are listed in the report (Rule 11b).
+Anchor.toml [scripts], and every PoC build) may run. Asked once, at intake, and
+never again later; every later step that executes target code or builds a PoC uses
+this answer, and the answer is also written as one word to audit_<n>/exec-mode, where
+templates/poc/run.sh --crate reads it (the stricter of it, AUDITOR_EXEC_MODE and strict mode).
+"Untrusted source" writes isolated there and audit_<n>/strict too, which turns on
+strict mode (Rule 11f) for this and every later audit in this directory, until the
+strict files are deleted. Unanswered, and always in the auto flow, Q46 is "native"
+and goes in §9 with its basis. Outside services are not gated — they are listed in
+the report (Rule 11b).
 Q47: whether DEP-072 / DEP-073 may probe the project's own hosts and buckets,
 read-only and unauthenticated. Unanswered, and always in the auto flow, it is "no"
 and goes in §9; those items then give the owner a command to run instead. On yes,
@@ -212,7 +215,8 @@ later is added.
 
 | | |
 | ------------------------- | ------------------------------------------- |
-| **Execution mode**        | {isolated (recommended) / native} (Q46)     |
+| **Execution mode**        | {native / isolated / untrusted source (strict mode, and isolated) / none} (Q46) |
+| **Strict mode**           | {off / on: what turned it on — `AUDITOR_STRICT`, `--strict`, a `strict` file, or Q46's "untrusted source"} (Rule 11f) |
 | **Isolation used**        | {container / VM / Claude Code sandbox — no keys or credentials mounted / N/A (native)} |
 | **PoC build cache**       | {the directory `run.sh --new-cache` made once for this engagement's `run.sh` calls, passed as `--cache` — inside the isolated runner in isolated mode / none} |
 | **Outside services**      | {disclosed in the report per Rule 11b — e.g. RPC provider, second-opinion LLM, registry queries / none planned} |

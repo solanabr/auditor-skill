@@ -4,8 +4,9 @@
 # Gathers history-derived leads for /auditor:threat-model: security-keyword commits, reverts, removed
 # or quietly added account guards, churn, an optional fork-parent comparison, provenance signals,
 # prior-vulnerability inputs and the audit-mem warm block. It never checks out, builds, runs, fetches
-# into or modifies the target: lazy fetching and transport protocols are off, and a partial clone is
-# refused. Output contract: references/audit-lifecycle/threat-model-bootstrap.md.
+# into or modifies the target: lazy fetching and transport protocols are off, so a partial clone is read
+# for what it holds, with a note, and strict mode refuses it (OUTPUT-RULES.md Rule 11f). Output contract:
+# references/audit-lifecycle/threat-model-bootstrap.md.
 # Git hardening follows OUTPUT-RULES.md Rule 11c (the hardened call in scripts/lib/confine.sh); the
 # output directory follows Rule 11d.
 #
@@ -21,14 +22,23 @@
 #   --offline   collect without the network: --parent / --vulns URLs are recorded, not fetched
 #   --network   collect, fetching the https URLs given in --parent and --vulns; the only mode that reads
 #               a --repo, --parent or --vulns outside the working directory or through a symbolic link
+#               (but for the repository around a working directory below its top level: --repo . below)
 # In --detect and --offline, --repo and a local --parent or --vulns are relative to the working
 # directory, with no "." or ".." component, and reach nothing through a symbolic link; --repo, and a
 # --parent, is the top level of a repository whose git directory lies inside the working directory,
-# holds no symbolic link and borrows no objects (alternates) or parents (info/grafts). A local path that
-# fails this is refused (exit 2), naming --network. --network reads such a repository: its git directory
-# is searched for named pipes and devices git would open, but not where a link to a directory there leads,
-# nor the object directories objects/info/alternates names, so a read that meets one there waits until
-# the caller stops the run.
+# holds no symbolic link and borrows no objects (alternates) or parents (info/grafts). Default mode also
+# takes a git directory outside that git's own layout ties back to it, links in its hooks directory, and
+# alternates and grafts, each of the last two with a note (confine_repo, OUTPUT-RULES.md Rule 11f). A
+# local path that fails this is refused (exit 2), naming --network. --network reads such a repository:
+# its git directory is searched for named pipes and devices git would open, but not where a link to a
+# directory there leads, nor the object directories objects/info/alternates names, so a read that meets
+# one there waits until the caller stops the run. A --vulns file is copied into the run directory, and a
+# pre-approved read must not copy a file such as a key from outside the tree into the run folder: the
+# commands pre-approve --detect and --offline, never --network.
+# With --repo . in a session started below the top level of a repository, default mode reads that
+# repository, history above the working directory included, as git does from the working directory
+# (OUTPUT-RULES.md Rule 11c): pathspecs and the paths printed are relative to it, and changes and files
+# outside it are left out. Strict mode refuses such a session (Rule 11f). Any other --repo is a top level.
 #
 # Options (each at most once, except the repeatable --paths, --parent-paths and --vulns; a value is
 # at most 1024 bytes, with no control character):
@@ -60,8 +70,10 @@
 #   -h, --help                print this header (as the only argument)
 #
 # Run directory (OUTPUT-RULES.md Rule 11d): audit_<n> sits directly in the working directory, is a real
-# directory holding no symbolic link, is tracked by no repository in any letter case, and has a
-# .gitignore holding exactly "*" ("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" new audit makes one).
+# directory holding no symbolic link (in default mode, none that leads outside it or to nothing), is
+# tracked by no repository in any letter case (in default mode, one git cannot place passes on its
+# .gitignore), and has a .gitignore holding exactly "*" ("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" new
+# audit makes one).
 # bootstrap/ is made in it when missing. The output is built in a temporary directory and copied in at
 # the end, after the run directory is checked again: every file is created anew with noclobber and
 # written through the descriptor opened at creation, and a re-run replaces the outputs of the run before.
@@ -71,15 +83,17 @@
 # Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input (one line,
 #              "collect.sh: refused: <reason>": a mode that is not first, an unknown or repeated option,
 #              a value out of bounds, a path the mode does not take, an --import that is not a commit, a
-#              run directory that fails the checks above or that git or find cannot check, a disclosure
-#              that cannot be recorded, or an output that cannot be written),
+#              run directory that fails the checks above or that find, or in strict mode git, cannot
+#              check, a disclosure that cannot be recorded, or an output that cannot be written),
 #              3 --repo is not the top level of a git repository that git can read (or a bare
-#              repository), the pin does not resolve, or the target is a partial clone (reading it could
-#              fetch from its promisor remote) or git cannot read its config.
+#              repository; strict mode refuses --repo . below a top level so, in a "collect.sh: refused:"
+#              line), the pin does not resolve, or, in strict mode, the target is a partial clone or git
+#              cannot read its config (default mode notes either and goes on).
 
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES CDPATH
-# No git call may fetch a missing object from a promisor remote (partial clones are refused below too).
+# No git call may fetch a missing object from a promisor remote (a partial clone is noted below, or refused
+# in strict mode).
 export GIT_NO_LAZY_FETCH=1 LC_ALL=C
 
 case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
@@ -235,10 +249,14 @@ fi
 # a user-given --parent URL below allows https for that call only). Every diff runs with --text and
 # every git grep with -a, so neither an attribute (-diff, diff=<driver> with binary set) nor a size
 # threshold turns a change into "Binary files differ" or hides a file from a search. G reads with an
-# empty work tree (hgit_text_tree), so git opens no file of the target's work tree: a named pipe there
-# that confine_repo_top's scan does not see (behind a directory link, say) cannot stop a read.
+# empty work tree (hgit_text_tree), so git opens no file of the target's work tree: a named pipe there,
+# which confine_repo_top's scan misses behind a directory link and default mode does not look for at all,
+# cannot stop a read.
 G() { hgit_text_tree "$@"; }
-DIFFSAFE=(--text --no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/)
+# --relative does nothing at a top level; below it (TPREFIX, further on) a diff prints its paths relative
+# to the working directory, as ls-tree and grep do there, and leaves out what changed outside it, whatever
+# the target's diff.relative says.
+DIFFSAFE=(--text --no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/ --relative)
 abspath() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$WT" "$1" ;; esac; }
 not_a_repo() {
   if [ -n "${CONFINE_GIT_WHY:-}" ]; then
@@ -274,15 +292,42 @@ else
     "$WT"/*) REPO_REL=${REPO_ABS#"$WT"/} ;;
   esac
 fi
+# TARGET is the directory --repo names, where auditor-skill's own outputs sit. For --repo . in a session
+# started below the top level of a repository, REPO_ABS becomes that top level, which confine_repo
+# accepts in default mode and refuses in strict mode (OUTPUT-RULES.md Rules 11c and 11f). Its git reads
+# then run with the working directory as git's current directory: pathspecs, and the paths git prints, are
+# relative to TPREFIX, the working directory's path in the repository, as with git run there.
+TARGET=$REPO_ABS TPREFIX=""
+if [ "$REPO_REL" = . ]; then
+  # In this shell first, so a file git would wait on above the working directory is refused for what it is.
+  CONFINE_CEILING='' confine_git_files "$WT"
+  TPREFIX=$(CONFINE_CEILING='' hgit "$WT" rev-parse --show-prefix 2>/dev/null) || TPREFIX=""
+fi
+if [ -n "$TPREFIX" ]; then
+  # Its refusals here, strict mode's among them, say that --repo is not a top level git can read: exit 3.
+  [ "$OFFLINE" -eq 0 ] || CONFINE_HINT=$NET_HINT
+  CONFINE_STATUS=3
+  confine_repo . --repo
+  CONFINE_HINT="" CONFINE_STATUS=2
+  REPO_ABS=$CONFINE_REPO TPREFIX=$CONFINE_PREFIX
+fi
 confine_repo_top "$REPO_ABS" || not_a_repo
+# Lazy fetching and every transport are off, so a partial clone is read for what it holds: a read that
+# needs an object it lacks finds nothing. Default mode notes it, and a config git cannot read, which could
+# hide one; strict mode refuses both (OUTPUT-RULES.md Rule 11f). PARTIAL says which, for the history header.
 confine_partial_clone "$REPO_ABS" >/dev/null
-case $? in
-  0) echo "collect.sh: the target is a partial clone: reading missing objects would fetch from its promisor remote. Make a full copy you control first (OUTPUT-RULES Rule 11c)." >&2
-     exit 3 ;;
-  2) echo "collect.sh: git cannot read the target's config, so a partial clone cannot be ruled out: $(confine_text "$REPO")" >&2
-     exit 3 ;;
+case "$?:$CONFINE_STRICT" in
+  0:1) echo "collect.sh: the target is a partial clone: reading missing objects would fetch from its promisor remote. Make a full copy you control first (OUTPUT-RULES Rule 11c)." >&2
+       exit 3 ;;
+  2:1) echo "collect.sh: git cannot read the target's config, so a partial clone cannot be ruled out: $(confine_text "$REPO")" >&2
+       exit 3 ;;
+  0:*) PARTIAL=clone
+       confine_note "the target is a partial clone: missing objects are not fetched, so history and contents may be incomplete; strict mode stops here (Rule 11f)" ;;
+  2:*) PARTIAL=config
+       confine_note "git cannot read the target's config, so a partial clone cannot be ruled out: missing objects are not fetched, so history and contents may be incomplete; strict mode stops here (Rule 11f)" ;;
+  *)   PARTIAL="" ;;
 esac
-if [ "$OFFLINE" -eq 1 ]; then
+if [ "$OFFLINE" -eq 1 ] && [ -z "$TPREFIX" ]; then
   CONFINE_HINT=$NET_HINT
   confine_repo "$REPO_REL" --repo
   CONFINE_HINT=""
@@ -376,11 +421,12 @@ EMPTY_TREE=$(G "$REPO" hash-object -t tree /dev/null)
 ATTR_SRC=""
 G "$REPO" --attr-source="$EMPTY_TREE" check-attr diff -- probe.rs >/dev/null 2>&1 && ATTR_SRC=$EMPTY_TREE
 
-# Default pathspec: an Anchor-style programs/ tree when the commit has one, else every Rust file.
-default_paths() { # default_paths <repo> <commit>
-  if G "$1" cat-file -e "$2:programs" 2>/dev/null; then echo 'programs/*.rs'; else echo '*.rs'; fi
+# Default pathspec: an Anchor-style programs/ tree when the commit has one, else every Rust file. A
+# <rev>:<path> name is read from the top level, so the target's names it with TPREFIX in front.
+default_paths() { # default_paths <repo> <commit> [<prefix>]
+  if G "$1" cat-file -e "$2:${3-}programs" 2>/dev/null; then echo 'programs/*.rs'; else echo '*.rs'; fi
 }
-[ -n "$TPATHS_NL" ] || TPATHS_NL="$(default_paths "$REPO" "$PIN_SHA")$nl"
+[ -n "$TPATHS_NL" ] || TPATHS_NL="$(default_paths "$REPO" "$PIN_SHA" "$TPREFIX")$nl"
 TPATHS=()
 while IFS= read -r p; do [ -n "$p" ] && TPATHS+=("$p"); done <<< "$TPATHS_NL"
 
@@ -590,14 +636,14 @@ eval_triggers() {
     grep -qxF -- "$(printf '%s' "$s" | norm_url)" <<< "$remotes" || { t3="${t3:+$t3,}security_txt-source_code"; break; }
   done <<< "$src"
   # Nothing counts through a symbolic link: what one points at is never tested.
-  for d in "$REPO_ABS"/audit_*; do
+  for d in "$TARGET"/audit_*; do
     [ ! -L "$d" ] && [ -d "$d" ] && [ ! -L "$d/REPORT.md" ] && [ -f "$d/REPORT.md" ] || continue
     [ "$d" != "$CUR_RUN" ] || continue
     t4="prior-audit-dir"; break
   done
   n=$(G "$REPO" ls-tree -r --name-only "$PIN_SHA" 2>/dev/null | grep -iE '\.(pdf|md)$' | grep -ciE "$REPORT_RE")
   if [ "${n:-0}" -gt 0 ]; then t4="${t4:+$t4,}in-tree-report"; fi
-  for d in "$REPO_ABS"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
+  for d in "$TARGET"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
     [ ! -L "$d" ] && [ ! -L "$d/INCIDENTS.json" ] && [ -f "$d/INCIDENTS.json" ] || continue
     t4="${t4:+$t4,}incidents-json"; break
   done
@@ -642,7 +688,11 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
   echo
   echo "| | |"
   echo "|---|---|"
-  echo "| Target | \`$(clean "$REPO_ABS")\` |"
+  if [ -n "$TPREFIX" ]; then
+    echo "| Target | \`$(clean "$TARGET")\`, which is \`$(clean "$TPREFIX")\` in the repository at \`$(clean "$REPO_ABS")\`: the paths below are relative to it, and what lies outside it is left out |"
+  else
+    echo "| Target | \`$(clean "$REPO_ABS")\` |"
+  fi
   echo "| Pinned commit | \`$PIN_SHA\` |"
   echo "| Target paths | \`$(clean "${TPATHS[*]}")\` |"
   if [ -n "$PARENT" ]; then echo "| Parent | $(clean "$(redact "$PARENT")") — $PARENT_STATUS${PHEAD:+ @ \`$PHEAD\`} |"; else echo "| Parent | none |"; fi
@@ -651,7 +701,11 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
   echo "| Collector | scripts/threat-model/collect.sh v$COLLECTOR_VERSION, cap $CAP rows, quiet-fix ceiling $SMALL lines, fix ceiling $FIX_CEILING lines |"
   echo
   echo "Leads, not findings: every row points at history to re-derive from the code at the pinned commit."
-  echo "Git ran with the system and global config dropped and without pager, fsmonitor, hooks, signature helpers, textconv or external diff (OUTPUT-RULES.md Rule 11c), with lazy fetching and every transport protocol off (a partial clone is refused), and with its grep, colour, path-quoting, log-encoding, big-file, hunk-fusing, diff-context and root-commit settings pinned."
+  echo "Git ran with the system and global config dropped and without pager, fsmonitor, hooks, signature helpers, textconv or external diff (OUTPUT-RULES.md Rule 11c), with lazy fetching and every transport protocol off ($([ "$CONFINE_STRICT" = 1 ] && echo 'a partial clone is refused' || echo 'nothing a partial clone lacks is fetched')), and with its grep, colour, path-quoting, log-encoding, big-file, hunk-fusing, diff-context and root-commit settings pinned."
+  case "$PARTIAL" in
+    clone)  echo "Partial clone: the objects it lacks are not fetched, so a NOT FOUND or a short list below may only mean that they are missing." ;;
+    config) echo "git could not read the target's config, so it may be a partial clone: objects it lacks are not fetched, so a NOT FOUND or a short list below may only mean that they are missing." ;;
+  esac
   if [ "$SHALLOW" = true ]; then
     echo "Shallow clone: history before the shallow boundary is missing, so a NOT FOUND or a short list below may only mean that history is cut."
   fi
@@ -834,7 +888,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
   emit_capped "$TMPD/r6f" "no audit, post-mortem or incident file"
   echo "--- auditor-skill outputs next to the target ---"
   # A symbolic link is listed as one and never followed, so what it points at is never tested.
-  for d in "$REPO_ABS"/audit_* "$REPO_ABS"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
+  for d in "$TARGET"/audit_* "$TARGET"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
     [ "$d" != "$CUR_RUN" ] || continue
     if [ -L "$d" ]; then
       clean "$d"; echo " (symbolic link, not followed)"
@@ -1008,7 +1062,7 @@ done <<< "$VULNS_NL"
 # iso_incident_runs reads it, since a volume that ignores case finds incident_1 under the name INCIDENT_1
 # (here, in T4 and in R6).
 ii=0
-for d in "$REPO_ABS"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
+for d in "$TARGET"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
   f=$d/INCIDENTS.json
   if [ -L "$d" ]; then record "$d" "-" "-" "-" "skipped: symbolic link (directory), not followed"; continue; fi
   [ -d "$d" ] || continue
@@ -1026,7 +1080,7 @@ while IFS= read -r p; do
   ri=$((ri + 1))
   if [ "$ri" -gt 20 ]; then record "(further in-tree reports)" "-" "-" "-" "skipped: cap of 20 in-tree reports, listed in R6"; break; fi
   tmp="$TMPD/tree$ri-$(safe_name "$(basename "$p")")"
-  G "$REPO" cat-file blob "$PIN_SHA:$p" > "$tmp" 2>/dev/null && ingest "pinned tree: $p" "$tmp" "tree$ri-$(safe_name "$(basename "$p")")"
+  G "$REPO" cat-file blob "$PIN_SHA:$TPREFIX$p" > "$tmp" 2>/dev/null && ingest "pinned tree: $p" "$tmp" "tree$ri-$(safe_name "$(basename "$p")")"
 done < "$TMPD/r6f.newest"
 {
   section "R7 Inputs" "Every --vulns source, incident_*/INCIDENTS.json and in-tree report; the full manifest is inputs.tsv."

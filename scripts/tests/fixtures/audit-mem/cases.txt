@@ -10,7 +10,9 @@
 #   (an empty audit-mem.db), incident_2 (no store).
 # The directory outside holds a canary no case may print.
 # One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each case prints
-# nothing on stdout and changes nothing in the working directory or outside it. In a field:
+# nothing on stdout and changes nothing in the working directory or outside it. A status that ends in s is that
+# refusal in strict mode only (AUDITOR_STRICT=1): in default mode the call goes on, exit 0 with nothing on stderr,
+# and still changes nothing. In a field:
 #   @WT@ the working directory's absolute path   @OUT@ the directory outside it   @LONG:N@ N repetitions of "a"
 #   @NL@ a newline   @ESC@ an escape character (0x1b)   @TAB@ a tab   @DEL@ DEL (0x7f)   @RLO@ U+202E
 #   @ZWSP@ U+200B   @EMPTY@ (a whole field) an empty argument
@@ -177,7 +179,7 @@
 2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: 	warm	--program-id	VaultProg1111	--db	@EMPTY@
 2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: audit_1/audit-mem.db?	warm	--program-id	VaultProg1111	--db	audit_1/audit-mem.db@NL@
 2	audit-mem: refused: --db is not an existing directory: audit_99	warm	--program-id	VaultProg1111	--db	audit_99/audit-mem.db
-2	audit-mem: refused: --db has no .gitignore holding exactly *: audit_2	warm	--program-id	VaultProg1111	--db	audit_2/audit-mem.db
+2s	audit-mem: refused: --db has no .gitignore holding exactly *: audit_2	warm	--program-id	VaultProg1111	--db	audit_2/audit-mem.db
 2	audit-mem: refused: --db is a symbolic link: audit_3	warm	--program-id	VaultProg1111	--db	audit_3/audit-mem.db
 2	audit-mem: refused: --db is tracked by git: audit_4	warm	--program-id	VaultProg1111	--db	audit_4/audit-mem.db
 2	audit-mem: refused: --db holds a symbolic link: audit_5	warm	--program-id	VaultProg1111	--db	audit_5/audit-mem.db

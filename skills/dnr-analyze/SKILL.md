@@ -30,7 +30,7 @@ mode, the phase and the run directory (`hunt baseline incident_<n>`), then names
 everything you work from: the corpus paths, the snapshot lines, the provider
 domain, the window and caps of each collection and whether it ended with its
 `collection gaps: N` line, the execution mode and PoC build cache once recorded,
-and the results the command brings back from `auditor:context-builder` and
+preflight's mode line and its notes, and the results the command brings back from `auditor:context-builder` and
 `auditor:poc-engineer`. Work from exactly those. A value the brief leaves out is a gap to
 report, never one to guess.
 
@@ -121,7 +121,9 @@ Your last message is the report the command receives. Give, in this order:
    every recipe note of skipped malformed lines, each also in `LEDGER.md` and in
    `collection_gaps`;
 4. any collection you propose: exact addresses, window and caps;
-5. every call that was denied or could not run, with the gap it leaves.
+5. every call that was denied or could not run, with the gap it leaves;
+6. each distinct note a bundled tool printed (a `<tool>: note:` line, or a runner's
+   `>> note:` line), once, as it stands, which the report carries (Rule 11f).
 
 Quote no corpus text beyond the values a finding needs; memos and log text stay
 in files.

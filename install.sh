@@ -146,6 +146,23 @@ Next steps:
       /plugin marketplace add solanabr/auditor-skill
       /plugin install auditor
   • Or use it as a skill: ask your agent to "audit this repo using the auditor-skill".
+  • Once, so that a flow goes on after your reply without a prompt, add these rules to
+    "permissions.allow" in ~/.claude/settings.json, beside the rules already there:
+      "Skill(auditor:audit-cycle *)", "Skill(auditor:audit-assist *)", "Skill(auditor:intake *)",
+      "Skill(auditor:threat-model *)", "Skill(auditor:triage *)", "Skill(auditor:poc *)",
+      "Skill(auditor:patch *)", "Skill(auditor:audit-report *)", "Skill(auditor:hunt *)",
+      "Skill(auditor:respond *)", "Skill(auditor:dnr-analyze *)", "Skill(auditor:audit *)",
+      "Skill(auditor:quick-scan *)", "Skill(auditor:deep-review *)", "Skill(auditor:diff-audit *)",
+      "Skill(auditor:spec-audit *)", "Skill(auditor:economic-sim *)", "Skill(auditor:re-audit *)",
+      "Skill(auditor:auditor-skill)", "Skill(auditor:auditor-skill *)",
+      "Skill(auditor-skill)", "Skill(auditor-skill *)"
+    They also let Claude start any of these flows by itself, in any repository you open, and
+    /auditor:audit-cycle started that way builds the project on your machine. To rule that out,
+    set AUDITOR_EXEC_MODE=isolated (or none) in that file's "env", or keep the rules in a file
+    you pass with claude --settings when you audit. Details: $DEST/docs/permissions-and-isolation.md
+  • For a repository you do not trust, start Claude Code in strict mode (OUTPUT-RULES.md Rule 11f):
+      claude --setting-sources "" --strict-mcp-config --plugin-dir "$DEST" --settings "$DEST/templates/strict-settings.json"
+    It loads none of your settings or plugins; the template carries the resume rules it needs.
   • Optional token-efficiency tools (Rust):
       cd "$DEST/tools/auditor-tools" && cargo build --release
     Build them only from an install outside any repository you audit, or under

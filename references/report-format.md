@@ -97,7 +97,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 140 |
+| Total known vectors | 141 |
 | PASS | {N} |
 | FAIL | {N} |
 | PARTIAL | {N} |

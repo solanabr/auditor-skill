@@ -513,25 +513,29 @@ fn skips_large_irregular_and_unparsable_files() {
         .status()
         .expect("mkfifo");
     assert!(status.success());
-    let report = json(&run(BIN, &wt.dir, &["."]));
+    let reasons = |report: &Value| -> Vec<String> {
+        report["skipped"]
+            .as_array()
+            .expect("skipped")
+            .iter()
+            .map(|s| {
+                format!(
+                    "{} {}",
+                    s["file"].as_str().unwrap_or(""),
+                    s["reason"].as_str().unwrap_or("")
+                )
+            })
+            .collect()
+    };
+    // Strict mode parses no file with a second name, which could be a file
+    // outside the tree.
+    let report = json(&common::run_strict(BIN, &wt.dir, &["."]));
     assert_eq!(
         report["files_scanned"], 1,
         "only edge.rs, of exactly 4 MiB less one byte"
     );
-    let reasons: Vec<String> = report["skipped"]
-        .as_array()
-        .expect("skipped")
-        .iter()
-        .map(|s| {
-            format!(
-                "{} {}",
-                s["file"].as_str().unwrap_or(""),
-                s["reason"].as_str().unwrap_or("")
-            )
-        })
-        .collect();
     assert_eq!(
-        reasons,
+        reasons(&report),
         vec![
             "./bad.rs does not parse as Rust",
             "./big.rs larger than 4 MiB",
@@ -540,9 +544,60 @@ fn skips_large_irregular_and_unparsable_files() {
             "./pipe.rs not a regular file",
         ]
     );
+    // Default mode parses it under the first name the walk meets, its only one
+    // in the tree here.
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(report["files_scanned"], 2, "edge.rs and linked.rs");
+    assert_eq!(
+        files(&report, "functions"),
+        vec!["./edge.rs", "./linked.rs"]
+    );
+    assert_eq!(
+        reasons(&report),
+        vec![
+            "./bad.rs does not parse as Rust",
+            "./big.rs larger than 4 MiB",
+            "./latin1.rs not UTF-8",
+            "./pipe.rs not a regular file",
+        ]
+    );
+}
+
+#[test]
+fn parses_a_file_with_several_names_under_the_first_in_default_mode_only() {
+    let wt = Wt::new();
+    wt.write("src/a.rs", b"fn twice() {}\n");
+    wt.mkdir("src/c");
+    fs::hard_link(wt.path("src/a.rs"), wt.path("src/b.rs")).expect("ln");
+    fs::hard_link(wt.path("src/a.rs"), wt.path("src/c/d.rs")).expect("ln");
+    wt.write("src/e.rs", b"fn once() {}\n");
+    let report = json(&run(BIN, &wt.dir, &["src"]));
+    assert_eq!(report["files_scanned"], 2);
+    assert_eq!(files(&report, "functions"), vec!["src/a.rs", "src/e.rs"]);
+    assert_eq!(
+        skipped(&report),
+        [
+            ("src/b.rs".into(), "another name of src/a.rs".into()),
+            ("src/c/d.rs".into(), "another name of src/a.rs".into()),
+        ]
+    );
+    let report = json(&common::run_strict(BIN, &wt.dir, &["src"]));
+    assert_eq!(report["files_scanned"], 1);
+    assert_eq!(files(&report, "functions"), vec!["src/e.rs"]);
+    let second = "has more than one name (a hard link)".to_string();
+    assert_eq!(
+        skipped(&report),
+        [
+            ("src/a.rs".into(), second.clone()),
+            ("src/b.rs".into(), second.clone()),
+            ("src/c/d.rs".into(), second),
+        ]
+    );
 }
 
 const RUN_DIR: &str = "a run directory (a .gitignore of * and nothing tracked), not scanned";
+const RUN_DIR_UNTOLD: &str =
+    "a run directory (a .gitignore of *, and git cannot tell whether it is tracked), not scanned";
 const STORE: &str = "the audit-mem store (a .gitignore of * and nothing tracked), not scanned";
 const BUILD: &str =
     "a target/ directory cargo built in (it holds CACHEDIR.TAG or .rustc_info.json), not scanned";
@@ -978,24 +1033,54 @@ fn refuses_an_out_it_may_not_write() {
 }
 
 #[test]
-fn refuses_an_out_when_git_cannot_answer() {
+fn refuses_an_out_when_git_cannot_answer_in_strict_mode_only() {
     let wt = Wt::repo();
     wt.run_dir("audit_1");
+    wt.mkdir("audit_2");
     wt.write(".git/index", b"not an index");
+    let args = [".", "--out", "audit_1/prescan.json"];
     refused(
-        &run(BIN, &wt.dir, &[".", "--out", "audit_1/prescan.json"]),
+        &common::run_strict(BIN, &wt.dir, &args),
         "audit-scan",
         "git cannot tell whether --out is tracked: audit_1",
     );
     assert!(!wt.exists("audit_1/prescan.json"));
-    // Printing to stdout needs no answer from git: a run directory git cannot
-    // answer for is scanned.
-    wt.write("audit_1/poc/F-1/src/lib.rs", b"fn poc() {}\n");
-    let report = json(&run(BIN, &wt.dir, &["."]));
+    // In default mode the run directory's .gitignore of * alone decides, as
+    // confine_rundir takes it there.
+    let o = run(BIN, &wt.dir, &args);
     assert_eq!(
-        files(&report, "functions"),
-        vec!["./audit_1/poc/F-1/src/lib.rs"]
+        (o.status.code(), stdout(&o), common::stderr(&o)),
+        (Some(0), String::new(), String::new())
     );
+    assert!(wt.exists("audit_1/prescan.json"));
+    refused(
+        &run(BIN, &wt.dir, &[".", "--out", "audit_2/prescan.json"]),
+        "audit-scan",
+        "--out has no .gitignore holding exactly *: audit_2",
+    );
+    // Printing to stdout needs no answer from git: in a scan of . a run
+    // directory git cannot answer for is passed over by its .gitignore of *, so
+    // its PoC code is not reported as the target's, in both modes; one without
+    // the mark is scanned.
+    wt.write("audit_1/poc/F-1/src/lib.rs", b"fn poc() {}\n");
+    wt.write("audit_2/src/lib.rs", b"fn delivered() {}\n");
+    for o in [
+        run(BIN, &wt.dir, &["."]),
+        common::run_strict(BIN, &wt.dir, &["."]),
+    ] {
+        let report = json(&o);
+        assert_eq!(files(&report, "functions"), vec!["./audit_2/src/lib.rs"]);
+        assert_eq!(
+            skipped(&report),
+            [
+                (
+                    "./.git".into(),
+                    "a .git/ directory (git's own), not scanned".into()
+                ),
+                ("./audit_1".into(), RUN_DIR_UNTOLD.into()),
+            ]
+        );
+    }
 }
 
 #[test]
@@ -1016,15 +1101,14 @@ fn asks_git_no_more_once_it_has_not_answered() {
     );
     let path = format!("{}:/usr/bin:/bin", bin.display());
     let report = json(&common::run_env(BIN, &wt.dir, &["."], &[("PATH", &path)]));
+    // Each is passed over by its .gitignore of *, so its PoC code is not
+    // reported as the target's.
+    assert_eq!(files(&report, "functions"), Vec::<String>::new());
     assert_eq!(
-        files(&report, "functions"),
-        vec![
-            "./audit_1/poc/lib.rs",
-            "./audit_2/poc/lib.rs",
-            "./audit_3/poc/lib.rs",
-        ]
+        skipped(&report),
+        ["./audit_1", "./audit_2", "./audit_3"]
+            .map(|d| (d.to_string(), RUN_DIR_UNTOLD.to_string()))
     );
-    assert_eq!(skipped(&report), []);
     let asked = fs::read_to_string(&calls).expect("git was asked");
     assert_eq!(asked.lines().count(), 1, "{asked}");
 }
@@ -1133,19 +1217,24 @@ fn waits_once_for_a_git_that_does_not_answer() {
     let started = std::time::Instant::now();
     let report = json(&common::run_env(BIN, &wt.dir, &["."], &[("PATH", &path)]));
     let took = started.elapsed();
+    assert_eq!(files(&report, "functions"), Vec::<String>::new());
     assert_eq!(
-        files(&report, "functions"),
-        vec![
-            "./audit_1/poc/lib.rs",
-            "./audit_2/poc/lib.rs",
-            "./audit_3/poc/lib.rs",
+        skipped(&report),
+        [
+            (
+                "./.git".to_string(),
+                "a .git/ directory (git's own), not scanned".to_string()
+            ),
+            ("./audit_1".into(), RUN_DIR_UNTOLD.into()),
+            ("./audit_2".into(), RUN_DIR_UNTOLD.into()),
+            ("./audit_3".into(), RUN_DIR_UNTOLD.into()),
         ]
     );
     assert!(took >= GIT_TIME && took < GIT_TIME * 2, "took {took:?}");
 }
 
 #[test]
-fn scans_the_run_directories_at_once_when_head_is_a_named_pipe() {
+fn passes_over_the_run_directories_at_once_when_head_is_a_named_pipe() {
     use auditor_tools::confine::GIT_TIME;
     let wt = Wt::repo();
     for name in ["audit_1", "audit_2", "audit_3"] {
@@ -1153,7 +1242,8 @@ fn scans_the_run_directories_at_once_when_head_is_a_named_pipe() {
         wt.write(&format!("{name}/poc/lib.rs"), b"fn poc() {}\n");
     }
     // A named pipe as HEAD, which git would wait on for good when it opens it:
-    // no git is started, so nothing waits, and each run directory is scanned.
+    // no git is started, so nothing waits, and each run directory is passed over
+    // by its .gitignore of *.
     fs::remove_file(wt.path(".git/HEAD")).expect("remove HEAD");
     let status = Command::new("mkfifo")
         .arg(wt.path(".git/HEAD"))
@@ -1163,13 +1253,13 @@ fn scans_the_run_directories_at_once_when_head_is_a_named_pipe() {
     let started = std::time::Instant::now();
     let report = json(&run(BIN, &wt.dir, &["."]));
     let took = started.elapsed();
+    assert_eq!(files(&report, "functions"), Vec::<String>::new());
     assert_eq!(
-        files(&report, "functions"),
-        vec![
-            "./audit_1/poc/lib.rs",
-            "./audit_2/poc/lib.rs",
-            "./audit_3/poc/lib.rs",
-        ]
+        skipped(&report)
+            .into_iter()
+            .filter(|(_, why)| why == RUN_DIR_UNTOLD)
+            .count(),
+        3
     );
     assert!(took < GIT_TIME / 2, "took {took:?}");
 }
@@ -1617,4 +1707,170 @@ fn lists_a_file_brought_in_wherever_rustc_may_find_it() {
     let report = json(&run(BIN, &wt.dir, &["."]));
     assert_eq!(report["files_scanned"], 8);
     assert_eq!(skipped(&report), sorted(&[("./.git", GIT_DIR)]));
+}
+
+#[test]
+fn reads_the_mode_as_audit_mem_does() {
+    // git, asked whether --out's run directory is tracked, is given the
+    // installation's safe-directory file in default mode and no global config in
+    // strict mode, which AUDITOR_STRICT or a marker turns on.
+    let wt = Wt::repo();
+    wt.write("src/lib.rs", b"fn a() {}\n");
+    wt.run_dir("audit_1");
+    let dir = wt.outside().join("noting");
+    let path = common::noting_git(&dir, "");
+    let out = |env: &[(&str, &str)]| {
+        let mut all = vec![("PATH", path.as_str())];
+        all.extend_from_slice(env);
+        let o = common::run_env(
+            BIN,
+            &wt.dir,
+            &["src", "--out", "audit_1/prescan.json"],
+            &all,
+        );
+        assert_eq!(o.status.code(), Some(0), "{env:?}: {}", common::stderr(&o));
+        assert_eq!(stdout(&o), "", "{env:?}");
+        (
+            common::stderr(&o),
+            common::asked_with(&common::noted(&dir), "audit_1"),
+        )
+    };
+    let strict = vec!["/dev/null".to_string()];
+    assert_eq!(out(&[]), (String::new(), vec![common::safe_directory()]));
+    assert_eq!(
+        out(&[("AUDITOR_STRICT", "off")]),
+        (String::new(), vec![common::safe_directory()])
+    );
+    assert_eq!(
+        out(&[("AUDITOR_STRICT", "TRUE")]),
+        (String::new(), strict.clone())
+    );
+    assert_eq!(
+        out(&[("AUDITOR_STRICT", "sure")]),
+        (
+            "audit-scan: note: AUDITOR_STRICT is 'sure', read as on\n".to_string(),
+            strict.clone()
+        )
+    );
+    wt.run_dir("incident_5");
+    wt.write("incident_5/strict", b"strict\n");
+    assert_eq!(out(&[]), (String::new(), strict));
+}
+
+#[test]
+fn writes_into_a_run_directory_holding_a_link_inside_it_in_default_mode_only() {
+    // A link under a run directory that resolves inside it (to a file there, or
+    // to the run directory itself), as a PoC crate may hold, is taken in default
+    // mode; strict mode refuses any link. One that leads out of it, to another run
+    // directory too, or that cannot be resolved, is refused in both.
+    let wt = Wt::repo();
+    wt.write("src/lib.rs", b"fn a() {}\n");
+    wt.run_dir("audit_1");
+    wt.mkdir("audit_1/poc/F-1");
+    wt.link("../../.gitignore".as_ref(), "audit_1/poc/F-1/ignore");
+    wt.link(".".as_ref(), "audit_1/self");
+    wt.run_dir("audit_2");
+    wt.link("nowhere".as_ref(), "audit_2/gone");
+    wt.run_dir("audit_3");
+    wt.link("../audit_1".as_ref(), "audit_3/next");
+    let args = ["src", "--out", "audit_1/prescan.json"];
+    refused(
+        &common::run_strict(BIN, &wt.dir, &args),
+        "audit-scan",
+        "--out holds a symbolic link: audit_1",
+    );
+    assert!(!wt.exists("audit_1/prescan.json"));
+    let o = run(BIN, &wt.dir, &args);
+    assert_eq!(o.status.code(), Some(0), "{}", common::stderr(&o));
+    assert_eq!(
+        (stdout(&o), common::stderr(&o)),
+        (String::new(), String::new())
+    );
+    let report: Value = serde_json::from_slice(&wt.read("audit_1/prescan.json")).expect("JSON");
+    assert_eq!(report["files_scanned"], 1);
+    for r in ["audit_2", "audit_3"] {
+        let args = ["src", "--out", &format!("{r}/prescan.json")];
+        let why = format!("--out holds a symbolic link: {r}");
+        refused(&run(BIN, &wt.dir, &args), "audit-scan", &why);
+        refused(&common::run_strict(BIN, &wt.dir, &args), "audit-scan", &why);
+        assert!(!wt.exists(&format!("{r}/prescan.json")));
+    }
+}
+
+#[test]
+fn takes_an_out_with_no_git_on_path_in_default_mode_only() {
+    // With no git on PATH, default mode takes a run directory by its .gitignore
+    // of * alone; strict mode refuses, and so do both modes when no PATH entry is
+    // left outside the working directory.
+    let wt = Wt::repo();
+    wt.write("src/lib.rs", b"fn a() {}\n");
+    wt.run_dir("audit_1");
+    wt.mkdir("audit_2");
+    let empty = wt.outside().join("empty");
+    fs::create_dir(&empty).expect("mkdir");
+    let path = empty.display().to_string();
+    let args = ["src", "--out", "audit_1/prescan.json"];
+    refused(
+        &common::run_env(BIN, &wt.dir, &args, &[("PATH", &path), common::STRICT]),
+        "audit-scan",
+        "git is not on PATH",
+    );
+    assert!(!wt.exists("audit_1/prescan.json"));
+    let o = common::run_env(BIN, &wt.dir, &args, &[("PATH", &path)]);
+    assert_eq!(
+        (o.status.code(), stdout(&o), common::stderr(&o)),
+        (Some(0), String::new(), String::new())
+    );
+    assert!(wt.exists("audit_1/prescan.json"));
+    refused(
+        &common::run_env(
+            BIN,
+            &wt.dir,
+            &["src", "--out", "audit_2/prescan.json"],
+            &[("PATH", &path)],
+        ),
+        "audit-scan",
+        "--out has no .gitignore holding exactly *: audit_2",
+    );
+    wt.mkdir("bin");
+    let inside = wt.path("bin").display().to_string();
+    for env in [
+        vec![("PATH", inside.as_str())],
+        vec![("PATH", inside.as_str()), common::STRICT],
+    ] {
+        refused(
+            &common::run_env(BIN, &wt.dir, &args, &env),
+            "audit-scan",
+            "no PATH entry is left outside the working directory",
+        );
+    }
+}
+
+#[test]
+fn refuses_a_run_directory_the_disk_spells_in_other_letters() {
+    // On a volume that ignores letter case, --out audit_1/… opens a folder the
+    // disk spells AUDIT_1, which neither rundir.sh new makes nor the markers are
+    // read from: refused in both modes, as rundir.sh check refuses it. A folder
+    // git tracks in other letters is refused as tracked first.
+    let wt = Wt::repo();
+    wt.write("src/lib.rs", b"fn a() {}\n");
+    wt.run_dir("AUDIT_1");
+    if !wt.exists("audit_1") {
+        return; // a volume that tells letter case apart: nothing to check
+    }
+    wt.run_dir("Audit_2");
+    wt.write("Audit_2/notes.md", b"the repository's own\n");
+    wt.git(&["add", "-f", "Audit_2/notes.md"]);
+    for (out, why) in [
+        (
+            "audit_1/prescan.json",
+            "--out is spelled AUDIT_1 on disk, and a run directory's name is lowercase: audit_1",
+        ),
+        ("audit_2/prescan.json", "--out is tracked by git: audit_2"),
+    ] {
+        let args = ["src", "--out", out];
+        refused(&run(BIN, &wt.dir, &args), "audit-scan", why);
+        refused(&common::run_strict(BIN, &wt.dir, &args), "audit-scan", why);
+    }
+    assert!(!wt.exists("AUDIT_1/prescan.json"));
 }

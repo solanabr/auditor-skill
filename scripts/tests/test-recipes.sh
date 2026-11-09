@@ -11,6 +11,8 @@
 #   - web3js-history.sh: both headings and both searches; --repo and --git-dir; the notes; git's status for a
 #     missing object, with both searches run; the same output under that config, decorations and a pretty
 #     format too, with no program it names started;
+#   - from a subdirectory of the repository: in default mode the output at its top level, in strict mode a
+#     refusal; a --repo whose git directory nothing ties back: a note in default mode, a refusal in strict;
 #   - the case files fixtures/recipes/<tool>/cases.txt, under each bash on the machine (/bin/bash and the bash
 #     running this suite, when they differ), which must print the same: each case exits as written with its
 #     one stderr line, prints nothing on stdout, starts no program the fixture's config names and changes
@@ -25,7 +27,7 @@ LD="$ROOT/scripts/recipes/lock-delta.sh"
 WH="$ROOT/scripts/recipes/web3js-history.sh"
 GITRO="$ROOT/scripts/git-ro.sh"
 RUNDIR="$ROOT/scripts/rundir.sh"
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_NAMESPACE CDPATH
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_NAMESPACE CDPATH AUDITOR_STRICT
 T=$(mktemp -d "${TMPDIR:-/tmp}/recipes-test.XXXXXX") || exit 1
 # A TMPDIR that ends in / (as on macOS) leaves // in $T; the checks compare physical paths.
 T=$(cd "$T" && pwd -P) || exit 1
@@ -356,6 +358,38 @@ xtransport lock-delta "$H" "$LD" npm t-base..t-head
 xtransport web3js-history "$X" "$WH"
 
 # =================================================================================================
+# A session started in a subdirectory of the repository (spec §4.2). In default mode the recipes read the
+# repository from its top level, the lockfiles and manifests of all of it, as a workspace keeps them at
+# its top: the output is the one at the top level, byte for byte, and git's empty work tree is gone after.
+# Strict mode refuses the subdirectory.
+# =================================================================================================
+mkdir -p "$T/subtmp"
+run "$H" "$LD" cargo t-base..t-head; cp "$T/out" "$T/cargo.top"
+TMPDIR="$T/subtmp" run "$H/npm" "$LD" cargo t-base..t-head
+check "lock-delta from a subdirectory reads the whole repository's lockfiles, as from its top level" \
+  sh -c "[ '$RC' = 0 ] && [ ! -s '$T/err' ] && [ -s '$T/out' ] && cmp -s '$T/out' '$T/cargo.top' && [ -z \"\$(ls -A '$T/subtmp')\" ]"
+AUDITOR_STRICT=1 run "$H/npm" "$LD" cargo t-base..t-head
+check "... and strict mode refuses it" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "64||lock-delta: refused: the working directory lies below the top level of its repository (..); strict mode reads a repository only from its top level: start Claude Code there (Rule 11f)"
+run "$X" "$WH"; cp "$T/out" "$T/w3.top"
+TMPDIR="$T/subtmp" run "$X/p" "$WH"
+check "web3js-history from a subdirectory searches the whole repository, as from its top level" \
+  sh -c "[ '$RC' = 0 ] && [ ! -s '$T/err' ] && grep -q '1\\.95\\.6' '$T/out' && cmp -s '$T/out' '$T/w3.top' && [ -z \"\$(ls -A '$T/subtmp')\" ]"
+AUDITOR_STRICT=1 run "$X/p" "$WH"
+check "... and strict mode refuses it" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "64||web3js-history: refused: the working directory lies below the top level of its repository (..); strict mode reads a repository only from its top level: start Claude Code there (Rule 11f)"
+# A --repo whose git directory lies outside with nothing tying it back: default mode notes it and reads
+# nothing; strict mode refuses.
+mkdir -p "$X/esc"; printf 'gitdir: %s/.git\n' "$H" > "$X/esc/.git"
+run "$X" "$WH" --repo esc
+check "web3js-history --repo of a git directory outside that nothing ties back: a note, and no search" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0||web3js-history: note: --repo keeps its git directory outside the working directory, and nothing there ties it back to this working tree, so its history is not read; strict mode refuses this (Rule 11f)"
+AUDITOR_STRICT=1 run "$X" "$LD" --repo esc cargo t-base..t-head
+check "... and in strict mode lock-delta refuses it" \
+  test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "64||lock-delta: refused: --repo keeps its git directory outside the working directory: esc"
+rm -r "$X/esc"
+
+# =================================================================================================
 # The case files, under each bash on the machine.
 # =================================================================================================
 SHELLS=("$BASH")
@@ -414,7 +448,7 @@ check "no case started a program the fixture's config names" test -z "$(fired)"
 # line runs a bundled script any other way (bash, cd or an assignment in front, or inside $( )). The calls of
 # git-ro.sh, the recipes, the runners, rpc-read.sh and rundir.sh then run as written, their placeholders
 # filled, in a fixture with no cargo, npm, curl or solana on PATH: git-ro.sh, the recipes and rundir.sh do
-# their work, and each runner reaches the blocker it gives when its tool or the recorded mode is missing, so
+# their work, and each runner reaches the blocker it gives when its tool is missing, so
 # none is refused. A code line that starts with a relative bundled path, a span that names a quoted root without
 # starting with it, and an audit-scan or audit-mem call missing --contract=1 right after it (or its subcommand)
 # are each refused.
@@ -582,7 +616,7 @@ while IFS=$'\t' read -r f n tool how cmd; do
     git-ro.sh) good=""; case "$RC" in 0|1|141) grep -q -e 'refused:' -e '^fatal:' "$T/err" || good=y ;; esac ;;
     recipes/*|rundir.sh) good=$( [ "$RC" = 0 ] && ! grep -q 'refused:' "$T/err" && echo y) ;;
     runner/deps.sh) good=$( [ "$RC" = 3 ] && grep -q '^deps: blocker: .* is not on PATH' "$T/err" && echo y) ;;
-    runner/target.sh) good=$( [ "$RC" = 3 ] && grep -q '^target: blocker: no recorded mode' "$T/err" && echo y) ;;
+    runner/target.sh) good=$( [ "$RC" = 3 ] && grep -q '^target: blocker: .* is not on PATH, so ' "$T/err" && echo y) ;;
     rpc-read.sh) good=$( [ "$RC" = 3 ] && grep -q '^\[blocker\] solana CLI not on PATH' "$T/err" && echo y) ;;
     *) good="" ;;
   esac

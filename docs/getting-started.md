@@ -4,7 +4,7 @@ Get from a clone to a first audit. Back to the [docs index](README.md).
 
 ## 1. Install
 
-auditor-skill is a folder of markdown + two small Rust tools — not a SaaS. Clone it, or drop it in as a skill. Keep it **outside any repository you audit** ([`OUTPUT-RULES.md` Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)): a copy inside the target resolves its paths from a tree the target controls.
+auditor-skill is a folder of markdown + three small Rust tools — not a SaaS. Clone it, or drop it in as a skill. Keep it **outside any repository you audit** ([`OUTPUT-RULES.md` Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)): a copy inside the target resolves its paths from a tree the target controls.
 
 **Clone it as a user-level skill:**
 
@@ -15,6 +15,26 @@ git clone https://github.com/solanabr/auditor-skill.git ~/.claude/skills/auditor
 **Or install it as a plugin** (the `.claude-plugin/` manifest ships with the repo; plugin name is `auditor`). Once installed, commands are available as `/auditor:audit`, `/auditor:audit-cycle`, and so on.
 
 **Or feed the files to an API** — send `SKILL.md` + `OUTPUT-RULES.md` (+ `FULL-AUDIT.md` for a full run) as system context and the target files as user content.
+
+**Once, after installing** (Claude Code): add these rules to `permissions.allow` in your user settings, `~/.claude/settings.json`, so a flow resumes after your reply without a prompt. With a clone under `~/.claude/skills/`, add `"Skill(auditor-skill)"` and `"Skill(auditor-skill *)"` too.
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Skill(auditor:audit-cycle *)", "Skill(auditor:audit-assist *)", "Skill(auditor:intake *)",
+      "Skill(auditor:threat-model *)", "Skill(auditor:triage *)", "Skill(auditor:poc *)",
+      "Skill(auditor:patch *)", "Skill(auditor:audit-report *)", "Skill(auditor:hunt *)",
+      "Skill(auditor:respond *)", "Skill(auditor:dnr-analyze *)", "Skill(auditor:audit *)",
+      "Skill(auditor:quick-scan *)", "Skill(auditor:deep-review *)", "Skill(auditor:diff-audit *)",
+      "Skill(auditor:spec-audit *)", "Skill(auditor:economic-sim *)", "Skill(auditor:re-audit *)",
+      "Skill(auditor:auditor-skill)", "Skill(auditor:auditor-skill *)"
+    ]
+  }
+}
+```
+
+These rules also let Claude start any of these flows by itself, in any repository you open, and `/auditor:audit-cycle` started that way builds the project on your machine. To rule that out, set `AUDITOR_EXEC_MODE=isolated` (or `none`) in that file's `env`, or keep the rules in a file you pass with `claude --settings` when you audit ([Turns and resuming](permissions-and-isolation.md#turns-and-resuming)).
 
 ## 2. Initialize the Trail of Bits submodule (recommended)
 
@@ -87,16 +107,16 @@ Audit the Solana program in programs/my-program/ using the auditor-skill with PR
 /auditor:audit-cycle --scope full
 ```
 
-The report lands at `audit_<n>/REPORT.md`, in a run directory that `rundir.sh new audit` makes: `<n>` is the highest existing `audit_*` number + 1, and the directory is created with `mkdir` (not `-p`), stopping if it already exists. An existing `audit_<n>/` is reused only when git does not track it and it holds no symbolic links, after you confirm which one; nothing is written into a tracked run directory ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). Review [COSTS.md](../COSTS.md) first — a full Opus run on a large repo can burn real credits.
+The report lands at `audit_<n>/REPORT.md`, in a run directory that `rundir.sh new audit` makes: `<n>` is the next number whose name the repository tracks nothing under, and the directory is created with `mkdir` (not `-p`), stopping if it already exists. An existing `audit_<n>/` is reused only when git does not track it and it holds no symbolic link that leads out of it (in strict mode, none at all), after you confirm which one; nothing is written into a tracked run directory ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). Review [COSTS.md](../COSTS.md) first — a full Opus run on a large repo can burn real credits.
 
 ## 6. Prompts and isolation
 
-The commands run their bundled steps without asking: the working-tree check, run directories, read-only git, the Rust tools, the runners that build and test in the mode you chose, and the collectors. Each of these checks its own arguments, takes paths inside the working tree (the PoC build cache aside), and writes only into run directories, the `audit-mem` store and scratch directories outside the tree, besides the toolchain caches its downloads fill. Other calls ask, apart from Claude Code's own read-only commands and the file reads the commands pre-approve (Read, Grep and Glob, for any path). [permissions-and-isolation.md](permissions-and-isolation.md) has the full list, and why that is safe.
+The commands run their bundled steps without asking: the working-tree check, run directories, read-only git, the Rust tools, the runners that build and test in the execution mode in force, and the collectors. Each of these checks its own arguments, takes paths inside the working tree (the PoC build cache aside), and writes only into run directories, the `audit-mem` store and scratch directories outside the tree, besides the toolchain caches its downloads fill. Other calls ask, apart from Claude Code's own read-only commands and the file reads the commands pre-approve (Read, Grep and Glob, for any path). [permissions-and-isolation.md](permissions-and-isolation.md) has the full list, and why that is safe.
 
-- **Answer a prompt with "Yes".** When Claude Code asks during a run, answer **Yes**, not "Yes, and don't ask again": that saves a rule into the audited tree's `.claude/settings.local.json`, and the next run's preflight refuses that file. If a rule was saved there, move the file's `permissions.allow` entries to `~/.claude/settings.json` and delete it.
-- **Let flows resume without a prompt.** In Manual mode, a flow that goes on after your reply asks to run its own skill again. Add the `Skill(auditor:… *)` rules from [Turns and resuming](permissions-and-isolation.md#turns-and-resuming) to your user settings once.
+- **Let flows resume without a prompt.** In Manual mode, a flow that goes on after your reply asks to run its own skill again. Add the `Skill(auditor:… *)` rules from [section 1](#1-install) to your user settings once.
+- **"Yes, and don't ask again"** at a prompt can save a rule into the audited tree's `.claude/settings.local.json`. Preflight does not refuse that file while git does not track it, so either answer works there (outside a git repository, strict mode counts the file as the repository's, so answer "Yes" in such a workspace); the rules above are what stop the resume prompt for good.
 - **Long builds.** A Bash call that outlasts its timeout, two minutes by default, moves to the background, and the flow loses the command's pre-approvals. For long builds and collections, raise `BASH_DEFAULT_TIMEOUT_MS` and `BASH_MAX_TIMEOUT_MS` in your user settings' `env` ([Long steps](permissions-and-isolation.md#long-steps)).
-- **For code you don't trust, run isolated.** Answer Isolated at intake, set `AUDITOR_EXEC_MODE=isolated` where Claude Code runs, and run in a container or VM with no credentials, or under Claude Code's sandbox ([Running isolated](permissions-and-isolation.md#running-isolated)). In native mode the project's builds and tests run on your machine without a prompt for each run.
+- **For code you don't trust, use strict mode.** Start Claude Code with `claude --setting-sources "" --strict-mcp-config --plugin-dir "<auditor-skill root>" --settings "<auditor-skill root>/templates/strict-settings.json"`, where `<auditor-skill root>` is the folder auditor-skill is installed in ([Default and strict mode](permissions-and-isolation.md#default-and-strict-mode) says where that is). It loads none of your own settings or plugins, so a language-server plugin you enabled cannot run the project's build scripts outside the runners, and the template brings the resume rules your user settings would. Strict mode refuses what default mode only notes, and builds only in isolated mode: under the sandbox the template turns on, or in a container or VM with no credentials ([Strict mode and isolated runs](permissions-and-isolation.md#strict-mode-and-isolated-runs)). Under the launch line the repository's own `.claude/` config does not load. Strict mode still refuses a tree that ships it, because preflight cannot see how Claude Code was started: for such a repository, audit a copy with every `.claude/` and `.mcp.json` deleted. By default the project's builds and tests run on your machine (native) without a prompt for each run, and the report says so.
 - **Non-interactive runs** (`claude -p`, a CI gate) deny every call that would ask, and record it as a step not run: [Non-interactive runs](permissions-and-isolation.md#non-interactive-runs-claude--p).
 
 ## Scopes at a glance

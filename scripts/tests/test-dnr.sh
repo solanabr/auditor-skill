@@ -9,6 +9,7 @@
 # fixtures, so "validated" claims in the docs point at a real check.
 
 set -uo pipefail
+unset AUDITOR_STRICT
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DNR="$HERE/../dnr"
@@ -17,6 +18,22 @@ fails=0
 ok()   { printf 'ok   %s\n' "$1"; }
 bad()  { printf 'FAIL %s\n' "$1" >&2; fails=$((fails+1)); }
 eq()   { if [[ "$2" == "$3" ]]; then ok "$1 ($2)"; else bad "$1: expected '$3', got '$2'"; fi; }
+# link_leaves <link> <run directory>: status 0 when the link, followed to its end, leads outside the run
+# directory or to nothing, which default and strict mode both refuse; one that ends inside it is refused
+# in strict mode only.
+link_leaves() {
+  local p=$1 t r n=0
+  [ -L "$p" ] || return 1
+  [ -e "$p" ] || return 0
+  while [ -L "$p" ] && [ "$n" -lt 40 ]; do
+    t=$(readlink "$p") || return 1
+    case "$t" in /*) p=$t ;; *) p=${p%/*}/$t ;; esac
+    n=$((n + 1))
+  done
+  if [ -d "$p" ]; then p=$(cd -P "$p" && pwd -P)/; else p=$(cd -P "${p%/*}" && pwd -P)/${p##*/}/ || return 1; fi
+  r=$(cd -P "$2" && pwd -P)/ || return 1
+  case "$p" in "$r"*) return 1 ;; esac
+}
 
 for tool in jq python3 awk sed; do
   command -v "$tool" >/dev/null 2>&1 || { echo "test-dnr: missing required tool: $tool" >&2; exit 3; }
@@ -685,6 +702,10 @@ mkrun incident_2; mkrun incident_4; mkrun INCIDENT_6; mkrun incident_5
 ln -s "$X/canary" "$REPO/incident_2/LEDGER.md"
 ln -s "$X/bin" "$REPO/incident_2/bin"
 ln -s "$X/corpus" "$REPO/incident_2/corpus"
+for l in LEDGER.md bin corpus; do
+  if link_leaves "$REPO/incident_2/$l" "$REPO/incident_2"; then ok "run dir: the link incident_2/$l leads outside it, which both modes refuse"
+  else bad "run dir: the link incident_2/$l stays inside incident_2, which only strict mode refuses"; fi
+done
 ln -s "$X/b3" "$REPO/incident_3"
 for f in incident_4/LEDGER.md INCIDENT_6/LEDGER.md incident_5/LEDGER.md; do printf 'prior\n' > "$REPO/$f"; done
 if git -C "$REPO" init -q >/dev/null 2>&1 && git -C "$REPO" add -f incident_4/LEDGER.md INCIDENT_6/LEDGER.md; then
@@ -728,13 +749,13 @@ if [[ "$c1" == 0 && "$c2" == 0 && -s "$REPO/incident_5/corpus/transactions.jsonl
 else
   bad "run dir: the untracked control dir -> collect exit $c1, snapshot exit $c2"
 fi
-# A check that cannot run refuses instead of passing. Git refusing the repository
-# (owned by another user, as with a checkout mounted into a container; a stand-in
-# git gives git's own error), git missing or failing, and a run directory find
-# cannot read (here hiding a link to the outside) each mean exit 2, nothing written
-# and no RPC call. A repository named in the environment (GIT_DIR, GIT_WORK_TREE)
-# never stands in for the one the run directory is in: the tracked directory is
-# still refused.
+# A check that cannot run refuses instead of passing. In strict mode, git refusing
+# the repository (owned by another user, as with a checkout mounted into a
+# container; a stand-in git gives git's own error) and git missing or failing each
+# mean exit 2, nothing written and no RPC call; in both modes so does a run
+# directory find cannot read (here hiding a link to the outside). A repository
+# named in the environment (GIT_DIR, GIT_WORK_TREE) never stands in for the one the
+# run directory is in: the tracked directory is still refused.
 REALGIT="$(command -v git)"
 mkdir -p "$TT/gitfail" "$TT/gitowner"
 git init -q "$TT/other-repo" >/dev/null 2>&1
@@ -746,8 +767,8 @@ state_before="$(tree_state)"
 chmod 0300 "$REPO/incident_9"
 calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
 for case in \
-  "git does not trust the repository|PATH=$TT/gitowner:$TT/bin:$PATH|incident_5|incident_5/corpus-2" \
-  "git missing or failing|PATH=$TT/gitfail:$TT/bin:$PATH|incident_5|incident_5/corpus-2" \
+  "git does not trust the repository, in strict mode|AUDITOR_STRICT=1 PATH=$TT/gitowner:$TT/bin:$PATH|incident_5|incident_5/corpus-2" \
+  "git missing or failing, in strict mode|AUDITOR_STRICT=1 PATH=$TT/gitfail:$TT/bin:$PATH|incident_5|incident_5/corpus-2" \
   "a repository named in the environment|GIT_DIR=$TT/other-repo/.git GIT_WORK_TREE=$TT/other-repo PATH=$TT/bin:$PATH|incident_4|incident_4/corpus" \
   "a run dir find cannot read|PATH=$TT/bin:$PATH|incident_9|incident_9/corpus"; do
   label="${case%%|*}"; rest="${case#*|}"; envs="${rest%%|*}"; rest="${rest#*|}"; snapdir="${rest%%|*}"; outdir="${rest#*|}"
@@ -770,6 +791,24 @@ else
   bad "run dir: an unverifiable run changed the tree"
 fi
 eq "run dir: unverifiable runs made no RPC call" "$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)" "$calls_before"
+# In default mode a run directory git cannot place counts as the auditor's when its
+# .gitignore holds * (Rule 11f), so the same two runs go on, each into a new --out.
+for case in \
+  "git does not trust the repository|PATH=$TT/gitowner:$TT/bin:$PATH|incident_5|incident_5/corpus-3" \
+  "git missing or failing|PATH=$TT/gitfail:$TT/bin:$PATH|incident_5|incident_5/corpus-4"; do
+  label="${case%%|*}"; rest="${case#*|}"; envs="${rest%%|*}"; rest="${rest#*|}"; snapdir="${rest%%|*}"; outdir="${rest#*|}"
+  ( cd "$REPO" && export RPC_URL="https://rpc.example.test/" PATH="${envs##*PATH=}"
+    "$DNR/collect.sh" --out "$outdir" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/rd.out" 2>&1
+  c1=$?
+  ( cd "$REPO" && export RPC_URL="https://rpc.example.test/" PATH="${envs##*PATH=}"
+    "$DNR/snapshot-program.sh" "$PID" "$snapdir" ) >> "$TT/rd.out" 2>&1
+  c2=$?
+  if [[ "$c1" == 0 && "$c2" == 0 && -s "$REPO/$outdir/transactions.jsonl" ]] && ! grep -q 'refused: ' "$TT/rd.out"; then
+    ok "run dir: $label, in default mode -> collect and snapshot go on (exit 0)"
+  else
+    bad "run dir: $label, in default mode -> collect exit $c1, snapshot exit $c2 ($(tr '\n' ' ' < "$TT/rd.out"))"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # 16. A second collection into an incident goes to corpus-2/, next to corpus/, and

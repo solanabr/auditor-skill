@@ -25,7 +25,7 @@ use rusqlite::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::confine::shown;
+use crate::confine::{self, shown};
 
 /// The tables of a store, as `ensure_schema` makes them.
 pub const TABLES: [&str; 5] = [
@@ -248,12 +248,33 @@ fn table_sql(name: &str) -> Option<Vec<String>> {
     )
 }
 
+/// The tables `ANALYZE` makes, as SQLite writes them: `sqlite_stat1`, and where
+/// it is compiled in `sqlite_stat4` (`sqlite_stat2` and `sqlite_stat3` from
+/// versions before 3.30). They hold the query planner's statistics and change no
+/// answer.
+const STAT_TABLES: [(&str, &str); 4] = [
+    ("sqlite_stat1", "CREATE TABLE sqlite_stat1(tbl,idx,stat)"),
+    (
+        "sqlite_stat2",
+        "CREATE TABLE sqlite_stat2(tbl,idx,sampleno,sample)",
+    ),
+    (
+        "sqlite_stat3",
+        "CREATE TABLE sqlite_stat3(tbl,idx,neq,nlt,ndlt,sample)",
+    ),
+    (
+        "sqlite_stat4",
+        "CREATE TABLE sqlite_stat4(tbl,idx,neq,nlt,ndlt,sample)",
+    ),
+];
+
 /// Refuses a store holding anything but audit-mem's tables as `ensure_schema`
 /// makes them, the text of each `CREATE TABLE` exactly, the indexes SQLite makes
-/// for their primary keys and `sqlite_sequence` as SQLite makes it: a table of
-/// its name with another column, constraint, default or option, a view, a
-/// trigger, a virtual table, an index of its own or another table. Returns the
-/// tables of audit-mem's it holds.
+/// for their primary keys and `sqlite_sequence` as SQLite makes it, and in
+/// default mode (`confine::mode`) the tables `ANALYZE` makes (`STAT_TABLES`), as
+/// SQLite makes them: a table of its name with another column, constraint,
+/// default or option, a view, a trigger, a virtual table, an index of its own or
+/// another table. Returns the tables of audit-mem's it holds.
 fn verify_schema(conn: &Connection) -> Result<Vec<String>> {
     let mut stmt = conn.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema")?;
     let rows = stmt.query_map([], |r| {
@@ -271,6 +292,12 @@ fn verify_schema(conn: &Connection) -> Result<Vec<String>> {
         let ok = match kind.as_str() {
             "table" if name == "sqlite_sequence" => {
                 table == name && sql.as_deref() == Some("CREATE TABLE sqlite_sequence(name,seq)")
+            }
+            "table" if STAT_TABLES.iter().any(|(n, _)| *n == name) && !confine::strict() => {
+                table == name
+                    && STAT_TABLES
+                        .iter()
+                        .any(|&(n, made)| n == name && sql.as_deref() == Some(made))
             }
             "table" if forms.is_some() && name == table => {
                 if !forms

@@ -420,10 +420,11 @@ _______________
 ## Section 11: Audit Execution
 
 ### Q46. Where may the auditor run the project's own code?
-Building, testing or installing the project runs code the project controls — build scripts, proc-macros, test suites, `Anchor.toml` scripts, package install hooks. Asked once per audit, and again before a later session uses a run directory an earlier one made, whose recorded answer was that run's (a non-interactive run cannot ask again, so it takes the stricter of that answer and native); see `OUTPUT-RULES.md` Rule 11a. Intake writes the answer, one word, to `audit_<n>/exec-mode`. The bundled runners take the stricter of the `exec-mode` of the run directory they work in and `AUDITOR_EXEC_MODE` in the environment Claude Code runs in (none, then isolated, then native), and in that mode they build and test without asking again for each run. The agent can write that file, so if you choose Isolated, also set `AUDITOR_EXEC_MODE=isolated` in that environment; `AUDITOR_EXEC_MODE=none` stops every build and run of the project's code through the bundled runners.
-- [ ] **Isolated** (recommended) — a container, VM, or Claude Code sandbox, with no keys or credentials mounted
-- [ ] **Native** — on the auditor's own machine (the report says so)
-- [ ] No preference — recorded as **native** (also the default when non-interactive runs leave Q46 unanswered), and the report carries that caveat
+Building, testing or installing the project runs code the project controls — build scripts, proc-macros, test suites, `Anchor.toml` scripts, package install hooks. Asked once, at intake; nothing asks it again later. Unanswered, the code runs on the auditor's machine (native) and the report says so. Intake writes the answer, one word, to `audit_<n>/exec-mode`; the bundled runners take the stricter of that file, `AUDITOR_EXEC_MODE` and strict mode, where strict mode means isolated at least (`OUTPUT-RULES.md` Rules 11a and 11f). In that mode they build and test without asking again for each run.
+- [ ] **Native** (the default) — on the auditor's own machine; the report says so
+- [ ] **Isolated** — a container, VM or Claude Code sandbox with no keys or credentials mounted; builds and PoCs stop where the runners can still read a credential (`docs/permissions-and-isolation.md`)
+- [ ] **Untrusted source** — strict mode, for this and every later audit in this directory, until you delete the `strict` files: intake writes `audit_<n>/strict` and `isolated`, and the auditor refuses project config, links out of the tree and the other shapes Rule 11f lists; for its full effect, start Claude Code with the strict launch line Rule 11f shows
+- [ ] **None** — the bundled runners never run the project's code; a plugin you enabled still may (a language-server plugin runs its build scripts), unless Claude Code starts with the strict launch line (`OUTPUT-RULES.md` Rule 11f)
 
 > Tools that send code, dependency names or addresses to outside services (an RPC provider, a second-opinion LLM, package registries) are not gated by this answer; the report lists each one (Rule 11b), and the bundled tools that query them record theirs in the run directory's `disclosures.tsv`.
 
@@ -456,5 +457,7 @@ DEP-072 (public cloud storage buckets) and DEP-073 (a `.git/` directory a web se
 | Q41 = Quick scan | Uses grep + known vectors only, skips semantic analysis |
 | Q46 = Isolated | Builds, tests, installs and every PoC build run in a container / VM / sandbox (`OUTPUT-RULES.md` Rule 11a); a step that cannot run there keeps its source-level verdict, and a PoC records `[PoC-ATTEMPTED]` |
 | Q46 = Native, or unanswered | Target-controlled code runs on the auditor's machine; the report's Coverage & Limitations states it |
+| Q46 = Untrusted source | Strict mode (`OUTPUT-RULES.md` Rule 11f) for this and every later audit in this directory: the runners build in isolated mode only, and the bundled tools refuse what Rule 11f lists |
+| Q46 = None | The bundled runners run no target-controlled code, and each step that needs it is recorded as not run in Coverage & Limitations; a plugin the user enabled may still run it, unless Claude Code starts with the strict launch line (Rule 11f) |
 | Q47 = Yes | DEP-072 / DEP-073 may probe the hosts and buckets `audit_<n>/intake.md` §8 lists under Live probes, read-only and unauthenticated; the report lists each probe as an outside contact (`OUTPUT-RULES.md` Rule 11b) |
 | Q47 = No, unanswered, or `--auto` | No live probes: DEP-072 / DEP-073 give the owner a command to run and the evidence to send back (its output, with the date), and are never `[PASS]` until it arrives: `[PARTIAL]`, or `[FAIL-N]` when the IaC or server config already shows the exposure |

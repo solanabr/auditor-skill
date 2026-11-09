@@ -10,7 +10,8 @@
 #   env: <NAME=value>       one line per variable, sorted
 # followed by the lines each behaviour below adds. FAKE_* settings choose the behaviour: exit statuses, what a
 # build writes, files to show, a listing of the working directory, output to print, time to sleep, where cargo
-# metadata finds packages. The semgrep stand-in lists its targets with git, as semgrep does.
+# metadata finds packages, the toolchains rustup has, the platform tools cargo build-sbf names. The semgrep
+# stand-in lists its targets with git, as semgrep does.
 T=@T@
 name=${0##*/}
 [ -f "$T/fake/settings" ] && . "$T/fake/settings"
@@ -29,10 +30,18 @@ arg_after() { # arg_after <option> <arguments>...: the word after <option>
 }
 case "$name" in
   rustup)
-    case "$1" in default) [ "${FAKE_RUSTUP_DEFAULT:-}" = none ] && exit 1; echo "stable-fake (default)" ;; esac
+    case "$1" in
+      default) [ "${FAKE_RUSTUP_DEFAULT:-}" = none ] && exit 1; echo "stable-fake (default)" ;;
+      # rustup which --toolchain <t> <program>: installed when FAKE_RUSTUP_INSTALLED names <t>.
+      which) case " ${FAKE_RUSTUP_INSTALLED:-} " in *" $3 "*) echo "/fake/toolchains/$3/bin/$4" ;; *) exit 1 ;; esac ;;
+    esac
     exit 0 ;;
   node) exit 0 ;;
-  cargo-build-sbf|cargo-audit|cargo-outdated) exit 0 ;;
+  cargo-build-sbf)
+    # FAKE_SBF_NOCORE: as platform tools that lack the program's target build.
+    [ -z "${FAKE_SBF_NOCORE:-}" ] || { echo "error[E0463]: can't find crate for \`core\`"; exit 1; }
+    exit 0 ;;
+  cargo-audit|cargo-outdated) exit 0 ;;
   curl)
     out=$(arg_after -o "$@"); url=""; dash=0
     for a in "$@"; do [ "$dash" = 1 ] && url=$a; [ "$a" = -- ] && dash=1; done
@@ -79,10 +88,47 @@ json.dump({"version": "2.1.0", "runs": [{"results": [{"ruleId": "r%d" % i} for i
     exit "${FAKE_SEMGREP_RC:-0}" ;;
   anchor)
     say "keypair: $([ -f "$HOME/.config/solana/id.json" ] && echo yes || echo no)"
+    say "avm: ${AVM_HOME:-unset}"
+    say "avm-link: $( [ -L "$HOME/.avm" ] && ls -l "$HOME/.avm" | sed 's/.* -> //')"
+    say "tools: $( [ -L "$HOME/.cache/solana" ] && ls -l "$HOME/.cache/solana" | sed 's/.* -> //')"
+    say "tool-links: $(for l in "$HOME/.cache/solana"/*; do [ -L "$l" ] && printf '%s -> %s ' "${l##*/}" "$(ls -l "$l" | sed 's/.* -> //')"; done)"
+    # --help as anchor-cli FAKE_ANCHOR lists its options: 1.2 (build's --ignore-keys, --no-idl and
+    # --tools-version, idl build's --out-ts), 1.1 (--ignore-keys, --no-idl and --out-ts), 0.31 (--no-idl and
+    # --out-ts, no --ignore-keys), or 0.29, the default (none of them).
+    case " $* " in
+      *" --help "*)
+        case "$1 ${FAKE_ANCHOR:-0.29}" in
+          "build 1.2") printf '      --ignore-keys\n      --no-idl\n      --tools-version <TOOLS_VERSION>\n' ;;
+          "build 1.1") printf '      --ignore-keys\n      --no-idl\n' ;;
+          "build 0.31") printf '      --no-idl\n      --arch <ARCH>\n' ;;
+          "build 0.29") printf '      --skip-lint\n' ;;
+          "idl 1.2"|"idl 1.1"|"idl 0.31") printf '  -t, --out-ts <OUT_TS>\n' ;;
+        esac
+        exit 0 ;;
+    esac
     case "$1" in
       build)
+        # FAKE_ANCHOR_TOOLS: as anchor-cli 1.2 builds, through the cargo-build-sbf on PATH, with its own
+        # --tools-version (anchor build's, when given) and --arch v3, then the options after --.
+        if [ -n "${FAKE_ANCHOR_TOOLS:-}" ]; then
+          tv=$FAKE_ANCHOR_TOOLS dash=0
+          set -- "$@" --
+          while [ "$1" != -- ]; do [ "$1" = --tools-version ] && tv=$2; shift; done
+          shift
+          rest=""
+          while [ $# -gt 0 ] && [ "$1" != -- ]; do rest="$rest $1"; shift; done
+          cargo-build-sbf build-sbf --tools-version "$tv" --arch v3$rest || exit $?
+        fi
         mkdir -p target/deploy && printf '\177ELFanchor' > target/deploy/demo.so
         exit "${FAKE_ANCHOR_BUILD_RC:-0}" ;;
+      idl)
+        # idl build -p <program> -o <json> -t <ts>: writes both, and shows the toolchain files rustup would read.
+        say "idl: $(arg_after -p "$@") $(arg_after -o "$@") $(arg_after -t "$@")"
+        say "toolchain-files: $(find . -name .git -prune -o \( -name rust-toolchain -o -name rust-toolchain.toml \) -print | LC_ALL=C sort | tr '\n' ' ')"
+        say "toolchain-top: $(tr '\n' ' ' < rust-toolchain.toml 2>/dev/null)"
+        printf '{"metadata":{"name":"%s"}}\n' "$(arg_after -p "$@")" > "$(arg_after -o "$@")" &&
+          printf 'export type Demo = {};\n' > "$(arg_after -t "$@")" || exit 1
+        exit "${FAKE_ANCHOR_IDL_RC:-0}" ;;
       test) exit "${FAKE_ANCHOR_TEST_RC:-0}" ;;
     esac
     exit 0 ;;
@@ -111,10 +157,13 @@ case "$1" in
     case "$*" in
       *--help*) [ "${FAKE_SBF_HELP:-}" = old ] && { echo "--offline"; exit 0; }
                 echo "--install-only --skip-tools-install --offline"; exit 0 ;;
+      *--version*) echo "solana-cargo-build-sbf 2.1.15"
+                   [ "${FAKE_SBF_TOOLS:-}" = none ] || echo "platform-tools ${FAKE_SBF_TOOLS:-v1.43}"; exit 0 ;;
       *--install-only*) exit "${FAKE_INSTALL_RC:-0}" ;;
     esac
     say "keypair: $([ -f "$HOME/.config/solana/id.json" ] && echo yes || echo no)"
     say "tools: $( [ -L "$HOME/.cache/solana" ] && ls -l "$HOME/.cache/solana" | sed 's/.* -> //')"
+    say "tool-links: $(for l in "$HOME/.cache/solana"/*; do [ -L "$l" ] && printf '%s -> %s ' "${l##*/}" "$(ls -l "$l" | sed 's/.* -> //')"; done)"
     [ -n "${FAKE_SHOW:-}" ] && say "show: $(cat "$FAKE_SHOW" 2>/dev/null)"
     out=$(arg_after --sbf-out-dir "$@")
     if [ -n "$out" ]; then

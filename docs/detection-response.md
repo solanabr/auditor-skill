@@ -42,11 +42,13 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
   files inside the run directory. The copy is the only step of getting your
   corpus that asks: Claude Code asks about a `cp` with flags from outside the
   working directory whatever the rules say, so an interactive run prompts you
-  once for it, and a `claude -p` run is refused it. A copy that is or holds a
-  symbolic link, or that brings Claude Code project config in (`preflight.sh`
-  runs again on it), stops the run. A line the recipes cannot read is skipped and
-  counted as a collection gap, never guessed at: a non-integer amount, for
-  example, is never rounded.
+  once for it, and a `claude -p` run is refused it. The copy is then checked for
+  symbolic links, and `preflight.sh` runs again on it: in default mode what they
+  find is a note in the report, and in strict mode a copy that is or holds a
+  link, or that brings Claude Code project config in, stops the run
+  ([Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode)). A line the
+  recipes cannot read is skipped and counted as a collection gap, never guessed
+  at: a non-integer amount, for example, is never rounded.
 - **Collected from RPC** (gated): with no `--logs`, the command shows you the
   addresses, window, caps and estimated call count and asks before the one shipped
   collector runs. Set `RPC_URL` in the environment (never on the command line);
@@ -116,21 +118,30 @@ already captured.
   incident, disconnect or deny write-capable MCP servers (for example, tools that
   transfer or stake).
 - **A clean working directory.** Both commands start with
-  `"<auditor-skill root>/scripts/preflight.sh"`, which refuses a working tree that
-  ships Claude Code project config, anywhere in it or in a parent up to the
+  `"<auditor-skill root>/scripts/preflight.sh"`, which looks for Claude Code
+  project config anywhere in the working tree or in a parent up to the
   repository root: a `.claude` link, a `.claude/` with skills, commands, agents,
   hooks, output styles or workflows in it or a `scheduled_tasks.json`, a
-  `.claude/settings.json` or `settings.local.json` with any key beyond `$schema`,
-  `model`, `cleanupPeriodDays` and `includeCoAuthoredBy`, or a `.mcp.json`. It
-  also refuses a linked git worktree: Claude Code loads its main checkout's
-  `.claude/settings.local.json` too, and that checkout's project skills when the
-  worktree has none. Claude Code loads that config beside the plugin's, so a
+  `.claude/settings.json` (or a tracked `settings.local.json`) with any key
+  beyond `$schema`, `model`, `cleanupPeriodDays` and `includeCoAuthoredBy`, or a
+  `.mcp.json`, and for a linked git worktree, whose main checkout's
+  `.claude/settings.local.json` Claude Code loads too, and that checkout's
+  project skills when the worktree has none. Claude Code loads the config in
+  the working directory and its parents beside the plugin's, and a
+  `.claude/skills` below it, in a folder git does not ignore, once the session
+  reads a file there, so a
   repository's own skill or agent could take the place of one of ours, or its
-  config could carry hooks and MCP servers. Run the commands from an incident
-  workspace of their own: they need no repository. To work inside one, or in a
-  worktree, make a clean copy: clone it to a new directory, delete every
-  `.claude/` and `.mcp.json` in the copy, and start Claude Code there. `CLAUDE.md`
-  and `AGENTS.md` files are listed, not refused; their text is the repository's,
+  config could carry hooks and MCP servers. In default
+  mode each one is a note, which the report lists; in strict mode it is a
+  refusal ([Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode)). The
+  commands need no repository, so an incident workspace of their own is the
+  cleanest place to run them. For a repository you do not trust, start Claude
+  Code with the strict launch line, under which the repository's own config
+  does not load. Strict mode still refuses a tree that ships it, because
+  preflight cannot see how Claude Code was started: for such a repository,
+  clone it to a new directory, delete every `.claude/` and `.mcp.json` in the
+  copy, and start there. `CLAUDE.md` and
+  `AGENTS.md` files are listed, not refused; their text is the repository's,
   never instructions.
 - **What runs without asking.** The commands pre-approve reading, `Task`, edits
   under `incident_*/`, invoking themselves again and the `auditor:dnr-analyze`
@@ -163,9 +174,9 @@ already captured.
   Answering "don't ask again" at the prompt can save the rule in a
   `.claude/settings.local.json` instead: at the root of the git repository that
   holds the working directory (the main checkout's root, for a worktree), or in the
-  working directory itself outside a repository; and `preflight.sh` refuses that
-  file on the next run, since a `permissions` key is not on its list. Move its
-  `permissions.allow` entries to `~/.claude/settings.json` and delete the file. The
+  working directory itself outside a repository. `preflight.sh` does not refuse
+  that file while git does not track it; outside a repository strict mode counts
+  it as the repository's, so keep such rules in your user settings there. The
   fork keeps its own pre-approvals while it runs, after your messages too.
 - **Recipes:** [`scripts/dnr/`](../scripts/dnr/) — profiling, log-frame attribution,
   and exact balance deltas, each checked against adversarial fixtures by

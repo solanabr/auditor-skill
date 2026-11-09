@@ -71,6 +71,28 @@ cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked
 A later contract would take `--contract=2`, which this build refuses with a line that
 says to rebuild it.
 
+### The mode
+
+`audit-scan` and `audit-mem` read the mode of `OUTPUT-RULES.md` Rule 11f once, as
+`scripts/lib/confine.sh`'s `confine_mode` reads it, and take no `--strict`. Strict
+mode is on when either says so:
+
+- `AUDITOR_STRICT`: `1`, `true`, `yes` or `on`, in any letter case, turn it on; `0`,
+  `false`, `no`, `off`, empty and unset leave it off; any other value turns it on,
+  with the note `<tool>: note: AUDITOR_STRICT is '<v>', read as on` on stderr, before
+  anything else the call prints.
+- A marker: an entry named `strict`, of any kind, in a run directory of the working
+  directory (`audit_<n>/strict` or `incident_<n>/strict`), unless git tracks anything
+  under that run directory, which is then the repository's. git is asked once, for
+  every marker, and only when there is one, with no global config whatever the mode;
+  when it cannot tell, the markers count.
+
+In default mode git reads the safe-directory file of the installation the tools were
+built in, `scripts/lib/safe-directory.gitconfig`, as its global config, so it reads a
+checkout another user owns; in strict mode it reads none, and cannot tell for such a
+checkout, as before. What else default mode changes is given with each check below;
+in strict mode each refusal keeps its words.
+
 ## `audit-scan`
 
 ```
@@ -89,13 +111,18 @@ builds in, one made before cargo's first build too (as `anchor` can make
 when `<dir>` is `.`, does it enter a run directory or `.audit-memory/` that holds
 an audit's own output: one that holds the
 `.gitignore` of exactly `*` that `rundir.sh new` and `audit-mem init` write first,
-and that no repository tracks in any letter case. A directory with such a name
-that is not one, such as one the target's repository tracks, is scanned like any
-other. The walk follows no symbolic link, goes no deeper than 128 directories below
+and that no repository tracks in any letter case. A run directory with that
+`.gitignore` that git cannot answer for, or with no git on `PATH`, is not entered
+either, in both modes, so the PoC code in it is not reported as the target's. A
+directory with such a name that is not one, such as one the target's repository
+tracks, is scanned like any other. The walk follows no symbolic link, goes no deeper than 128 directories below
 `<dir>`, and parses only regular files with one name, of at most 4 MiB, in byte
-order of their names; every directory it does not enter, those above and those
-nested too deeply, every link it meets, and every `*.rs` file it does not parse
-(not a regular file, a second name, larger than 4 MiB, unreadable, not UTF-8,
+order of their names; in default mode a file with more than one name (a hard link,
+as `cp -al` or a deduplicating tool makes) is parsed under the first name the walk
+meets, and each later name of it is listed as `another name of <first>`, while
+strict mode parses none of its names. Every directory it does not enter, those
+above and those nested too deeply, every link it meets, and every `*.rs` file it
+does not parse (not a regular file, a second name in strict mode, larger than 4 MiB, unreadable, not UTF-8,
 nested or chained too deeply, not Rust that `syn` parses, one the parser could not
 finish, or one past the report's size or the scan's time), is listed in `skipped`
 with the reason. So is every file a parsed file brings in, by a module's `#[path =
@@ -171,7 +198,10 @@ directly in `<dir>` — usually `.github/workflows` — into the report's `workf
 key, each as trigger → job → step facts. `<dir>` is a confined directory like the
 one to scan (relative, inside the working directory, reached through no symbolic
 link, an existing directory), given once; it is not `.`, since GitHub reads
-workflows only from a `.github/workflows` directory. The pass does not recurse,
+workflows only from a `.github/workflows` directory. In default mode a `<dir>` that
+is not an existing directory, one missing or a file, skips the pass: `skipped` lists
+it, `--workflows is not an existing directory, so no workflow was read`, and the scan
+goes on; strict mode refuses it. The pass does not recurse,
 follows no symbolic link, and reads only regular files with one name of at most 4
 MiB, each opened from the directory's descriptor without following a link; a
 `*.y*ml` entry that is a link, a FIFO or another non-regular file, one that is
@@ -188,6 +218,10 @@ characters, as a snippet is. It is not a general YAML library, and it fails
 closed: what it does not read is listed in that workflow's `unknown`, with its
 line, and never guessed.
 
+- Each fact the report keeps cut at 200 characters (a `run:` script, an `if:`, a
+  `with:` or `env:` value, a trigger, a job id) is listed with its key path and the
+  line it starts on, in both modes: `jobs.build.steps[2].run: a value cut at 200
+  characters, from line 31`, or `a key cut …` for a key.
 - An alias (`*`), a tag (`!…`), a merge key (`<<`) and an explicit key (`?`) are
   listed with the lines they cover, which are not read; the read goes on after
   them. An anchor (`&`) is listed too, though its node is read. An alias is never
@@ -248,8 +282,12 @@ so it must be safe whatever arguments follow. Its rules are those of
 - `--out` is `prescan.json`, or `prescan-<slug>.json` with a slug of 1 to 32 of
   `a-z`, `0-9` and `-`, directly in a run directory, `audit_<n>/` or `incident_<n>/`,
   that passes `scripts/rundir.sh check`: a real directory in the working directory,
-  holding no symbolic link, tracked by no repository in any letter case, with a
-  `.gitignore` of exactly `*`. The file is made new (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode
+  holding no symbolic link, tracked by no repository in any letter case, named as the
+  disk spells it, with a `.gitignore` of exactly `*`. On a volume that ignores letter
+  case, `audit_1` is refused in both modes for a folder the disk spells `AUDIT_1`,
+  which neither `rundir.sh new` makes nor the `strict` markers are read from. In default mode a link under it that resolves to it or
+  below it, as a PoC crate may hold, is taken; one that leads out of it, or cannot be
+  resolved, is refused in both modes. The file is made new (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode
   0600) through the run directory, opened once without following a link; a file
   already there is replaced only when it is a regular file with one name, as
   audit-scan's own earlier output is.
@@ -267,13 +305,21 @@ so it must be safe whatever arguments follow. Its rules are those of
   config cannot widen); and with the repository's config pinned off. git does not
   start on a repository holding a named pipe or device it would open on its way (as
   HEAD, in its git directory, or included by its config), which confine.sh's
-  `confine_git_check` finds; `--out` is then refused for that reason. It asks for
+  `confine_git_check` finds; `--out` is then refused for that reason. That walk of the
+  git directory stands when the only entries it cannot read are ones that vanished
+  while it ran, as when git's gc prunes loose objects; any other failure is tried
+  twice more, 0.2 s apart, before the refusal, as `confine_walk` tries it. It asks for
   `--out`, and, in a scan of `.` that has time left, for a run directory or
   `.audit-memory/` that holds a `.gitignore` of exactly `*`. When git cannot
-  answer, or has not answered within 10 s (it is then killed), `--out` is refused,
-  and such a directory is scanned, as is each one after it in that scan, for which
-  git is not asked again; once the scan's time is spent, such a directory is
-  scanned without asking. With neither, git is not run.
+  answer, or has not answered within 10 s (it is then killed), strict mode refuses
+  `--out`, and default mode takes it on its run directory's `.gitignore` of `*`, as
+  `confine_rundir` does there; with no git on `PATH` the same holds. In a scan of
+  `.` such a run directory is not entered, and listed in `skipped` as `a run
+  directory (a .gitignore of *, and git cannot tell whether it is tracked), not
+  scanned`, in both modes; so is each one after it in that scan, for which git is not
+  asked again, while `.audit-memory/` is scanned then. Once the scan's time is
+  spent, such a directory is scanned without asking. With neither, git is not
+  run.
 - It refuses to run from an installation inside the working directory, or from a
   path, as it was invoked or with its links resolved, holding a quote, `$`, a
   backtick, a backslash or a control character, and in a working directory whose
@@ -413,8 +459,9 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
       ],
       // what the parser did not read: a construct outside its subset (an
       // alias, tag, merge key or explicit key, with the lines it covers; an
-      // anchor, whose node is read), or the rest of the file from a line it
-      // could not place. Empty only when the whole file was read.
+      // anchor, whose node is read), the rest of the file from a line it
+      // could not place, or a fact above cut at 200 characters. Empty only
+      // when the whole file was read.
       "unknown": [ { "line": 0, "what": "string" } ] }
   ],
 
@@ -570,15 +617,24 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
 - `--db` is `.audit-memory/audit.db` or `<R>/audit-mem.db`, relative to the working
   directory (one leading `./` allowed), where `<R>` passes `scripts/rundir.sh check`:
   a real directory in the working directory, holding no symbolic link, tracked by no
-  repository in any letter case, with a `.gitignore` of exactly `*`.
+  repository in any letter case, named as the disk spells it, with a `.gitignore` of
+  exactly `*`.
 - Before it uses `.audit-memory/`, it checks it as `scripts/rundir.sh store` does:
   the repository tracks no `.audit-memory` in any letter case, and `.audit-memory/`
   is a real directory holding no symbolic link, with a `.gitignore` of exactly `*`.
+  In default mode a link under a run directory or `.audit-memory/` that resolves to it
+  or below it is taken; one that leads out of it, or cannot be resolved, is refused
+  in both modes. The database and SQLite's files beside it are checked by name, so
+  none of them may be a link.
   Whether you made the store yourself stays your judgement (OUTPUT-RULES.md
   Rule 11d). A store an earlier `init` made, before it wrote the `.gitignore`, has
-  none and is refused: if the store is yours, write `.audit-memory/.gitignore`
-  holding `*` (`printf '*\n' > .audit-memory/.gitignore`), and audit-mem uses it
-  again.
+  none: the writers refuse it in both modes, and so does strict mode for every
+  subcommand; if the store is yours, write `.audit-memory/.gitignore` holding `*`
+  (`printf '*\n' > .audit-memory/.gitignore`), and audit-mem uses it again. In
+  default mode `warm`, `check` and `regressions` read a store directory with no
+  `.gitignore`, `.audit-memory/` or a run directory, when git says it is untracked
+  (one whose `.gitignore` is there but not exactly `*` stays refused), and with no
+  `.audit-memory/` at all they ask git nothing and give the empty answer below.
 - It asks git what is tracked as confine.sh's `hgit` asks it: git from a `PATH` with
   every entry inside the working directory, or inside the tree it lies in (the
   outermost of it and the directories above it, below `HOME`, or up to `/` when it
@@ -589,8 +645,12 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   repository holding a named pipe or device it would open on its way, as
   confine.sh's `confine_git_check` finds one: `--db <R>/audit-mem.db` is refused for
   that reason, as `rundir.sh check` refuses it, and the in-tree store because git
-  cannot tell, as `rundir.sh store` refuses it. When git cannot answer, or has not
-  answered within 10 s (it is then killed), it refuses.
+  cannot tell, as `rundir.sh store` refuses it. That walk stands when the only entries
+  it cannot read vanished while it ran, as when git's gc prunes loose objects, and any
+  other failure is tried twice more, 0.2 s apart, before the refusal. When git cannot answer, or has not
+  answered within 10 s (it is then killed), or is not on `PATH`, it refuses the
+  in-tree store; for `--db <R>/audit-mem.db` strict mode refuses too, and default
+  mode takes `<R>` on its `.gitignore` of `*`, as `confine_rundir` does there.
 - The database is a regular file with one name, in rollback-journal mode: a database
   in WAL mode is refused, since a read-only open of one makes a file beside it. No
   `-wal` or `-shm` file may sit beside it (audit-mem never makes one, and SQLite would
@@ -601,8 +661,10 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   audit-mem's tables, each `CREATE TABLE`
   exactly as audit-mem writes it (a column, constraint, default or table option of
   another's is refused), the indexes SQLite makes for their primary keys, and
-  `sqlite_sequence` as SQLite makes it; a view, a trigger, a virtual table or any
-  other object is refused. SQLite never follows a link (`SQLITE_OPEN_NOFOLLOW`)
+  `sqlite_sequence` as SQLite makes it; in default mode also the tables `ANALYZE`
+  or `PRAGMA optimize` makes, `sqlite_stat1` (and `sqlite_stat2` to `sqlite_stat4`
+  where SQLite makes them), each as SQLite writes it. A view, a trigger, a virtual
+  table or any other object is refused. SQLite never follows a link (`SQLITE_OPEN_NOFOLLOW`)
   and runs in its defensive mode (`SQLITE_DBCONFIG_DEFENSIVE`), with triggers and views
   off, `trusted_schema` off, temporary tables in memory and no value read or written
   past 1 MiB (`SQLITE_LIMIT_LENGTH`; the writers store at most 4096 bytes a field).

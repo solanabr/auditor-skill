@@ -18,8 +18,8 @@ Before starting any phase:
 4. Detect languages in the repo (Rule 7 in OUTPUT-RULES.md) — this determines which checklists to apply
 5. Create a session checkpoint file to track progress across chunks (Rule 3 in OUTPUT-RULES.md)
 6. Remember: **walk the code file by file — never one-shot** (Rule 3)
-7. Apply **Operating Safety** ([OUTPUT-RULES.md Rule 11](OUTPUT-RULES.md#rule-11-operating-safety)) before anything runs: take the execution mode recorded at intake (11a — isolated recommended, native allowed with a report caveat), list every outside service a tool contacts (11b), treat a `.git/` you did not clone yourself as untrusted (11c), and make `.gitignore` containing `*` the first file in `audit_<n>/` (11d)
-8. Resolve every bundled path in this file (`tools/`, `templates/`, `scripts/`, `vendor/trailofbits/`, the corpus) from the auditor-skill root, never the working directory, which is the audited repo ([Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). The root is the absolute path the skill (`${CLAUDE_SKILL_DIR}`) or command (`${CLAUDE_PLUGIN_ROOT}`) gave you; nothing is filled in here, so it is written `<auditor-skill root>` below. The executables this plan runs: `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem"`, the runners `"<auditor-skill root>/scripts/runner/deps.sh"` (Step 3.2) and `"<auditor-skill root>/scripts/runner/target.sh"` (Step 3.4), the read-only git `"<auditor-skill root>/scripts/git-ro.sh"` and `"<auditor-skill root>/scripts/recipes/web3js-history.sh"` (Steps 3.2 and 3.3), the RPC reader `"<auditor-skill root>/scripts/rpc-read.sh"` (Step 3.1), and the Trail of Bits plugins when `test -d "<auditor-skill root>/vendor/trailofbits/plugins"` succeeds. A `refused:` line from one of them (exit 64) means that step did not run: record it in Coverage & Limitations, never as a PASS or an N/A. git-ro.sh, the two recipes and `target.sh --src .` refuse a checkout whose git directory holds a symbolic link (a hook installed with `ln -s`), borrows objects or has grafts, or that another user owns: ask the human to audit a fresh clone made outside the working directory, as preflight does for project config
+7. Apply **Operating Safety** ([OUTPUT-RULES.md Rule 11](OUTPUT-RULES.md#rule-11-operating-safety)) before anything runs: take the execution mode recorded at intake (11a — native when nothing is recorded, with a report caveat; isolated at least in strict mode, 11f), list every outside service a tool contacts (11b), treat a `.git/` you did not clone yourself as untrusted (11c), and make `.gitignore` containing `*` the first file in `audit_<n>/` (11d)
+8. Resolve every bundled path in this file (`tools/`, `templates/`, `scripts/`, `vendor/trailofbits/`, the corpus) from the auditor-skill root, never the working directory, which is the audited repo ([Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). The root is the absolute path the skill (`${CLAUDE_SKILL_DIR}`) or command (`${CLAUDE_PLUGIN_ROOT}`) gave you; nothing is filled in here, so it is written `<auditor-skill root>` below. The executables this plan runs: `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem"`, the runners `"<auditor-skill root>/scripts/runner/deps.sh"` (Step 3.2) and `"<auditor-skill root>/scripts/runner/target.sh"` (Step 3.4), the read-only git `"<auditor-skill root>/scripts/git-ro.sh"` and `"<auditor-skill root>/scripts/recipes/web3js-history.sh"` (Steps 3.2 and 3.3), the RPC reader `"<auditor-skill root>/scripts/rpc-read.sh"` (Step 3.1), and the Trail of Bits plugins when `test -d "<auditor-skill root>/vendor/trailofbits/plugins"` succeeds. A `refused:` line from one of them (exit 64) means that step did not run: record it in Coverage & Limitations, never as a PASS or an N/A. A `note:` line means the step ran: copy it into Coverage & Limitations as it stands ([Rule 11f](OUTPUT-RULES.md#11f--default-and-strict-mode)). In default mode git-ro.sh, the two recipes and `target.sh --src .` read a checkout with a symbolic link in its hooks directory (a hook installed with `ln -s`) or that another user owns, and read one that borrows objects or has grafts with a note; in strict mode they refuse each of these, and any other link in a git directory is refused in both modes: ask the human to audit a fresh clone made outside the working directory
 
 ---
 
@@ -441,10 +441,10 @@ ACTIONS:
 
   # Both runs below build and run target-controlled code (build.rs, proc-macros, and
   # Anchor.toml [scripts], which `anchor test` executes). The bundled target.sh runs
-  # them in the execution mode recorded at intake — OUTPUT-RULES Rule 11a (isolated
-  # recommended; native allowed, with the report caveat): the stricter of
-  # audit_<n>/exec-mode and AUDITOR_EXEC_MODE, and with none recorded, or none, it
-  # stops (exit 3). It builds a scratch clone of the committed source outside the target
+  # them in the execution mode in force — OUTPUT-RULES Rule 11a: the stricter of
+  # audit_<n>/exec-mode, AUDITOR_EXEC_MODE and strict mode (isolated at least), native
+  # with the report caveat when none is recorded, and with none it stops (exit 3); its
+  # `>> execution mode:` line names it. It builds a scratch clone of the committed source outside the target
   # tree, offline after its downloads, in a throwaway HOME and Solana keypair. Run it
   # from the working directory by its quoted path, with no cd first. Its last line
   # names the log, audit_<n>/exec/<action>-<k>.log, and the programs' .so files, in
@@ -452,7 +452,12 @@ ACTIONS:
   # 3 = blocker (the line says why), 64 = refused. If they cannot run in that mode,
   # keep the source-level verdicts and add a Rule 10 confidence note.
 
-  # Verify build (--program <name> for one program)
+  # Verify build (--program <name> for one program). On Anchor 0.30 and later it
+  # builds without the IDL (anchor build --no-idl); anchor-test builds each program's
+  # IDL into target/idl and target/types in a step of its own, before the test script.
+  # target.sh installs the platform tools that Anchor version asks for (v1.57 for
+  # Anchor 1.2); a blocker that says "found no core crate" names TOOLS_VERSION, the
+  # variable to set to the version the program needs.
   "<auditor-skill root>/scripts/runner/target.sh" anchor-build --run audit_<n> --src .
   # Check its log for warnings, errors
 

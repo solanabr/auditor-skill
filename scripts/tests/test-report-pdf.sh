@@ -24,6 +24,7 @@ trap 'chmod -R u+rwx "$T" 2>/dev/null; rm -rf "$T"' EXIT
 export HOME="$T/home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
+unset AUDITOR_STRICT
 mkdir -p "$HOME"
 # snap <dir>: its names, then a line per regular file with its CRC, size and path (cksum's), in byte
 # order. HOME's is taken now, before anything runs, and compared after the real-pandoc render and at the end.
@@ -39,6 +40,22 @@ check() { # check <name> <command>...: on a failure, also show the last run
 }
 has()   { grep -qF -- "$2" "$1"; }
 hasnt() { ! grep -qF -- "$2" "$1"; }
+# link_leaves <link> <run directory>: status 0 when the link, followed to its end, leads outside the run
+# directory or to nothing, which default and strict mode both refuse; one that ends inside it is refused
+# in strict mode only.
+link_leaves() {
+  local p=$1 t r n=0
+  [ -L "$p" ] || return 1
+  [ -e "$p" ] || return 0
+  while [ -L "$p" ] && [ "$n" -lt 40 ]; do
+    t=$(readlink "$p") || return 1
+    case "$t" in /*) p=$t ;; *) p=${p%/*}/$t ;; esac
+    n=$((n + 1))
+  done
+  if [ -d "$p" ]; then p=$(cd -P "$p" && pwd -P)/; else p=$(cd -P "${p%/*}" && pwd -P)/${p##*/}/ || return 1; fi
+  r=$(cd -P "$2" && pwd -P)/ || return 1
+  case "$p" in "$r"*) return 1 ;; esac
+}
 
 # $T/tools: the programs report-to-pdf.sh and the stand-ins use, linked one by one, so that no pandoc or
 # TeX engine installed on this machine is reachable. Each scenario puts its stand-ins in front.
@@ -137,6 +154,7 @@ check "no refusal changed anything in the working directory" cmp -s "$T/tree.bef
 L=$(cd "$W" && "$RUNDIR" new audit); printf '# outside\n' > "$T/outside.md"; ln -s "$T/outside.md" "$W/$L/REPORT.md"
 run "$FAKE_PATH" "$L/REPORT.md"
 check "a report that is a symbolic link is refused" refused "the run directory holds a symbolic link: $L"
+check "... a link that leads outside the run directory, which both modes refuse" link_leaves "$W/$L/REPORT.md" "$W/$L"
 rm "$W/$L/REPORT.md"; mkdir "$W/$L/REPORT.md"
 run "$FAKE_PATH" "$L/REPORT.md"
 check "a report that is a directory is refused" refused "the report is not a regular file: $L/REPORT.md"
@@ -151,6 +169,7 @@ fi
 printf '# r\n' > "$W/$L/REPORT.md"; ln -s "$T/elsewhere.pdf" "$W/$L/REPORT.pdf"
 run "$FAKE_PATH" "$L/REPORT.md"
 check "a REPORT.pdf that is a symbolic link is not replaced (refused)" refused "the run directory holds a symbolic link: $L"
+check "... a link that leads outside the run directory, which both modes refuse" link_leaves "$W/$L/REPORT.pdf" "$W/$L"
 check "... and nothing is written where it points" test ! -e "$T/elsewhere.pdf"
 rm "$W/$L/REPORT.pdf"; mkdir "$W/$L/REPORT.pdf"
 run "$FAKE_PATH" "$L/REPORT.md"

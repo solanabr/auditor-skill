@@ -12,8 +12,8 @@ discard it.
 ## 1. Apply (scratch clone — never the client checkout)
 
 The rebuild runs target-controlled code (build scripts, proc-macros, toolchain files), so it follows the
-execution mode recorded at intake — `OUTPUT-RULES.md` Rule 11a (isolated recommended; native allowed and
-stated in the report). If it cannot run in that mode, stop at `[FIX-PROPOSED]`. The bundled runner builds in
+execution mode in force — `OUTPUT-RULES.md` Rule 11a (native when nothing is recorded, and stated in the
+report; isolated at least in strict mode). If it cannot run in that mode, stop at `[FIX-PROPOSED]`. The bundled runner builds in
 a scratch clone it makes outside the target tree (Rule 11c): no git command runs in the client checkout, and
 nothing is written in it but the run directory. `{PATH_TO}` is the run directory, `audit_<n>` or
 `incident_<n>`, relative to the working directory; `{COMMIT}` is the audited commit. Run each line from the
@@ -122,10 +122,13 @@ caller's privileges and an open network. So it runs only in Rule 11a **isolated*
 runner, and on a no-checkout clone, outside the target tree, of the copy `git-ro.sh copy` makes in `{R}`:
 never on the client checkout. Run the first block from the top level of the repository under audit. It runs
 nothing, and prints the line to record, unless the stricter of the recorded mode (`{R}/exec-mode`, or
-`intake.md` §8 without it) and `AUDITOR_EXEC_MODE` is isolated (`none` stops it, as it stops `run.sh`),
-`probe.sh --only isolation` finds none of the credentials it checks readable, the vendored skill and `uv` are
-there, and `git-ro.sh copy` takes the checkout. That copy refuses a partial clone, a git without the May-2024
-clone fixes, borrowed objects (alternates) and links. When a block stops on an error instead, record "not run:
+`intake.md` §8 without it) and `AUDITOR_EXEC_MODE` is isolated (`none` stops it, as it stops `run.sh`;
+strict mode, from `AUDITOR_STRICT` or a `{R}/strict` file, makes native count as isolated, as it does for
+`run.sh`: Rule 11f), `probe.sh --only isolation` finds none of the credentials it checks readable, the vendored skill and `uv` are
+there, and `git-ro.sh copy` takes the checkout. In strict mode that copy refuses a partial clone, a git without the
+May-2024 clone fixes, borrowed objects (alternates) and any link in the git directory. Default mode copies the
+first three with a note, and a link in the hooks directory; it stops at a partial clone that lacks files of
+`HEAD`, and at any other link (`OUTPUT-RULES.md` Rule 11c). When a block stops on an error instead, record "not run:
 <its first error line>". Each block asks for approval: it is shell code, and it runs the Trail of Bits
 runner, which no bundled tool wraps.
 
@@ -146,6 +149,12 @@ case " {MODE} ${AUDITOR_EXEC_MODE:-} " in       # the stricter of the recorded m
   *" isolated "*) PPV_MODE=isolated ;;
   *) PPV_MODE=native ;;
 esac
+case "${AUDITOR_STRICT:-}" in                   # strict mode (Rule 11f): AUDITOR_STRICT on, or a strict file in the run directory
+  ''|0|[Ff][Aa][Ll][Ss][Ee]|[Nn][Oo]|[Oo][Ff][Ff]) PPV_STRICT=no ;;
+  *) PPV_STRICT=yes ;;
+esac
+if [ -e "{R}/strict" ] || [ -L "{R}/strict" ]; then PPV_STRICT=yes; fi
+if [ "$PPV_MODE" = native ] && [ "$PPV_STRICT" = yes ]; then PPV_MODE=isolated; fi    # strict mode makes native isolated
 if [ "$PPV_MODE" != isolated ]; then
   echo "post-patch validation: not run: needs isolated mode"
 elif [ "$("$ROOT/scripts/runner/probe.sh" --only isolation 2>/dev/null)" != "isolation: none of the credentials the self-check reads is readable" ]; then
@@ -190,6 +199,12 @@ case " {MODE} ${AUDITOR_EXEC_MODE:-} " in       # the stricter of the recorded m
   *" isolated "*) PPV_MODE=isolated ;;
   *) PPV_MODE=native ;;
 esac
+case "${AUDITOR_STRICT:-}" in                   # strict mode (Rule 11f): AUDITOR_STRICT on, or a strict file in the run directory
+  ''|0|[Ff][Aa][Ll][Ss][Ee]|[Nn][Oo]|[Oo][Ff][Ff]) PPV_STRICT=no ;;
+  *) PPV_STRICT=yes ;;
+esac
+if [ -e "{R}/strict" ] || [ -L "{R}/strict" ]; then PPV_STRICT=yes; fi
+if [ "$PPV_MODE" = native ] && [ "$PPV_STRICT" = yes ]; then PPV_MODE=isolated; fi    # strict mode makes native isolated
 if [ "$PPV_MODE" != isolated ]; then
   echo "post-patch validation: not run: needs isolated mode"
 elif [ "$("$ROOT/scripts/runner/probe.sh" --only isolation 2>/dev/null)" != "isolation: none of the credentials the self-check reads is readable" ]; then

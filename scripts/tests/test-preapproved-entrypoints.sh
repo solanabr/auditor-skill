@@ -16,6 +16,9 @@
 #     pandoc, the TeX engines, anchor, cargo and rustup but for a version or help query, git for anything that
 #     reaches a remote), and no program the fixture repository's config or the stand-in home's git config names;
 #   - no canary text, from a variable or a file in the sentinel tree, appears on stdout or stderr.
+# Every case runs with AUDITOR_STRICT=1: each row of a case file is the strict-mode truth, and the mode letter a
+# status may end in (s, g or u, spec §6.2) is dropped; the tools' own suites run the default-mode twins.
+# preflight.sh's case file runs a second time with --strict in place of the variable.
 # A case hung for 60 s fails. Section 0 first runs the harness on stub entry points, a bash and a python one,
 # each acting outside its bounds in one way, so a harness that misses a kind fails the suite.
 # The Rust tools: the binaries in AUDITOR_TOOLS_BIN=<dir> (audit-scan, audit-mem and audit-logs), else a
@@ -34,6 +37,8 @@ T=$(mktemp -d "${TMPDIR:-/tmp}/preapproved.XXXXXX") || exit 1
 T=$(cd "$T" && pwd -P) || exit 1
 trap 'chmod -R u+rwx "$T" 2>/dev/null; rm -rf "$T"' EXIT
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_NAMESPACE CDPATH
+# The fixtures are built in default mode: a caller's AUDITOR_STRICT would put strict markers in their run directories.
+unset AUDITOR_STRICT
 # The build of the Rust tools keeps the caller's cargo and rustup homes; everything else gets a home of its own.
 export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 export HOME="$T/build-home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 GIT_CEILING_DIRECTORIES="$T"
@@ -504,6 +509,8 @@ entry, cases, fmt, wt, outside, sent, runs, calls, canary, envfile, seconds = sy
 with open(envfile, "rb") as f:
     env = dict(kv.split(b"=", 1) for kv in f.read().split(b"\0") if kv)
 OK_LINE = b"preflight: ok: no Claude Code project config in the working tree or its parents up to the repository root"
+# The arguments each preflight format passes: none, or the one preflight takes (spec §6.2).
+PF_ARGS = {"preflight": [], "preflight-strict": [b"--strict"]}
 skip = set(os.path.normpath(os.path.join(os.path.relpath(wt, sent), r)) for r in runs.split())
 
 def plain(a):
@@ -586,11 +593,13 @@ def read_cases():
         if not line or line.startswith("#"):
             continue
         fields = line.split("\t")
+        # A status may end in a mode letter (s, g or u, spec §6.2); every row is the strict-mode truth, and every
+        # case runs in strict mode.
         if fmt == "cases":
             args = [enc(fill(a)) for a in fields[2:]]
-            yield int(fields[0]), enc(fill(fields[1])), args, show(b" ".join(args), 100)
-        elif fmt == "preflight":
-            yield int(fields[0]), enc(fields[1]), fields[2:], show(" ".join(fields[2:]), 100)
+            yield int(fields[0].rstrip("sgu")), enc(fill(fields[1])), args, show(b" ".join(args), 100)
+        elif fmt in PF_ARGS:
+            yield int(fields[0].rstrip("sgu")), enc(fields[1]), fields[2:], show(" ".join(fields[2:]), 100)
         else:
             args = [enc(fill(a)) for a in fields[1:]]
             if ":" in fmt:
@@ -620,11 +629,11 @@ n = failed = 0
 for want_rc, want_err, args, label in read_cases():
     n += 1
     cwd = wt
-    if fmt == "preflight":
+    if fmt in PF_ARGS:
         cwd = os.path.join(wt, "case-%03d" % n)
         os.mkdir(cwd)
         build(cwd, args)
-        args = []
+        args = list(PF_ARGS[fmt])
         before = snapshot()
     rc, out, err = run([enc(entry)] + args, cwd)
     after = snapshot()
@@ -642,12 +651,12 @@ for want_rc, want_err, args, label in read_cases():
             why.append("exit %s, not %s" % (rc, want_rc))
     elif rc != 0:
         why.append("exit %s, not 0" % rc)
-    if fmt == "cases" or (fmt == "preflight" and want_rc != 0):
+    if fmt == "cases" or (fmt in PF_ARGS and want_rc != 0):
         if err != (want_err + b"\n" if want_err else b""):
             why.append("stderr [%s], not [%s]" % (show(err), show(want_err)))
         if out:
             why.append("stdout [%s]" % show(out))
-    elif fmt == "preflight" and (err or out.rstrip(b"\n").split(b"\n")[-1] != OK_LINE):
+    elif fmt in PF_ARGS and (err or out.rstrip(b"\n").split(b"\n")[-1] != OK_LINE):
         why.append("not the ok line alone on stderr's silence: stderr [%s], stdout [%s]" % (show(err), show(out)))
     moved = changes(before, after)
     if moved:
@@ -671,13 +680,15 @@ print("cases\t%d\t%d" % (n, failed))
 EOF
 
 # drive <name> <entry> <case file> <format> [<seconds>]: the cases, with each FAIL line reported; NCASES and
-# NFAILED hold the counts, and $T/drive-<name>.out every line.
+# NFAILED hold the counts, and $T/drive-<name>.out every line. Every case runs in strict mode, AUDITOR_STRICT=1,
+# since each row of a case file is the strict-mode truth (spec §6.2); STRICT_ENV set to empty leaves it out.
 drive() {
   local name=$1 entry=$2 cases=$3 fmt=$4 secs=${5:-60} line k v
   : > "$T/env-$name"
   for kv in "HOME=$S/home" "PATH=$S/bin:$SYSPATH" "TMPDIR=$S/tmp" "GIT_CEILING_DIRECTORIES=$T" \
             "AWS_SECRET_ACCESS_KEY=$CANARY-aws-env" "GITHUB_TOKEN=$CANARY-github-env" "NPM_TOKEN=$CANARY-npm-env" \
-            "CARGO_REGISTRY_TOKEN=$CANARY-cargo-env" "ANTHROPIC_API_KEY=$CANARY-anthropic-env" ${XENV:-}; do
+            "CARGO_REGISTRY_TOKEN=$CANARY-cargo-env" "ANTHROPIC_API_KEY=$CANARY-anthropic-env" \
+            ${STRICT_ENV-AUDITOR_STRICT=1} ${XENV:-}; do
     printf '%s\0' "$kv" >> "$T/env-$name"
   done
   (cd / && exec python3 -I -c "$DRIVER" "$entry" "$cases" "$fmt" "$W" "$S/outside" "$S" "${RUNS:-}" "$CALLS" "$CANARY" \
@@ -827,6 +838,16 @@ while IFS='	' read -r ep cases words <&3; do
   if [ "$NFAILED" = 0 ] && [ "$NCASES" -gt 0 ]; then ok "$ep: $NCASES cases of $cases, each within its bounds"
   elif [ "$NCASES" = 0 ]; then ko "$ep: no case read from $cases"
   else ko "$ep: $NFAILED of $NCASES cases of $cases failed"; fi
+  # preflight.sh takes one argument, --strict, which turns on the mode AUDITOR_STRICT=1 does: the case file again,
+  # with the argument in place of the variable, gives every row the same status and line (spec §6.2).
+  if [ "$FMT" = preflight ]; then
+    RUNS="" XENV=""
+    if ! { sentinel "$name-strict" && "fx_$KIND"; }; then ko "$ep --strict: cannot build the working directory of $cases"; continue; fi
+    STRICT_ENV="" drive "$name-strict" "$exe" "$ROOT/$cases" preflight-strict
+    if [ "$NFAILED" = 0 ] && [ "$NCASES" -gt 0 ]; then ok "$ep --strict: $NCASES cases of $cases, with no AUDITOR_STRICT, each within its bounds"
+    elif [ "$NCASES" = 0 ]; then ko "$ep --strict: no case read from $cases"
+    else ko "$ep --strict: $NFAILED of $NCASES cases of $cases failed"; fi
+  fi
 done 3< "$LIST"
 [ $# -gt 0 ] || [ "$nep" = "$nlisted" ] || ko "$nep of the $nlisted entry points in scripts/entrypoints.txt ran"
 
