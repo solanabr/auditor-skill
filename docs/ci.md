@@ -136,7 +136,7 @@ The template keeps details out of a private repository's logs too. Anyone who ca
 
 `--ci` works outside this workflow too: in another CI system, or at a terminal. `/auditor:diff-audit <base>..<head> --ci` and `/auditor:quick-scan --ci` take `--fail-on <N>`, ask nothing, write `audit_<n>/findings.json` (`templates/ci/findings.schema.json`), keep finding text out of their reply, and end with the closing line above. Without `--ci`, `--fail-on` only sets the threshold of the verdict at the top of the report. For a scheduled scan of your default branch, `/auditor:quick-scan --ci` is the one to run: it scans the whole repository, while diff-audit reads one range.
 
-Give a quick-scan in CI `--max-budget-usd 10`. In measured runs (`claude-opus-5-5`, November 2026) a quick-scan cost $2.19 to $3.48, and one that read all 55 kept vector files of a 12K-line program cost $2.84. The session sees the cap Claude Code gives it: one run under a $5 cap stopped reading early, with 64 of its 78 kept files unread, to stay under it. A run that reaches the cap ends there, and fails.
+Give a quick-scan in CI `--max-budget-usd 10`. In measured runs (`claude-opus-5-5`, November 2026) a quick-scan that read every kept vector file cost $2.84 with the 55 of a 12K-line program, and $6.78 with the 98 of a repository holding a 3K-line program and its tooling. The session sees the cap Claude Code gives it: under a $5 cap that repository's scan stopped reading early, with 64 of its 78 kept files unread, to stay under it, and under $10 it read all 98. A run that reaches the cap ends there, and fails.
 
 ## The files
 

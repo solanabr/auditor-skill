@@ -1284,8 +1284,8 @@ commands/diff-audit.md	(`deps.sh` adds a row to `audit_<n>/disclosures.tsv` befo
 commands/quick-scan.md	Skip no kept file and cut none short by choice, not even to save cost or time; Coverage & Limitations names only a file the Read tool could not open.
 commands/diff-audit.md	Read each vector file whole, with no line limit, several in each message. Read every selected file before you start the report
 commands/diff-audit.md	Skip no selected file and cut no vector file short by choice, not even to save cost or time; name there only one the Read tool could not open.
-commands/quick-scan.md	Reading every kept file whole adds about USD 1–2 to a scan, even at 80 files
-commands/diff-audit.md	Reading every selected vector file whole adds about USD 1–2 at most, even at 80 files
+commands/quick-scan.md	Reading and checking every kept file adds about USD 1–4 to a scan at 50 to 100 kept files
+commands/diff-audit.md	Reading and checking every selected vector file added under USD 1 to a measured review
 commands/quick-scan.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
 commands/diff-audit.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
 commands/quick-scan.md	never stop reading early to save spend, and never give a budget, turn or time limit as the reason a file went unread
@@ -1414,6 +1414,8 @@ templates/pr-report.md	that nothing went out where the output shows the tool use
 commands/diff-audit.md	records each service it contacts
 commands/quick-scan.md	so one still running has reached none
 commands/diff-audit.md	so one still running has reached none
+commands/quick-scan.md	adds about USD 1–2 to a scan, even at 80 files
+commands/diff-audit.md	adds about USD 1–2 at most, even at 80 files
 commands/diff-audit.md	no longer matches the write rule for `audit_*/`
 commands/deep-review.md	no longer matches the write rule for `audit_*/`
 GONE
