@@ -4,7 +4,7 @@ Get from a clone to a first audit. Back to the [docs index](README.md).
 
 ## 1. Install
 
-auditor-skill is a folder of markdown + two small Rust tools — not a SaaS. Clone it, or drop it in as a skill. Keep it **outside any repository you audit** ([`OUTPUT-RULES.md` Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)): a copy inside the target resolves its paths from a tree the target controls.
+auditor-skill is a folder of markdown + three small Rust tools — not a SaaS. Clone it, or drop it in as a skill. Keep it **outside any repository you audit** ([`OUTPUT-RULES.md` Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)): a copy inside the target resolves its paths from a tree the target controls.
 
 **Clone it as a user-level skill:**
 

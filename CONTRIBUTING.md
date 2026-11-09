@@ -77,7 +77,21 @@ CI runs it with `REQUIRE_TOOLCHAIN=1`, where a missing cargo fails it.
    acceptable answer, an empty section is not.
 5. Address review. Prefer new commits over force-pushes during review so reviewers can see what changed.
 6. A maintainer merges. Stacked PRs (a branch based on another open PR branch) are fine — say so in the
-   description and merge them in order.
+   description, with the merge order.
+
+A maintainer merges a stack like this:
+- Merge the whole stack in one go, in order, the PR based on `main` first, and never stop part-way: a later PR
+  can carry the fixes for an earlier one's code.
+- Retarget each PR to `main` just before you merge it, once the PR below it has merged. A PR whose base is
+  another PR's branch merges into that branch, not into `main`.
+- Use merge commits only. A squash or a rebase puts new commits on `main`, so the commits the next PR is based
+  on are no longer in `main`'s history: its diff shows them again, and it may not merge cleanly.
+
+Closing keywords (`close`, `fix` or `resolve`, in any of their forms, before an issue number) act only when they
+reach the default branch: a PR description's when the PR merges into it, a commit message's when the commit
+lands there. So a stacked PR's description keywords act only once it targets `main`. Give each issue its own
+keyword, as in `Closes #N, closes #M`: `Closes #N, #M` closes only #N. A keyword counts mid-sentence too, so
+write `Refs #N` for an issue that stays open.
 
 Version bumps are their own `chore(release)` PR (or the last commit of a release PR) — content PRs update
 counts but leave the version alone, so several content PRs can be open at once without conflicting on the
