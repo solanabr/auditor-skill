@@ -78,13 +78,15 @@
 #       each of the three Quick commands names the report it writes from templates/pr-report.md, writes it in
 #       its own session (quick-scan and diff-audit start no agent at all, so their cost holds still, and
 #       deep-review leaves an agent's model to its definition), runs no cd, after which the bundled tools would
-#       look for the run directory in the wrong folder, and reads the corpus from the root:
-#       known-vectors/INDEX.md and each vector file it keeps, and the checklists SKILL.md's scope table names,
-#       each verdict naming what it rests on; diff-audit's PR-number form, quick-scan's "fail the job" without
-#       a private channel, its vector step that named no file, the Task grant of both, and the write-rule
-#       reason for no cd stay gone (docs/ci.md). Every command, skill and the root SKILL.md grants its
-#       run-directory edit with a leading /, Edit(/audit_*/**) or Edit(/incident_*/**), and none the bare form,
-#       which a cd moves to another folder's audit_*.
+#       look for the run directory in the wrong folder, and reads the corpus from the root, each verdict naming
+#       what it rests on: quick-scan the selection of references/depth-scope.md, written to audit_<n>/scope.md
+#       before any section or vector file is read, each section read by its start line and line count,
+#       deep-review the checklists SKILL.md's scope table names; quick-scan's old severity-7 vector step and
+#       its cost figures stay gone; diff-audit's PR-number form, quick-scan's "fail the job" without a private
+#       channel, its vector step that named no file, the Task grant of both, and the write-rule reason for no
+#       cd stay gone (docs/ci.md). Every command, skill and the root SKILL.md grants its run-directory edit
+#       with a leading /, Edit(/audit_*/**) or Edit(/incident_*/**), and none the bare form, which a cd moves
+#       to another folder's audit_*.
 #   G   The lines agents/poc-engineer.md gives a runner it writes, run as the first lines of such a runner in a
 #       crate, from the working directory and from the crate, find <R> from the runner's path and take the
 #       stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT, or a strict entry in their
@@ -1245,7 +1247,7 @@ commands/patch.md	only into `grep`, `head`, `tail` or `wc`
 commands/poc.md	only into `grep`, `head`, `tail` or `wc`
 commands/quick-scan.md	only into `grep`, `head`, `tail` or `wc`
 commands/diff-audit.md	argument-hint: "[base..head] [--ci] [--fail-on <N>] [--strict]"
-commands/quick-scan.md	argument-hint: "[--ci] [--fail-on <N>] [--strict]"
+commands/quick-scan.md	argument-hint: "[<path>] [--ci] [--fail-on <N>] [--strict]"
 commands/diff-audit.md	`auditor: verdict: <pass|fail> (threshold <N>, analyzers run: <names, or none>[; not run: <names>][; stopped: <step>])`
 commands/quick-scan.md	`auditor: verdict: <pass|fail> (threshold <N>, analyzers run: <names, or none>[; not run: <names>][; stopped: <step>])`
 commands/diff-audit.md	with `"final": false` and `"verdict": "fail"`, so a run that ends early leaves a failing record
@@ -1257,8 +1259,13 @@ commands/quick-scan.md	Keep finding text, counts and paths out of the reply (Rul
 commands/diff-audit.md	Write `audit_<n>/PR-REPORT.md` from `${CLAUDE_PLUGIN_ROOT}/templates/pr-report.md`
 commands/quick-scan.md	Write `audit_<n>/QUICK-SCAN.md` from `${CLAUDE_PLUGIN_ROOT}/templates/pr-report.md`
 commands/deep-review.md	`audit_<n>/DEEP-REVIEW-<unit>.md`, from `${CLAUDE_PLUGIN_ROOT}/templates/pr-report.md`
-commands/quick-scan.md	Read `${CLAUDE_PLUGIN_ROOT}/known-vectors/INDEX.md` and take the rows whose Severity is 7 or more
-commands/quick-scan.md	Read the file of each row you keep, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`
+commands/quick-scan.md	Read `${CLAUDE_PLUGIN_ROOT}/references/depth-scope.md` and `${CLAUDE_PLUGIN_ROOT}/known-vectors/INDEX.md` with the Read tool
+commands/quick-scan.md	select the checklist sections of its §2 and the vector rows of its §3, exactly as those tables say: none is chosen by judgment
+commands/quick-scan.md	Write the selection to `audit_<n>/scope.md`, in the form of its §9, with the Write tool, before you read any checklist section or vector file.
+commands/quick-scan.md	each section with the Read tool at its start line, with its line count as the limit, and each vector file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, whole, with no line limit
+commands/quick-scan.md	except the items no site in scope reaches, which share the section's one N/A line (its §8)
+commands/quick-scan.md	scan the two with the most source lines, and in Coverage & Limitations give each other one its own line, `/auditor:quick-scan <its path>`
+commands/quick-scan.md	A section or vector file that `audit_<n>/scope.md` lists and the run leaves unread is an early stop: give findings.json `"stopped": "corpus-pass"`
 commands/quick-scan.md	otherwise run the scanners of `${CLAUDE_PLUGIN_ROOT}/discovery/grep-commands.md`
 commands/diff-audit.md	The checklists are those the scope table of `${CLAUDE_PLUGIN_ROOT}/SKILL.md` (Scope-Gated Loading, Step 2) gives
 commands/diff-audit.md	read each one's file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, before its verdict
@@ -1271,20 +1278,20 @@ commands/diff-audit.md	Run no `cd` in this session, not even before a plain `gre
 commands/deep-review.md	Run no `cd` in this session, not even before a plain `grep`
 commands/deep-review.md	If you start an agent, set no model for it
 commands/quick-scan.md	Judge no vector by its index row alone
-commands/quick-scan.md	read every kept file whole, with no line limit, about ten in each message, before you give any vector verdict
-commands/quick-scan.md	before you start the report, check the files you read against the rows you kept, and read any you missed
-commands/quick-scan.md	Coverage & Limitations lists the id of every row you kept, and of every row of severity 7 or more in those sections that you left out, with its reason
+commands/quick-scan.md	about ten in each message, and every one before you give any verdict
+commands/quick-scan.md	Before you start the report, check what you read against scope.md, and read anything it lists that you missed.
+commands/quick-scan.md	gives the lines of depth-scope.md §8 for what the selection leaves out
 commands/diff-audit.md	first check what you read against the rows you selected, and read any you missed
 commands/diff-audit.md	the ids of the rows you selected, and the ids of the rows in those sections you left out
-templates/pr-report.md	command's rule selected and those it left out, by id, each left-out row with its reason, so a reader can check
+templates/pr-report.md	`audit_<n>/scope.md` lists, written before the reads, so a reader can check the selection against
 templates/pr-report.md	request to that service, so a row says what the tool was set to send, not that it went out
 templates/pr-report.md	sent only where the tool's own output names that service's address as one it reached, and otherwise that it
 templates/pr-report.md	`Loaded … security advisories (from <folder>)`, names a local copy and shows no request.
 commands/diff-audit.md	(`deps.sh` adds a row to `audit_<n>/disclosures.tsv` before its first request to each service)
-commands/quick-scan.md	Skip no kept file and cut none short by choice, not even to save cost or time; Coverage & Limitations names only a file the Read tool could not open.
+commands/quick-scan.md	Skip nothing scope.md lists and cut nothing short by choice, not even to save cost or time; Coverage & Limitations names only a file the Read tool could not open
 commands/diff-audit.md	Read each vector file whole, with no line limit, several in each message. Read every selected file before you start the report
 commands/diff-audit.md	Skip no selected file and cut no vector file short by choice, not even to save cost or time; name there only one the Read tool could not open.
-commands/quick-scan.md	Reading and checking every kept file adds about USD 1–4 to a scan at 50 to 100 kept files
+commands/quick-scan.md	A whole quick-scan of this selection is estimated at USD 3–8; measured scans that read 55 to 98 vector files cost USD 2.84 to 7.14 in all.
 commands/diff-audit.md	Reading and checking every selected vector file added under USD 1 to a measured review
 commands/quick-scan.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
 commands/diff-audit.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
@@ -1357,15 +1364,6 @@ for f in commands/*.md skills/*/SKILL.md SKILL.md; do
   if [ "$n" = 0 ]; then ok "$f grants no run-directory edit in the bare form"
   else bad "$f grants Edit(audit_*/**) or Edit(incident_*/**): write it with a leading /, as every command does"; fi
 done
-# quick-scan's step 3 tells the session its kept vector files fit in one session because most are under 4 KB,
-# which holds while most files of known-vectors/ are.
-small=0; nvec=0
-for v in known-vectors/[0-9]*.md; do
-  [ -f "$v" ] || continue
-  nvec=$((nvec + 1)); if [ "$(wc -c < "$v")" -lt 4096 ]; then small=$((small + 1)); fi
-done
-if [ "$nvec" -gt 0 ] && [ $((small * 2)) -gt "$nvec" ]; then ok "$small of $nvec known-vector files are under 4 KB, as quick-scan step 3 says most are"
-else bad "only $small of $nvec known-vector files are under 4 KB: quick-scan step 3 says most are"; fi
 
 # Wording that must not come back, file <TAB> text: an agent never hands run.sh the file's mode as --mode, which
 # stops every run a stricter AUDITOR_EXEC_MODE holds to isolated mode, and the older wording that copied a mode
@@ -1423,6 +1421,10 @@ commands/diff-audit.md	records each service it contacts
 commands/quick-scan.md	so one still running has reached none
 commands/diff-audit.md	so one still running has reached none
 commands/quick-scan.md	adds about USD 1–2 to a scan, even at 80 files
+commands/quick-scan.md	take the rows whose Severity is 7 or more
+commands/quick-scan.md	Reading and checking every kept file adds about USD 1–4
+commands/quick-scan.md	The high-severity vector pass
+templates/pr-report.md	quick-scan evaluates the CRITICAL and HIGH vectors only
 commands/diff-audit.md	adds about USD 1–2 at most, even at 80 files
 commands/diff-audit.md	no longer matches the write rule for `audit_*/`
 commands/deep-review.md	no longer matches the write rule for `audit_*/`
