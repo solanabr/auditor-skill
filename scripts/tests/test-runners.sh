@@ -2237,6 +2237,7 @@ npm("lb-fail", {"1.0.0": (300, "carol", plain)}, 500)
 for i in range(1, 46):
     npm("lb-many-%d" % i, {"1.0.0": (300, "dave", plain)})
 npm("lb-keyed", {"1.0.0": (300, "frank", plain)})
+npm("lb-ci", {"1.0.0": (400, "alice", plain), "1.1.0": (100, "GitHub Actions", plain)})
 crates = {}
 for v, files in (("0.1.0", {"Cargo.toml": b"[package]\n"}), ("0.2.0", {"Cargo.toml": b"[package]\n", "build.rs": b"fn main() {}\n"})):
     data = tgz("lb_crate-" + v, files)
@@ -2268,7 +2269,7 @@ check "lock-budget: one record per public name, eight at a time, before any arti
 check "... the npm record asked compressed, with the proxy" \
   sh -c "grep -q '^== curl -q --proto =https --proto-redir =https --tlsv1.2 -sS --connect-timeout 30 --max-time [0-9]* --max-filesize 104857600 -A .* -H Accept: application/json --compressed -o .* -- https://registry.npmjs.org/lb-direct\$' '$T/calls' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/calls'"
 check "... the publish ages: three under 14 days, two first releases, a publisher who published no earlier version" \
-  sh -c "grep -q '^>> publish age: 5 names asked in [0-9]* s; not checked: 0 of 5 rows; under 14 days: 3; first releases: 2; publisher changes: 1; yanked: 0; not listed by the registry: 0\$' '$T/out' && grep -q '^npm	lb-direct	1.1.0	[0-9T:Z-]*	3	mallory	alice	young,publisher-change\$' '$LB/ages.tsv'"
+  sh -c "grep -q '^>> publish age: 5 names asked in [0-9]* s; not checked: 0 of 5 rows; under 14 days: 3; first releases: 2; publisher changes: 1; from a person to CI publishing: 0; yanked: 0; not listed by the registry: 0\$' '$T/out' && grep -q '^npm	lb-direct	1.1.0	[0-9T:Z-]*	3	mallory	alice	young,publisher-change\$' '$LB/ages.tsv'"
 check "... the budget: direct, pin, then the young version; the old package metadata only, the git row never fetched" \
   sh -c "grep -qxF '>> budget: 0 key handlers to compare, outside the 40-entry budget; 3 entries to compare (direct 1, pin 1, install 0, young 1, source-change 0); over the 40-entry budget: 0; metadata only: 1; PyPI rows, metadata only: 1; same version with a new checksum: 0; not public, never fetched (SC-061): 1; a version outside its registry grammar, never sent: 0' '$T/out' && ! grep -q 'lb-meta/-/' '$T/calls'"
 check "... old and new fetched from the URLs the records give (the npm record from the age answer, not asked again), and compared" \
@@ -2307,6 +2308,12 @@ run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/d
 n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
 check "lock-budget: a key handler listed after 45 direct entries is compared first, outside the 40" \
   sh -c "[ '$RC' = 0 ] && grep -q '^>> budget: 1 key handlers to compare, outside the 40-entry budget; 40 entries to compare (direct 40, .*); over the 40-entry budget: 5; ' '$T/out' && [ \"\$(sed -n 's/^url: \(.*[.]tgz\)\$/\1/p' '$T/calls' | sed -n 1p)\" = 'https://registry.npmjs.org/lb-keyed/-/lb-keyed-1.0.0.tgz' ] && grep -qxF '1. npm lb-keyed - -> 1.0.0 [key] SC-059 0, SC-060 0, binary 0; files +2 ~0 -0; no earlier public version: every file is new' '$WT/audit_1/deps/lock-budget-$n.txt' && grep -qxF '>> artifacts: 41 entries, 41 artifacts fetched, 0 failed after one retry' '$T/out'"
+LBN=110
+lb_set "$LBN" 'npm	package-lock.json	lb-ci	1.0.0	1.1.0	public	public	-'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "lock-budget: a person to GitHub Actions is reported as a change to CI publishing, at low severity, not as a publisher change" \
+  sh -c "grep -q '; publisher changes: 0; from a person to CI publishing: 1;' '$T/out' && grep -qxF '  publisher changed from a person to CI publishing (trusted publishing; low severity): npm lb-ci 1.1.0 (package-lock.json): GitHub Actions (earlier: alice)' '$WT/audit_1/deps/lock-budget-$n.txt'"
 LBN=104
 lb_set "$LBN"
 r0=$(rows)

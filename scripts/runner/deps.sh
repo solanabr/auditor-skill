@@ -50,8 +50,9 @@
 #                   no publish time are "not checked", which fails nothing. For each new version: its
 #                   publish time, its publisher and the publishers of
 #                   earlier versions, flagging one under 14 days old, a first release under 14 days old, a
-#                   publisher that published no earlier version, a yanked version and one the registry does not
-#                   list (a package it has no record of included).
+#                   publisher that published no earlier version (a person to "GitHub Actions", trusted
+#                   publishing, apart, at low severity), a yanked version and one the registry does not list
+#                   (a package it has no record of included).
 #                   AUDITOR_PUBLISH_AGE=off (the default is on) leaves this out. Then the budget: each key
 #                   handler (lock-delta.sh's key mark) whose version changed, first and outside the budget,
 #                   then at most 40 of the other npm and crates rows whose version changed, in this order:
@@ -1166,6 +1167,8 @@ MARKS = (("key", 0),) + CATEGORY
 BUDGET, ASK_CAP, ASK_SECONDS, CALL_SECONDS, CRATES_GAP, QUARANTINE = 40, 1000, 300, 540, 1.0, 14
 # At most this many publish-age requests in flight; crates.io takes one a second whatever the number.
 IN_FLIGHT = 8
+# The publisher the npm registry names for a release made by trusted publishing from GitHub Actions.
+CI_PUBLISHER = "GitHub Actions"
 
 
 def clean(text):
@@ -1391,7 +1394,8 @@ def age_check(rows, fetcher, now, log):
         if published is not None and not older and "young" in flags:
             flags.append("first-release")
         if publisher and earlier and publisher not in earlier:
-            flags.append("publisher-change")
+            # a person to trusted publishing is reported plainly, at low severity; any other change is SC-061
+            flags.append("ci-publishing" if publisher == CI_PUBLISHER else "publisher-change")
         if yanked:
             flags.append("yanked")
         out[r["i"]] = {"published": published, "publisher": publisher, "earlier": earlier, "flags": flags}
@@ -1537,13 +1541,14 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
     ages, records, asked, took, not_checked = {}, {}, 0, 0.0, {}
     if age == "on":
         ages, records, asked, took, not_checked = age_check(rows, fetcher, now, log)
-    flagged = {f: [r for r in rows if f in ages.get(r["i"], {}).get("flags", [])] for f in ("young", "first-release", "publisher-change", "yanked", "unlisted")}
+    flagged = {f: [r for r in rows if f in ages.get(r["i"], {}).get("flags", [])] for f in ("young", "first-release", "publisher-change", "ci-publishing", "yanked", "unlisted")}
     unchecked = sum(1 for r in rows if r["public"] and "why" in ages.get(r["i"], {}) and "flags" not in ages.get(r["i"], {}))
     public = [r for r in rows if r["public"]]
     if age == "on":
-        line = ("publish age: %d names asked in %d s; not checked: %d of %d rows%s; under %d days: %d; first releases: %d; publisher changes: %d; yanked: %d; not listed by the registry: %d"
+        line = ("publish age: %d names asked in %d s; not checked: %d of %d rows%s; under %d days: %d; first releases: %d; publisher changes: %d; from a person to CI publishing: %d; yanked: %d; not listed by the registry: %d"
                 % (asked, took, unchecked, len(public), (" (" + ", ".join(sorted({a["why"] for a in ages.values() if "why" in a and "flags" not in a})[:5]) + ")") if unchecked else "",
-                   QUARANTINE, len(flagged["young"]), len(flagged["first-release"]), len(flagged["publisher-change"]), len(flagged["yanked"]), len(flagged["unlisted"])))
+                   QUARANTINE, len(flagged["young"]), len(flagged["first-release"]), len(flagged["publisher-change"]), len(flagged["ci-publishing"]),
+                   len(flagged["yanked"]), len(flagged["unlisted"])))
     else:
         line = "publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: %d of %d rows" % (len(public), len(public))
     out.append(line)
@@ -1558,13 +1563,13 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
                     "%d" % ((now - t) // 86400) if t else "-", a.get("publisher") or "-",
                     ",".join(a.get("earlier", [])[:20]) or "-", ",".join(a.get("flags", [])) or a.get("why", "-"))) + "\n")
     for f, title in (("unlisted", "not listed by the registry"), ("publisher-change", "published by an account that published no earlier version"),
+                     ("ci-publishing", "publisher changed from a person to CI publishing (trusted publishing; low severity)"),
                      ("first-release", "the first release of the package"), ("young", "published under %d days ago" % QUARANTINE), ("yanked", "yanked")):
         for r in flagged[f][:50]:
             a = ages[r["i"]]
             extra = ""
-            if f == "publisher-change":
-                extra = ": %s (earlier: %s)%s" % (a.get("publisher"), ", ".join(a.get("earlier", [])[:5]),
-                                                  ", trusted publishing from CI" if a.get("publisher") == "GitHub Actions" else "")
+            if f in ("publisher-change", "ci-publishing"):
+                extra = ": %s (earlier: %s)" % (a.get("publisher"), ", ".join(a.get("earlier", [])[:5]))
             out.append("  %s: %s %s %s (%s)%s" % (title, r["eco"], r["name"], r["new"], r["lockfile"], extra))
         if len(flagged[f]) > 50:
             out.append("  %s: %d more in %s/ages.tsv" % (title, len(flagged[f]) - 50, outname))
