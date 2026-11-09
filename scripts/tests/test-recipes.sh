@@ -293,8 +293,13 @@ PY
 git init -q "$LS" && python3 -I "$T/lockset.py" "$LS" base && (cd "$LS" && c base >/dev/null && git tag t-base) \
   && python3 -I "$T/lockset.py" "$LS" head \
   && (cd "$LS" && c head >/dev/null && git tag t-head && "$RUNDIR" new audit >/dev/null) || { echo "could not build the set fixture" >&2; exit 1; }
+(cd "$LS/audit_1" && find . -path ./deps -prune -o -print | LC_ALL=C sort) > "$T/ls-rd-before"
 run "$LS" "$LD" --run audit_1 set t-base..t-head
+(cd "$LS/audit_1" && find . -path ./deps -prune -o -print | LC_ALL=C sort) > "$T/ls-rd-after"
 SETF="$LS/audit_1/deps/lock-set-1.tsv"
+check "lock-delta set writes its table under the run directory's deps/ only" \
+  sh -c "cmp -s '$T/ls-rd-before' '$T/ls-rd-after' && [ \"\$(ls -A '$LS/audit_1/deps')\" = lock-set-1.tsv ]"
+
 check "lock-delta set: exit 0, the set's path and row count on the last line, nothing on stderr" \
   sh -c "[ '$RC' = 0 ] && [ \"\$(sed -n '\$p' '$T/out')\" = 'lock-set: audit_1/deps/lock-set-1.tsv (22 rows)' ] && [ ! -s '$T/err' ] && [ -f '$SETF' ]"
 for want in \
@@ -337,6 +342,11 @@ check "lock-delta set: no control character other than TAB reaches the set or th
   sh -c "[ -z \"\$(LC_ALL=C tr -d '\n\t -~' < '$SETF')\" ] && [ -z \"\$(LC_ALL=C tr -d '\n\t -~' < '$T/out')\" ]"
 check "lock-delta set: the run directory still passes its check, and nothing else in the tree changed" \
   sh -c "(cd '$LS' && '$RUNDIR' check audit_1 >/dev/null) && [ -z \"\$(git -C '$LS' status --porcelain)\" ]"
+mkdir "$LS/inside-tmp"
+(cd "$LS" && TMPDIR="$LS/inside-tmp" "$LD" --run audit_1 set t-base..t-head) >"$T/out" 2>"$T/err" </dev/null; RC=$?
+check "lock-delta set: a TMPDIR inside the working directory is refused before git reads anything" \
+  sh -c "[ '$RC' = 64 ] && grep -qxF 'lock-delta: refused: TMPDIR lies inside the working directory; point it outside the tree under audit' '$T/err' && [ ! -s '$T/out' ] && [ \"\$(ls -A '$LS/audit_1/deps')\" = lock-set-1.tsv ]"
+rmdir "$LS/inside-tmp"
 run "$LS" "$LD" --run audit_1 set t-head..t-head
 check "lock-delta set: a range that changes no lockfile writes a set of the header alone, as the next set" \
   sh -c "[ '$RC' = 0 ] && has() { grep -qxF -- \"\$2\" \"\$1\"; } && has '$T/out' 'lockfiles compared: none' && has '$T/out' 'lock-set: audit_1/deps/lock-set-2.tsv (0 rows)' && [ \"\$(cat '$LS/audit_1/deps/lock-set-2.tsv')\" = 'eco	lockfile	name	old	new	oldsource	source	marks' ]"

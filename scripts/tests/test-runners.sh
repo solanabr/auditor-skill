@@ -2414,6 +2414,25 @@ LBR=$WT/audit_1/deps/lock-budget-$n.txt
 check "lock-budget: entries that climb out, sit at an absolute path or are links are left out and listed, each an SC-060 hit" \
   sh -c "[ '$RC' = 1 ] && grep -q '^SC-060 package/../escape.txt:0: an entry left out of the unpacked files' '$LBR' && grep -q '^SC-060 /abs.txt:0: an entry left out' '$LBR' && grep -q '^SC-060 package/link:0: an entry left out' '$LBR' && [ -f '$WT/audit_1/deps/lock-budget-$n/1/new/files/package/index.js' ] && [ ! -e '$WT/audit_1/deps/lock-budget-$n/1/new/escape.txt' ] && [ -z \"\$(find '$WT/audit_1/deps/lock-budget-$n' ! -type f ! -type d -print)\" ]"
 check "... and the run directory still passes its check" sh -c "(cd '$WT' && '$ROOT/scripts/rundir.sh' check audit_1) >/dev/null"
+# lock-budget writes under <R>/deps/ only, and its one row to disclosures.tsv; a set that is a link, or larger
+# than 64 MiB, is refused before anything is sent
+LBN=113
+lb_set "$LBN" 'npm	package-lock.json	lb-keyed	-	1.0.0	-	public	key'
+(cd "$WT/audit_1" && find . -path ./deps -prune -o -print | LC_ALL=C sort) > "$T/rd-before"
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+(cd "$WT/audit_1" && find . -path ./deps -prune -o -print | LC_ALL=C sort) > "$T/rd-after"
+check "lock-budget writes nothing in the run directory outside deps/ but its disclosure row" \
+  sh -c "[ '$RC' = 0 ] && cmp -s '$T/rd-before' '$T/rd-after' && [ -z \"\$(find '$WT' -path '$WT/audit_1' -prune -o -newer '$T/rd-before' -type f -print)\" ]"
+ln -s "lock-set-$LBN.tsv" "$WT/audit_1/deps/lock-set-114.tsv"
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-114.tsv
+check "lock-budget: a set that is a link is refused before any request" \
+  sh -c "[ '$RC' = 64 ] && grep -qxF 'deps: refused: the set passes through a symbolic link: audit_1/deps/lock-set-114.tsv' '$T/err' && [ ! -s '$T/calls' ]"
+rm -f "$WT/audit_1/deps/lock-set-114.tsv"
+dd if=/dev/zero of="$WT/audit_1/deps/lock-set-115.tsv" bs=1 count=0 seek=67108865 2>/dev/null
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-115.tsv
+check "lock-budget: a set larger than 64 MiB is refused before any request" \
+  sh -c "[ '$RC' = 64 ] && grep -qxF 'deps: refused: the set is larger than 64 MiB: audit_1/deps/lock-set-115.tsv' '$T/err' && [ ! -s '$T/calls' ]"
+rm -f "$WT/audit_1/deps/lock-set-115.tsv"
 LBN=107
 lb_set "$LBN" 'npm	package-lock.json	lb-young	-	0.1.0	-	public	direct'
 run "$DEPS" "$WT" AUDITOR_RUN_TIMEOUT=3 -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
