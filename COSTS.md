@@ -30,7 +30,7 @@ Each figure comes from a single run, so read it as a size, not a quote.
 **Two named limits.**
 
 - **When a session states its selection.** A session names its kept vectors in the report's Coverage & Limitations, and may not list them before reading.
-- **A cap close to the run's cost.** Claude Code shows the session its budget ("USD budget: $spent/$max; $remaining remaining"). When the cap sits close to what a complete pass costs, the session may stop reading early to stay under it, and its report says what it skipped.
+- **A cap close to the run's cost.** A full vector pass on a large kept set needs a cap of about $10. Under a $5 cap, a session rations: it stops reading early, and its report says what it skipped. Claude Code shows the session its budget ("USD budget: $spent/$max; $remaining remaining"), and the session plans by it.
   - At a $5 cap, two whole-repository quick-scans each kept about 80 vector files and read only 14 and 15 of them.
   - The 3K-line diff-audit, whose range adds a large lockfile, left its checklists unread. Its figure above is for that run, so a complete one costs more.
   - At a $10 cap, quick-scan read every kept file.
@@ -45,7 +45,10 @@ In short:
 - **Quick** costs about $2 to $7 and takes 4 to 16 minutes. diff-audit costs $2 to $3, more when its range adds a large lockfile. quick-scan costs about $3 on one program and about $7 on a whole repository.
 - **Standard** costs about $13 to $19 and takes 35 to 60 minutes.
 - **Full** cost $19.52 and took an hour on the 3K-line program. It ran once, on that program only, without `--with-poc`.
-- **CI** runs Quick on each pull request, at what diff-audit costs, about $2 to $3. Give quick-scan a `--max-budget-usd` of $10 and diff-audit at least $5. A tighter cap invites the early stop above.
+- **CI** runs Quick on each pull request, at what diff-audit costs, about $2 to $3.
+  - Give quick-scan a `--max-budget-usd` of about $10.
+  - Give diff-audit the same when its range adds a large lockfile. At $5, the 3K-line range's run rationed.
+  - Under a $5 cap, expect the early stop above.
 
 No run reached its cap: $3 and $5 for diff-audit, $5 and $10 for quick-scan, $5 for the CI review, $25 for Standard and $60 for Full.
 
