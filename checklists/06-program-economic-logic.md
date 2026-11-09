@@ -15,7 +15,7 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 > | §6.13 Bonding-Curve / AMM Integrity | bonding curve / AMM | `bonding_curve` · `virtual_reserves` · `curve` · `swap` · `reserve` |
 > | §6.15 TWAP / Internal Accumulator Hardening | TWAP accumulator | `twap` · `cumulative` · `observation` · `time_weighted` · `last_update` |
 >
-> Sections without a feature gate (fees, NAV, first-depositor, DoS, staking, slippage, vault) are evaluated for any value-moving program.
+> Sections without a feature gate (fees, NAV, first-depositor, DoS, staking, slippage, vault) are evaluated for any value-moving program. A Quick or CI run reads only the sections `references/depth-scope.md` selects; the rest are outside its scope (`OUTPUT-RULES.md` Rule 4's depth exception).
 
 ---
 

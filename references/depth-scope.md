@@ -164,8 +164,11 @@ Filled in by the lockfile budget commit.
 ## 8. What the selection leaves out (Rules 0 and 4)
 
 - **A selected section's items the code does not reach** share one line per section: `[N/A — no site in scope] <first id>..<last id>`, or the ids when they are not a run.
-- **A section the selection leaves out:** one line per checklist in Coverage & Limitations, "out of this depth's scope: <checklist> §…, §…; Standard (`/auditor:audit`) covers them". No verdict per item.
-- **A vector row left out:** one line per INDEX section, "out of this depth's scope: KV-…, KV-… (<the rule that left them out>)".
+- **An item of a selected section that needs a call this depth does not make**, such as DEP-067's resolution of an action's SHA to a tag, gets `[N/A at this depth — needs <call>]`.
+- **The sections the selection leaves out:** one line per checklist in Coverage & Limitations, "<checklist> §…, §…: outside <depth>'s scope; /auditor:audit gives their verdicts". No verdict per item.
+- **The vector rows left out:** one line per INDEX section, "KV-…, KV-…: outside <depth>'s scope (<the rule that left them out>); /auditor:audit gives their verdicts".
+
+<depth> is Quick for quick-scan and CI for diff-audit. This is Rule 4's depth exception (`OUTPUT-RULES.md`).
 
 ## 9. The selection file
 

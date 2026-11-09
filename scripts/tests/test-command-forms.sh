@@ -1353,8 +1353,10 @@ AGENTS.md	under the command's `Edit(/audit_*/**)` or `Edit(/incident_*/**)` gran
 OUTPUT-RULES.md	the report lists each tool, the service it was set to contact, and what it was set to send
 docs/permissions-and-isolation.md	Both rules begin with a `/`, which keeps them on the folder Claude Code started in
 OUTPUT-RULES.md	A Quick or CI run (`/auditor:quick-scan`, `/auditor:diff-audit`) declares a smaller scope instead: the selection of [references/depth-scope.md](references/depth-scope.md)
-OUTPUT-RULES.md	In a Quick or CI report they render once per left-out section, and once per left-out INDEX section
-OUTPUT-RULES.md	In a Quick or CI report, the items its depth-scope selection leaves out are not skipped silently either
+OUTPUT-RULES.md	In a Quick or CI report they render once per left-out section or row group, as Rule 4's depth exception says.
+OUTPUT-RULES.md	outside <depth>'s scope; /auditor:audit gives their verdicts
+OUTPUT-RULES.md	an item that needs a call the depth does not make gets `[N/A at this depth — needs <call>]`
+checklists/06-program-economic-logic.md	A Quick or CI run reads only the sections `references/depth-scope.md` selects
 known-vectors/INDEX.md	A Quick or CI run's declared scope (`references/depth-scope.md`) may leave an `always` row out
 PINS
 # Claude Code fills $ARGUMENTS and a $ followed by digits and then no letter, digit or _ (its pattern,

@@ -18,7 +18,7 @@ Completeness is measured **output-side**, not input-side:
 
 - The audit is COMPLETE iff every IN-SCOPE checklist item and every phase-triggered vector has an explicit verdict.
 - If any in-scope item lacks a verdict, report `[INCOMPLETE — in-scope item without verdict]` and finish it before concluding.
-- Out-of-scope items render as `[N/A — out of scope: <reason>]`, generated from the scope gate (not from reading the file). In a Quick or CI report they render once per left-out section, and once per left-out INDEX section, as `references/depth-scope.md` §8 says.
+- Out-of-scope items render as `[N/A — out of scope: <reason>]`, generated from the scope gate (not from reading the file). In a Quick or CI report they render once per left-out section or row group, as Rule 4's depth exception says.
 
 Every full report MUST include a **Scope Coverage** table: for each of the checklists and each vector group, `IN-SCOPE` (with items evaluated / total) or `OUT-OF-SCOPE (reason)`.
 
@@ -161,7 +161,7 @@ After each chunk, save to session memory:
 
 ## Rule 4: Every Item Gets a Verdict
 
-Every single checklist item and every known attack vector MUST appear in the report output with an explicit verdict. No items are skipped silently. This is the proof that the auditor actually checked everything. In a Quick or CI report, the items its depth-scope selection leaves out are not skipped silently either: they render once, by section, as `references/depth-scope.md` §8 says, and the items of a selected section that no site in scope reaches share that section's one N/A line.
+Every single checklist item and every known attack vector MUST appear in the report output with an explicit verdict. No items are skipped silently. This is the proof that the auditor actually checked everything. **The depth exception.** A Quick or CI run takes a declared subset, the selection of `references/depth-scope.md`, and gives a verdict to every item and vector inside it. The items outside it are listed once per section or row group, as "outside <depth>'s scope; /auditor:audit gives their verdicts", with no verdict per item. Inside a read section, the items no site in scope reaches share the section's one `[N/A — no site in scope]` line, and an item that needs a call the depth does not make gets `[N/A at this depth — needs <call>]`. quick-scan's "this is the subset, not the full set" is the same rule.
 
 ### Item Verdict Format
 
