@@ -549,7 +549,8 @@ g1() {
 # find's status; WALK_R holds, in walk order, the path of each entry the scan matches (TESTS), whose name holds a byte
 # outside printable ASCII, or that is a symbolic link, as "././<path below <directory>>". Over the limit only the first
 # <limit> entries count, and the walk is stopped by its process IDs: a closed pipe stops find only where SIGPIPE keeps its
-# default action, and on GitHub's runners it is ignored.
+# default action, and on GitHub's runners it is ignored. There GNU tr also reports the closed pipe ("write error: Broken
+# pipe") when head stops reading, so the swap's stderr goes to /dev/null.
 walk() {
   local dir=$1 lim=$2 r sub swap
   WALK_N='' WALK_ST='' WALK_CUT=0 WALK_R=()
@@ -561,7 +562,7 @@ walk() {
             wait "$w"
             printf 'S%s\0' "$?")
   sub=$!
-  exec 4< <(exec tr '\0\n' '\n\0' <&3)
+  exec 4< <(exec tr '\0\n' '\n\0' <&3 2>/dev/null)
   swap=$!
   exec 3<&-
   while IFS= read -r -d '' r; do
