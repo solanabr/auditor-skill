@@ -133,7 +133,7 @@ The CI-only rows:
 | `checklists/11-supply-chain.md` | §11.11 Dependency-Update Review (Delta) | 112 | 48 |
 | `checklists/13-deployment-infrastructure.md` | §13.13 GitHub Actions Trigger Trust | 180 | 11 |
 
-A section is selected once, whatever number of files select it. The most a change can select is 62 sections, about 101 KB, and only when it touches every kind of file; a change to on-chain code alone selects at most 46.
+A section is selected once, whatever number of files select it. The most a change can select is 62 sections, about 102 KB, and only when it touches every kind of file; a change to on-chain code alone selects at most 46.
 
 ## 5. CI: vector rows
 
@@ -161,7 +161,7 @@ A section is selected once, whatever number of files select it. The most a chang
 
 For a manifest or lockfile, diff-audit runs `checklists/11-supply-chain.md` §11.11 with its CI budget, in place of its steps 2 to 4:
 - `lock-delta.sh --run audit_<n> set <base>..<head>`: the name@version set of every changed lockfile, with its marks. No lockfile is read by hand.
-- `deps.sh lock-budget --run audit_<n> audit_<n>/deps/lock-set-<k>.tsv`: one publish-age request per new name (`AUDITOR_PUBLISH_AGE`), then at most 40 entries fetched old and new and swept, counts first.
+- `deps.sh lock-budget --run audit_<n> audit_<n>/deps/lock-set-<k>.tsv`: one publish-age request per new name (`AUDITOR_PUBLISH_AGE`), then every key handler and at most 40 other entries fetched old and new and swept, counts first.
 - Lockfiles add no changed lines to §6's budget. `deps-artifacts` is required when a `Cargo.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` or `bun.lock` changes. Other lockfiles and manifests are checked at metadata level only, and a Go module is never fetched.
 
 ## 8. What the selection leaves out (Rules 0 and 4)

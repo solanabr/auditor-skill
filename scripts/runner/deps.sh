@@ -50,10 +50,11 @@
 #                   earlier versions, flagging one under 14 days old, a first release under 14 days old, a
 #                   publisher that published no earlier version, a yanked version and one the registry does not
 #                   list (a package it has no record of included).
-#                   AUDITOR_PUBLISH_AGE=off (the default is on) leaves this out. Then the budget: at most
-#                   40 entries of the npm and crates rows whose version changed, in this order: direct
-#                   dependencies, pins, key handlers, install scripts, versions under 14 days, sources now
-#                   on the public registry; PyPI rows and the rest are metadata only. Each entry's new and
+#                   AUDITOR_PUBLISH_AGE=off (the default is on) leaves this out. Then the budget: each key
+#                   handler (lock-delta.sh's key mark) whose version changed, first and outside the budget,
+#                   then at most 40 of the other npm and crates rows whose version changed, in this order:
+#                   direct dependencies, pins, install scripts, versions under 14 days, sources now on the
+#                   public registry; PyPI rows and the rest are metadata only. Each entry's new and
 #                   old artifacts are fetched as fetch-artifact fetches one, with one retry, into
 #                   <R>/deps/lock-budget-<n>/<k>/new and old, and compared: the files added, changed and
 #                   removed, the added lines matched against SC-059's and SC-060's patterns, binary files and
@@ -1155,10 +1156,17 @@ SET_ECOS = {"npm": (r"^(@[A-Za-z0-9~-][A-Za-z0-9._~-]*/)?[A-Za-z0-9~-][A-Za-z0-9
             "pypi": (r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$", 100)}
 SEMVER = r"^(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})(-[0-9A-Za-z.-]{1,64})?(\+[0-9A-Za-z.-]{1,64})?$"
 PEP440 = r"^[0-9][0-9A-Za-z.!+_-]{0,63}$"
-CATEGORY = (("direct", 1), ("pin", 2), ("key", 3), ("install", 4), ("young", 5), ("source-change", 6))
+# The order of the 40-entry budget. A key handler, which lock-delta.sh marks key, is compared whatever the budget, first.
+CATEGORY = (("direct", 1), ("pin", 2), ("install", 3), ("young", 4), ("source-change", 5))
+MARKS = (("key", 0),) + CATEGORY
 # One call stays inside the 600 seconds a Bash tool call may take: the publish ages stop at 300 seconds, and the
 # whole call at 540.
 BUDGET, ASK_CAP, ASK_SECONDS, CALL_SECONDS, CRATES_GAP, QUARANTINE = 40, 1000, 300, 540, 1.0, 14
+
+
+def clean(text):
+    # shown, without its cut: the report and its summary lines are long by design
+    return re.sub(r"[\x00-\x1f\x7f]", "?", str(text))
 
 
 def set_rows(path):
@@ -1190,6 +1198,9 @@ def set_rows(path):
 
 
 def rank(row):
+    # 0 for a key handler, 1 to 5 for the order of the budget, 7 for a row the budget does not select
+    if "key" in row["marks"]:
+        return 0
     got = [c for m, c in CATEGORY if m in row["marks"]]
     return min(got) if got else 7
 
@@ -1540,14 +1551,16 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
         if k not in seen:
             seen.add(k)
             candidates.append(r)
-    pool = [r for r in candidates if rank(r) < 7]
-    chosen, over = pool[:BUDGET], pool[BUDGET:]
+    keys = [r for r in candidates if rank(r) == 0]
+    pool = [r for r in candidates if 0 < rank(r) < 7]
+    chosen, over = keys + pool[:BUDGET], pool[BUDGET:]
     by = {}
-    for r in chosen:
+    for r in pool[:BUDGET]:
         name = dict((c, m) for m, c in CATEGORY)[rank(r)]
         by[name] = by.get(name, 0) + 1
-    line = ("budget: %d entries to compare (%s); over the %d-entry budget: %d; metadata only: %d; PyPI rows, metadata only: %d; same version with a new checksum: %d; not public, never fetched (SC-061): %d; a version outside its registry grammar, never sent: %d"
-            % (len(chosen), ", ".join("%s %d" % (m, by.get(m, 0)) for m, _ in CATEGORY), BUDGET, len(over), len(candidates) - len(pool),
+    line = ("budget: %d key handlers to compare, outside the %d-entry budget; %d entries to compare (%s); over the %d-entry budget: %d; metadata only: %d; PyPI rows, metadata only: %d; same version with a new checksum: %d; not public, never fetched (SC-061): %d; a version outside its registry grammar, never sent: %d"
+            % (len(keys), BUDGET, len(pool[:BUDGET]), ", ".join("%s %d" % (m, by.get(m, 0)) for m, _ in CATEGORY), BUDGET, len(over),
+               len(candidates) - len(keys) - len(pool),
                sum(1 for r in rows if r["eco"] == "pypi" and r["public"] and r["old"] != r["new"]), sum(1 for r in rows if r["old"] == r["new"]),
                sum(1 for r in rows if r["source"] != "public"), sum(1 for r in rows if r["source"] == "public" and not r["public"])))
     out.append(line)
@@ -1595,7 +1608,7 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
     out.append("")
     out.append("== the entries compared, counts first (files under %s/<n>/new/files and old/files)" % outname)
     for k, r, s in results:
-        cats = ",".join(m for m, _ in CATEGORY if m in r["marks"])
+        cats = ",".join(m for m, _ in MARKS if m in r["marks"])
         if s is None:
             out.append("%d. %s %s %s -> %s [%s] not compared: an artifact was not fetched" % (k, r["eco"], r["name"], r["old"], r["new"], cats))
             continue
@@ -1607,7 +1620,7 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
         out.append("")
         out.append("== over the %d-entry budget, metadata only" % BUDGET)
         for r in over[:200]:
-            out.append("  %s %s %s -> %s [%s]" % (r["eco"], r["name"], r["old"], r["new"], ",".join(m for m, _ in CATEGORY if m in r["marks"])))
+            out.append("  %s %s %s -> %s [%s]" % (r["eco"], r["name"], r["old"], r["new"], ",".join(m for m, _ in MARKS if m in r["marks"])))
         if len(over) > 200:
             out.append("  ... %d more" % (len(over) - 200))
     out.append("")
@@ -1630,9 +1643,9 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
             out.append("  ... %d more hits in this entry" % extra)
     log.close()
     with open(report, "w", encoding="utf-8", errors="backslashreplace") as f:
-        f.write("\n".join(shown(x) if x else "" for x in out) + "\n")
+        f.write("\n".join(clean(x) if x else "" for x in out) + "\n")
     for line in summary:
-        print(">> " + shown(line))
+        print(">> " + clean(line))
     if failed:
         late = any("reached its time limit" in f for f in failures)
         print("%d of %d selected artifacts could not be fetched after one retry%s" % (failed, failed + fetched,

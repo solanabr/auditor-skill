@@ -41,7 +41,8 @@ env:
   AUDITOR_OVER_BUDGET: "count"
   # A changed lockfile (checklists/11-supply-chain.md §11.11, CI budget): "on" asks each public registry once per
   # new package for its publish time and publisher, which selects versions under 14 days old for review; "off"
-  # sends no such request. Either way the review fetches the published code of at most 40 changed packages.
+  # sends no such request. Either way the review fetches the published code of every changed key-handling package
+  # and of at most 40 other changed packages.
   AUDITOR_PUBLISH_AGE: "on"
   # The tools job: the semgrep rulesets it runs, and the analyzer releases it installs. Pin a release that has
   # been out two weeks or more, so a broken one has had time to be pulled.

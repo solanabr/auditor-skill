@@ -2236,6 +2236,7 @@ npm("lb-young", {"0.1.0": (1, "eve", plain)})
 npm("lb-fail", {"1.0.0": (300, "carol", plain)}, 500)
 for i in range(1, 46):
     npm("lb-many-%d" % i, {"1.0.0": (300, "dave", plain)})
+npm("lb-keyed", {"1.0.0": (300, "frank", plain)})
 crates = {}
 for v, files in (("0.1.0", {"Cargo.toml": b"[package]\n"}), ("0.2.0", {"Cargo.toml": b"[package]\n", "build.rs": b"fn main() {}\n"})):
     data = tgz("lb_crate-" + v, files)
@@ -2269,7 +2270,7 @@ check "... the npm record asked compressed, with the proxy" \
 check "... the publish ages: three under 14 days, two first releases, a publisher who published no earlier version" \
   sh -c "grep -q '^>> publish age: 5 names asked in [0-9]* s; not checked: 0 of 5 rows; under 14 days: 3; first releases: 2; publisher changes: 1; yanked: 0; not listed by the registry: 0\$' '$T/out' && grep -q '^npm	lb-direct	1.1.0	[0-9T:Z-]*	3	mallory	alice	young,publisher-change\$' '$LB/ages.tsv'"
 check "... the budget: direct, pin, then the young version; the old package metadata only, the git row never fetched" \
-  sh -c "grep -qxF '>> budget: 3 entries to compare (direct 1, pin 1, key 0, install 0, young 1, source-change 0); over the 40-entry budget: 0; metadata only: 1; PyPI rows, metadata only: 1; same version with a new checksum: 0; not public, never fetched (SC-061): 1; a version outside its registry grammar, never sent: 0' '$T/out' && ! grep -q 'lb-meta/-/' '$T/calls'"
+  sh -c "grep -qxF '>> budget: 0 key handlers to compare, outside the 40-entry budget; 3 entries to compare (direct 1, pin 1, install 0, young 1, source-change 0); over the 40-entry budget: 0; metadata only: 1; PyPI rows, metadata only: 1; same version with a new checksum: 0; not public, never fetched (SC-061): 1; a version outside its registry grammar, never sent: 0' '$T/out' && ! grep -q 'lb-meta/-/' '$T/calls'"
 check "... old and new fetched from the URLs the records give (the npm record from the age answer, not asked again), and compared" \
   sh -c "grep -qxF '>> artifacts: 3 entries, 5 artifacts fetched, 0 failed after one retry' '$T/out' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-direct/1.1.0\$' '$T/calls') = 0 ] && [ -f '$LB/1/new/files/package/index.js' ] && [ -f '$LB/1/old/files/package/index.js' ] && [ -f '$LB/2/new/files/lb_crate-0.2.0/build.rs' ]"
 check "... the sweep, counts first: the new postinstall and build.rs (SC-059), the new fetch (SC-060)" \
@@ -2280,7 +2281,7 @@ check "... the run directory still passes its check" sh -c "(cd '$WT' && '$ROOT/
 r0=$(rows)
 run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 check "lock-budget with AUDITOR_PUBLISH_AGE=off: no record of a whole package, each version's record instead, nothing to PyPI" \
-  sh -c "[ '$RC' = 1 ] && grep -q '^>> publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: 5 of 5 rows\$' '$T/out' && ! grep -qxF 'url: https://registry.npmjs.org/lb-direct' '$T/calls' && grep -qxF 'url: https://registry.npmjs.org/lb-direct/1.1.0' '$T/calls' && ! grep -q 'pypi.org' '$T/calls' && grep -q '^>> budget: 2 entries to compare (direct 1, pin 1, ' '$T/out'"
+  sh -c "[ '$RC' = 1 ] && grep -q '^>> publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: 5 of 5 rows\$' '$T/out' && ! grep -qxF 'url: https://registry.npmjs.org/lb-direct' '$T/calls' && grep -qxF 'url: https://registry.npmjs.org/lb-direct/1.1.0' '$T/calls' && ! grep -q 'pypi.org' '$T/calls' && grep -q '^>> budget: 0 key handlers to compare, outside the 40-entry budget; 2 entries to compare (direct 1, pin 1, ' '$T/out'"
 check "... two rows, npmjs.org and crates.io, that say only the selected versions go out" \
   sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 2 ] && tail -n 2 '$DT' | grep -c 'budget selects' | grep -qx 2"
 LBN=102
@@ -2296,7 +2297,16 @@ lb_set "$LBN" "${rowsfile[@]}"
 run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
 check "lock-budget over 45 direct entries: the first 40 compared, 5 counted over the budget and never fetched" \
-  sh -c "[ '$RC' = 0 ] && grep -q '^>> budget: 40 entries to compare (direct 40, .*); over the 40-entry budget: 5; ' '$T/out' && grep -qxF '>> artifacts: 40 entries, 40 artifacts fetched, 0 failed after one retry' '$T/out' && grep -qxF 'url: https://registry.npmjs.org/lb-many-40/-/lb-many-40-1.0.0.tgz' '$T/calls' && ! grep -q 'lb-many-4[1-5]' '$T/calls' && grep -qxF '  npm lb-many-45 - -> 1.0.0 [direct]' '$WT/audit_1/deps/lock-budget-$n.txt'"
+  sh -c "[ '$RC' = 0 ] && grep -q '^>> budget: 0 key handlers to compare, outside the 40-entry budget; 40 entries to compare (direct 40, .*); over the 40-entry budget: 5; ' '$T/out' && grep -qxF '>> artifacts: 40 entries, 40 artifacts fetched, 0 failed after one retry' '$T/out' && grep -qxF 'url: https://registry.npmjs.org/lb-many-40/-/lb-many-40-1.0.0.tgz' '$T/calls' && ! grep -q 'lb-many-4[1-5]' '$T/calls' && grep -qxF '  npm lb-many-45 - -> 1.0.0 [direct]' '$WT/audit_1/deps/lock-budget-$n.txt'"
+LBN=108
+rowsfile=()
+for i in $(seq 1 45); do rowsfile+=("npm	package-lock.json	lb-many-$i	-	1.0.0	-	public	direct"); done
+rowsfile+=('npm	package-lock.json	lb-keyed	-	1.0.0	-	public	key')
+lb_set "$LBN" "${rowsfile[@]}"
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "lock-budget: a key handler listed after 45 direct entries is compared first, outside the 40" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^>> budget: 1 key handlers to compare, outside the 40-entry budget; 40 entries to compare (direct 40, .*); over the 40-entry budget: 5; ' '$T/out' && [ \"\$(sed -n 's/^url: \(.*[.]tgz\)\$/\1/p' '$T/calls' | sed -n 1p)\" = 'https://registry.npmjs.org/lb-keyed/-/lb-keyed-1.0.0.tgz' ] && grep -qxF '1. npm lb-keyed - -> 1.0.0 [key] SC-059 0, SC-060 0, binary 0; files +2 ~0 -0; no earlier public version: every file is new' '$WT/audit_1/deps/lock-budget-$n.txt' && grep -qxF '>> artifacts: 41 entries, 41 artifacts fetched, 0 failed after one retry' '$T/out'"
 LBN=104
 lb_set "$LBN"
 r0=$(rows)

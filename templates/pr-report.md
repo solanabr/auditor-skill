@@ -45,8 +45,8 @@ this unit. Every line names its `file:line` or why it does not apply.}
 
 {diff-audit, when its step 5 ran: the set lock-delta.sh set kept, which holds each changed entry, the lockfiles it
 compared and those it did not, the checklist 11 §11.11 verdicts SC-059..063 and those its CI budget's marks call
-for, and the counts lock-budget gives: entries compared, over the budget, metadata only, not public, publish ages
-not checked. Otherwise drop this section.}
+for, and the counts lock-budget gives: key handlers compared, entries compared, over the budget, metadata only, not
+public, publish ages not checked. Otherwise drop this section.}
 
 ## Coverage & Limitations
 
