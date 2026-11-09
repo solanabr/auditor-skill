@@ -81,6 +81,14 @@ ci = {(f, re.match(r"§(\d+\.\d+)", sec).group(1)) for part, dom, f, sec, start,
       or re.match(r"§(11\.1|11\.8|12\.1|12\.5|13\.9) ", sec)}
 bound = re.search(r"The most a change can select is (\d+) sections", table)
 say(bool(bound) and int(bound.group(1)) == len(ci), f"§4's bound is the {len(ci)} sections a change can select" + ("" if bound else " (no bound sentence)") + ("" if not bound or int(bound.group(1)) == len(ci) else f" (it says {bound.group(1)})"))
+# ...and their size, read at each row's Start for its Lines, in thousands of bytes
+spans = {(f, re.match(r"§(\d+\.\d+)", sec).group(1)): (int(start), int(n)) for part, dom, f, sec, start, n, gate in rows}
+size = 0
+for key in ci:
+    start, n = spans[key]
+    size += sum(len(l.encode()) + 1 for l in pathlib.Path(key[0]).read_text().split("\n")[start - 1:start - 1 + n])
+kb = re.search(r"The most a change can select is \d+ sections, about (\d+) KB", table)
+say(bool(kb) and int(kb.group(1)) == round(size / 1000), f"§4's size is about {round(size / 1000)} KB ({size} bytes)" + ("" if kb else " (no size)") + ("" if not kb or int(kb.group(1)) == round(size / 1000) else f" (it says {kb.group(1)})"))
 
 idx = {}
 for line in index.split("\n"):

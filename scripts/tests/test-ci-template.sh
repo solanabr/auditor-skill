@@ -155,6 +155,7 @@ envval() { printf '%s\n' "$top_env" | sed -n "s/^  $1: \"\{0,1\}\([^\"]*\)\"\{0,
 for row in "| \`AUDITOR_FAIL_ON\` | \`$(envval AUDITOR_FAIL_ON)\` |" \
            "| \`AUDITOR_MAX_BUDGET_USD\` | \`$(envval AUDITOR_MAX_BUDGET_USD)\` |" \
            "| \`AUDITOR_OVER_BUDGET\` | \`$(envval AUDITOR_OVER_BUDGET)\` |" \
+           "| \`AUDITOR_PUBLISH_AGE\` | \`$(envval AUDITOR_PUBLISH_AGE)\` |" \
            "| \`SEMGREP_RULESETS\` | \`$(envval SEMGREP_RULESETS)\` |" \
            "| \`SEMGREP_VERSION\`, \`CARGO_AUDIT_VERSION\` | \`$(envval SEMGREP_VERSION)\`, \`$(envval CARGO_AUDIT_VERSION)\` |"; do
   n=$(grep -c -F -- "$row" docs/ci.md)
@@ -312,21 +313,25 @@ if gitq init -q -b main && printf 'fn a() {}\n' > "$G/a.rs" && : > "$G/Cargo.loc
   left=$(cd "$G" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort | tr '\n' ' ')
   same "the clean step removes .claude/, .mcp.json and CLAUDE.md in any letter case, and nothing else" \
     "./Cargo.lock ./a.rs ./b.rs " "$left"
-  review_run() { # review_run [<over-budget>]: the review step in $G, with no API key, so it stops before Claude Code
+  review_run() { # review_run [<over-budget> [<publish-age>]]: the review step in $G, with no API key, so it stops before Claude Code
     rm -rf "$RT2/auditor-review"
     (cd "$G" && env RUNNER_TEMP="$RT2" AUDITOR_STRICT=1 AUDITOR_EXEC_MODE=none AUDITOR_FAIL_ON=7 \
-      AUDITOR_MAX_BUDGET_USD=15 AUDITOR_OVER_BUDGET="${1:-count}" ANTHROPIC_API_KEY= "$BASH" "$T/review.sh") > "$T/review.out" 2>&1
+      AUDITOR_MAX_BUDGET_USD=15 AUDITOR_OVER_BUDGET="${1:-count}" AUDITOR_PUBLISH_AGE="${2:-on}" ANTHROPIC_API_KEY= \
+      "$BASH" "$T/review.sh") > "$T/review.out" 2>&1
   }
   review_run maybe; rc=$?
   n=$(grep -c -F 'AUDITOR_OVER_BUDGET must be count or fail' "$T/review.out")
   check "an AUDITOR_OVER_BUDGET other than count or fail stops the review step, exit 1" [ "$rc:$n" = 1:1 ]
+  review_run count yes; rc=$?
+  n=$(grep -c -F 'AUDITOR_PUBLISH_AGE must be on or off' "$T/review.out")
+  check "an AUDITOR_PUBLISH_AGE other than on or off stops the review step, exit 1" [ "$rc:$n" = 1:1 ]
   review_run; rc=$?
   O="$RT2/auditor-review"
   want="$(git -C "$G" rev-parse 'HEAD^1') $(git -C "$G" rev-parse HEAD)"
   check "the review step stops for want of a key, exit 0, and leaves the verdict to the next step" \
     [ "$rc:$(ls "$O" | grep -c -x no-key)" = 0:1 ]
   same "the range is the merge commit's first parent to the merge commit" "$want" "$(tr '\n' ' ' < "$O/range.txt" | sed 's/ $//')"
-  same "a changed .rs file and Cargo.lock call for audit-scan and lock-delta" '["audit-scan","lock-delta"]' "$(cat "$O/required.json")"
+  same "a changed .rs file and Cargo.lock call for audit-scan, lock-delta and deps-artifacts" '["audit-scan","lock-delta","deps-artifacts"]' "$(cat "$O/required.json")"
   case "$(sed -n 1p "$O/preflight.out")" in
     "preflight: mode: strict "*) ok "preflight names strict mode on the cleaned checkout" ;;
     *) bad "preflight did not name strict mode on the cleaned checkout: $(sed -n 1p "$O/preflight.out") $(sed -n 1p "$O/preflight.err")" ;;
@@ -452,6 +457,29 @@ same "fail: a result and a findings file that both list no analyzer, for a chang
 same "fail: a list of required analyzers that names no analyzer" \
   "auditor: verdict: fail (threshold 7, $RAN; the analyzers this change calls for could not be read)" \
   "$(REQ='["clippy"]' verdict "$T/pass-result.json" "$T/pass-findings.json")"
+# the lockfile CI budget (checklist 11 §11.11): deps-artifacts is the lock-budget call, required with lock-delta
+LOCKREQ='["audit-scan", "lock-delta", "deps-artifacts"]'
+RAN3='analyzers run: audit-scan, lock-delta, deps-artifacts'
+jq '.analyzers += [{"name":"deps-artifacts","status":"ran"}]' "$T/pass-findings.json" > "$T/lock-findings.json"
+jq '.structured_output.analyzers_run += ["deps-artifacts"]' "$T/pass-result.json" > "$T/lock-result.json"
+same "pass: a lockfile change whose budget is empty, deps-artifacts ran" "auditor: verdict: pass (threshold 7, $RAN3)" \
+  "$(REQ=$LOCKREQ verdict "$T/lock-result.json" "$T/lock-findings.json")"
+same "pass: a budget of more than 40 entries, 40 compared and the rest counted in PR-REPORT.md only, deps-artifacts ran" \
+  "auditor: verdict: pass (threshold 7, $RAN3)" "$(REQ=$LOCKREQ verdict "$T/lock-result.json" "$T/lock-findings.json")"
+same "fail: a lockfile change whose result leaves deps-artifacts out" \
+  "auditor: verdict: fail (threshold 7, $RAN; its result leaves out an analyzer this change calls for)" \
+  "$(REQ=$LOCKREQ verdict "$T/pass-result.json" "$T/pass-findings.json")"
+jq '.findings += [{"id":"F-4","severity":7,"title":"A dependency resolves from a git source","file":"package-lock.json","line":12,"rule5b":"passed","refs":["SC-061"]}] | .verdict = "fail"' \
+  "$T/lock-findings.json" > "$T/f.json"
+jq '.structured_output.verdict = "fail"' "$T/lock-result.json" > "$T/v.json"
+same "fail: a dependency from a git source, never fetched, graded 7 as SC-061" "auditor: verdict: fail (threshold 7, $RAN3)" \
+  "$(REQ=$LOCKREQ verdict "$T/v.json" "$T/f.json")"
+jq '.analyzers |= map(if .name == "deps-artifacts" then {"name":"deps-artifacts","status":"not-run","reason":"deps: blocker: 1 of 3 selected artifacts could not be fetched after one retry; output audit_3/deps/lock-budget-1.txt"} else . end) | .verdict = "fail"' \
+  "$T/lock-findings.json" > "$T/f.json"
+jq '.structured_output.analyzers_run = ["audit-scan", "lock-delta"] | .structured_output.analyzers_not_run = ["deps-artifacts"] | .structured_output.verdict = "fail"' \
+  "$T/lock-result.json" > "$T/v.json"
+same "fail: an artifact the budget selects still fails after one retry, so deps-artifacts did not run" \
+  "auditor: verdict: fail (threshold 7, $RAN; not run: deps-artifacts)" "$(REQ=$LOCKREQ verdict "$T/v.json" "$T/f.json")"
 jq '.final = false | .verdict = "fail"' "$T/pass-findings.json" > "$T/f.json"
 same "fail: a findings file that never became final" \
   "auditor: verdict: fail (threshold 7, $RAN; the run ended before its last step)" "$(verdict "$T/fail-result.json" "$T/f.json")"

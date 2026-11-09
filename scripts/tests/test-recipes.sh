@@ -610,7 +610,7 @@ FILL = [("<auditor-skill root>", root), ("audit_<n>", "audit_1"), ("incident_<n>
         ("<package>", "left-pad"), ("<version>", "1.3.0"), ("<rev>:<path>", "t-head:package.json"),
         ("<checkout>", "."), ("<repo>", "."), ("<copy>", "audit_1/src.git"), ("<deployed_commit>", "t-base"), ("<deployed>", "t-base"),
         ("{PATH_TO}", "audit_1"), ("{COMMIT}", "t-head"), ("{FINDING_ID}", "F-1"), ("<R>", "audit_1"),
-        ("<ID>", "F-1"), ("<in-scope directory>", "."), ("<dir>", ".")]
+        ("<ID>", "F-1"), ("<in-scope directory>", "."), ("<dir>", "."), ("<k>", "1")]
 # Spans that show a call's shape with optional parts, not a call to run.
 SHAPES = {"\"<auditor-skill root>/scripts/git-ro.sh\" [--repo '<dir>'] show <full id> -- '<path>'"}
 bad = []

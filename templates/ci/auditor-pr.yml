@@ -39,6 +39,10 @@ env:
   # A change over 5,000 changed lines (references/depth-scope.md §6): "count" reviews the riskiest 5,000 and
   # counts the rest in PR-REPORT.md; "fail" fails the review instead.
   AUDITOR_OVER_BUDGET: "count"
+  # A changed lockfile (checklists/11-supply-chain.md §11.11, CI budget): "on" asks each public registry once per
+  # new package for its publish time and publisher, which selects versions under 14 days old for review; "off"
+  # sends no such request. Either way the review fetches the published code of at most 40 changed packages.
+  AUDITOR_PUBLISH_AGE: "on"
   # The tools job: the semgrep rulesets it runs, and the analyzer releases it installs. Pin a release that has
   # been out two weeks or more, so a broken one has had time to be pulled.
   SEMGREP_RULESETS: "p/rust p/trailofbits"
@@ -220,6 +224,7 @@ jobs:
           case "$AUDITOR_FAIL_ON" in [1-9]|10) ;; *) echo "::error::AUDITOR_FAIL_ON must be a whole number from 1 to 10"; exit 1 ;; esac
           [[ $AUDITOR_MAX_BUDGET_USD =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "::error::AUDITOR_MAX_BUDGET_USD must be a number of dollars"; exit 1; }
           case "$AUDITOR_OVER_BUDGET" in count) over="" ;; fail) over=" --over-budget fail" ;; *) echo "::error::AUDITOR_OVER_BUDGET must be count or fail"; exit 1 ;; esac
+          case "$AUDITOR_PUBLISH_AGE" in on|off) ;; *) echo "::error::AUDITOR_PUBLISH_AGE must be on or off"; exit 1 ;; esac
           # the run directories already here, which the review's result may not name
           for d in audit_*; do if [ -e "$d" ] || [ -L "$d" ]; then printf '%s\n' "$d"; fi; done > "$O/before.txt"
           # HEAD is the merge commit; its first parent is the base the pull request merges into
@@ -227,12 +232,12 @@ jobs:
           base=$(git rev-parse 'HEAD^1') && head=$(git rev-parse HEAD) || exit 1
           printf '%s\n%s\n' "$base" "$head" > "$O/range.txt"
           # the analyzers this change calls for, whatever the review says (commands/diff-audit.md step 7):
-          # audit-scan for a changed .rs file, lock-delta for a changed lockfile it reads
+          # audit-scan for a changed .rs file, lock-delta and deps-artifacts for a changed lockfile lock-delta reads
           git diff --no-ext-diff --no-textconv --name-only -z --diff-filter=d "$base" "$head" | tr '\0' '\n' > "$O/changed.txt" || exit 1
           req=""
           if [ "$(grep -c -E '[.]rs$' "$O/changed.txt")" -gt 0 ]; then req='"audit-scan"'; fi
           if [ "$(grep -c -E '(^|/)(Cargo[.]lock|package-lock[.]json|npm-shrinkwrap[.]json|yarn[.]lock|bun[.]lock)$' "$O/changed.txt")" -gt 0 ]; then
-            req="${req:+$req,}\"lock-delta\""
+            req="${req:+$req,}\"lock-delta\",\"deps-artifacts\""
           fi
           echo "[$req]" > "$O/required.json"
           # Rule 11f: preflight's first line must name strict mode. Checked here first, before anything costs money;
