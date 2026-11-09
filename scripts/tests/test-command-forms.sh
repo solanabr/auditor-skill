@@ -1331,6 +1331,9 @@ commands/threat-model.md	  - Edit(/audit_*/**)
 commands/triage.md	  - Edit(/audit_*/**)
 skills/dnr-analyze/SKILL.md	  - Edit(/incident_*/**)
 SKILL.md	  - Edit(/audit_*/**)
+AGENTS.md	under the command's `Edit(/audit_*/**)` or `Edit(/incident_*/**)` grant
+OUTPUT-RULES.md	the report lists each tool, the service it was set to contact, and what it was set to send
+docs/permissions-and-isolation.md	Both rules begin with a `/`, which keeps them on the folder Claude Code started in
 PINS
 # Claude Code fills $ARGUMENTS and a $ followed by digits and then no letter, digit or _ (its pattern,
 # \$ARGUMENTS\[\d+\]|\$ARGUMENTS|\$\d+(?!\w)) with the invocation's arguments, in a command's or a skill's
@@ -1418,6 +1421,8 @@ commands/quick-scan.md	adds about USD 1–2 to a scan, even at 80 files
 commands/diff-audit.md	adds about USD 1–2 at most, even at 80 files
 commands/diff-audit.md	no longer matches the write rule for `audit_*/`
 commands/deep-review.md	no longer matches the write rule for `audit_*/`
+AGENTS.md	`Edit(audit_*/**)` or `Edit(incident_*/**)` grant
+OUTPUT-RULES.md	the report lists each tool, the service it contacted, and what it sent.
 GONE
 
 # respond's step 5 and hunt's step 6 settle the mode as poc's step 5 does, each step read as one line so wording

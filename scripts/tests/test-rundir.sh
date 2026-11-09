@@ -279,7 +279,7 @@ check "new accepts a repository that tracks a top-level file named audit_*" out_
 # refuses; default mode takes the next number whose name the repository tracks in no letter case, and
 # notes each such top-level name (the first 5, then a count), with stdout the name alone.
 tnote() { # tnote <tracked top-level name> <run directory made>: the note new prints
-  printf "rundir: note: the repository tracks %s/, under a name the commands' Edit(audit_*/**) and Edit(incident_*/**) rules also cover; this run writes only in %s (Rule 11d)" "$1" "$2"
+  printf "rundir: note: the repository tracks %s/, under a name the commands' Edit(/audit_*/**) and Edit(/incident_*/**) rules also cover; this run writes only in %s (Rule 11d)" "$1" "$2"
 }
 for c in audit_5/REPORT.md:audit_6 AUDIT_6/x:audit_1 Incident_2/y:audit_1 incident_3/deep/z:audit_1 AUDIT_1/x:audit_2; do
   p=${c%%:*} want=${c#*:}

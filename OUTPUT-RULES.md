@@ -401,7 +401,7 @@ The mode is recorded at intake when the human answers Q46, and `/auditor:intake 
 
 ### 11b — Outside-service disclosure
 
-Some tools send audit material to services outside the auditor's machine. There is no consent gate, but nothing goes out silently: the report lists each tool, the service it contacted, and what it sent.
+Some tools send audit material to services outside the auditor's machine. There is no consent gate, but nothing goes out silently: the report lists each tool, the service it was set to contact, and what it was set to send, and says where the tool's own output shows the request went out (`templates/pr-report.md`).
 
 **Where the list comes from.** The bundled tools that query outside services (`deps.sh`, `sast.sh`, the RPC collector, the program snapshot, `rpc-read.sh` with `--run`, and the threat-model collector in `--network`) first add a row per service, or per URL, to the run directory's `disclosures.tsv` (`audit_<n>/disclosures.tsv` or `incident_<n>/disclosures.tsv`): the time (UTC), the tool, the service (the host's last two DNS labels, as the collectors print the provider), what was sent, and how many values. Rows are only ever added, and a `disclosures.tsv` that is not a regular file with one link and the header is refused before anything is sent. The report's list is every row of the engagement's run directories, then each contact no row holds: the builds' own downloads, MCP servers, WebFetch, the Trail of Bits tools, the live probes of Q47, and anything else run by hand. `rpc-read.sh` without `--run` writes no row, and prints the service and what it received on stderr instead: copy that into the list. Typical entries:
 

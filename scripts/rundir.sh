@@ -18,7 +18,7 @@
 # new takes the highest n over real directories named <kind>_<n>, plus one, passing over a name the
 # repository tracks in any letter case. A path the repository tracks under a top-level directory named
 # audit_* or incident_* (or a submodule of that name) gets a note on stderr, since the commands'
-# Edit(audit_*/**) and Edit(incident_*/**) rules also cover it; so does a repository git cannot tell about
+# Edit(/audit_*/**) and Edit(/incident_*/**) rules also cover it; so does a repository git cannot tell about
 # (Rule 11d). In strict mode (OUTPUT-RULES.md Rule 11f; --strict turns it on) both are refused, as writes
 # into run directories could then reach tracked files. A next name that a file, a link or a folder spelled
 # in other letters holds is passed over too, with a note naming it as the disk spells it; strict mode
@@ -150,7 +150,7 @@ cmd_new() { # cmd_new audit|incident [--strict]
   done
   printf '%s\n' "$name"
   for path in ${notes[@]+"${notes[@]}"}; do
-    confine_note "the repository tracks $path, under a name the commands' Edit(audit_*/**) and Edit(incident_*/**) rules also cover; this run writes only in $name (Rule 11d)"
+    confine_note "the repository tracks $path, under a name the commands' Edit(/audit_*/**) and Edit(/incident_*/**) rules also cover; this run writes only in $name (Rule 11d)"
   done
   [ "$nnoted" -le 5 ] ||
     confine_note "the repository tracks paths under $((nnoted - 5)) more such names; this run writes only in $name (Rule 11d)"
