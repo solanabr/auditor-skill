@@ -41,6 +41,26 @@
 #                   compressed with anything but gzip, bzip2 or xz (zstd), or in an xz stream whose
 #                   decompressor would need more than 128 MiB, and a zip whose central directory takes
 #                   more than 16 MiB or with an entry compressed with anything but deflate, are refused.
+#   lock-budget     <R>/deps/lock-set-<n>.tsv: the CI budget of checklist 11 §11.11 over a set that
+#                   scripts/recipes/lock-delta.sh set wrote, in one run. First the publish age: one request
+#                   for each distinct name of the set from a public registry (the npm registry's record of
+#                   the package, crates.io's of the crate, PyPI's of the project), in the budget's order,
+#                   at most 1000 requests and 300 seconds (the rest "not checked"), crates.io's at most one
+#                   a second; for each new version its publish time, its publisher and the publishers of
+#                   earlier versions, flagging one under 14 days old, a first release, a publisher that
+#                   published no earlier version, a yanked version and one the registry does not list.
+#                   AUDITOR_PUBLISH_AGE=off (the default is on) leaves this out. Then the budget: at most
+#                   40 entries of the npm and crates rows whose version changed, in this order: direct
+#                   dependencies, pins, key handlers, install scripts, versions under 14 days, sources now
+#                   on the public registry; PyPI rows and the rest are metadata only. Each entry's new and
+#                   old artifacts are fetched as fetch-artifact fetches one, with one retry, into
+#                   <R>/deps/lock-budget-<n>/<k>/new and old, and compared: the files added, changed and
+#                   removed, the added lines matched against SC-059's and SC-060's patterns, binary files and
+#                   entries left out of the unpacked files, counts first. A row from a source that is not
+#                   public is never sent or fetched. The report goes to <R>/deps/lock-budget-<n>.txt, the
+#                   publish ages to lock-budget-<n>/ages.tsv and each request to lock-budget-<n>/requests.txt.
+#                   Exit 1 when anything is flagged; 3 when an artifact the budget selects still fails after
+#                   its retry, once the rest are compared, the last line giving the count.
 #
 # Manifests. Each --manifest is a confined regular file of at most 50 MB under the working directory, named
 # as its action takes it: Cargo.lock, Cargo.toml, package.json, package-lock.json or npm-shrinkwrap.json,
@@ -77,7 +97,8 @@
 # Hosts. registry.npmjs.org; crates.io, index.crates.io and static.crates.io; pypi.org, and the
 # files.pythonhosted.org URLs PyPI's record names; github.com, for the RustSec database. Registry queries
 # run curl -q (no .curlrc), https only, with no redirects and at most 100 MiB. Before the first request to
-# each service, one row goes to <R>/disclosures.tsv: time, tool, service, what was sent, and a count.
+# each service, one row goes to <R>/disclosures.tsv: time, tool, service, what was sent, and a count;
+# lock-budget writes one row per service for its whole run, naming the set.
 #
 # Environment. Every tool runs in the cleaned environment of scripts/lib/isolation.sh: env -i, a throwaway
 # HOME, TMPDIR in the scratch directory, the cleaned PATH, the user's CARGO_HOME and RUSTUP_HOME, and the
@@ -112,7 +133,7 @@ confine_init deps "$root"
 confine_need env git find grep mkdir mktemp rm chmod cat wc date
 WT=$CONFINE_WT
 
-USAGE='usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact'
+USAGE='usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info, fetch-artifact and lock-budget'
 TOOL=scripts/runner/deps.sh
 NPM_SPEC='^(@[A-Za-z0-9~-][A-Za-z0-9._~-]*/)?[A-Za-z0-9~-][A-Za-z0-9._~-]*$'
 CRATE_SPEC='^[A-Za-z][A-Za-z0-9_-]{0,63}$'
@@ -131,7 +152,7 @@ blocker() { printf 'deps: blocker: %s\n' "$1" >&2; exit 3; }
 ACTION=$1
 shift
 case "$ACTION" in
-  cargo-audit|cargo-outdated|cargo-tree|npm-audit|npm-view|npm-time|crate-info|pypi-info|fetch-artifact) ;;
+  cargo-audit|cargo-outdated|cargo-tree|npm-audit|npm-view|npm-time|crate-info|pypi-info|fetch-artifact|lock-budget) ;;
   *) refuse "$USAGE" ;;
 esac
 RUN_ARG="" NO_FETCH=0 seen=" "
@@ -261,6 +282,19 @@ case "$ACTION" in
       pypi) pypi_name "$NAME"; pep440 "$VER" ;;
       *) refuse "fetch-artifact takes crates, npm or pypi, not $(confine_text "$ECO")" ;;
     esac ;;
+  lock-budget)
+    [ "$n" = 1 ] || refuse "lock-budget takes one word: the set lock-delta.sh set wrote, <R>/deps/lock-set-<n>.tsv"
+    SETF=${POS[0]#./}
+    case "$SETF" in
+      "$R"/deps/lock-set-[1-9]*.tsv) k=${SETF#"$R"/deps/lock-set-}; k=${k%.tsv} ;;
+      *) k=x ;;
+    esac
+    case "$k" in ''|*[!0-9]*) refuse "lock-budget takes a set in this run, $R/deps/lock-set-<n>.tsv, not $(confine_text "${POS[0]}")" ;; esac
+    confine_path "$SETF" "the set" any
+    [ "$CONFINE_TYPE" = file ] || refuse "the set is not an existing regular file: $(confine_text "$SETF")"
+    [ -z "$(find "$WT/$SETF" -prune -size +67108864c -print 2>/dev/null)" ] || refuse "the set is larger than 64 MiB: $(confine_text "$SETF")"
+    AGE=${AUDITOR_PUBLISH_AGE:-on}
+    case "$AGE" in on|off) ;; *) refuse "AUDITOR_PUBLISH_AGE is '$(confine_text "$AGE")', not on or off" ;; esac ;;
 esac
 
 CAP=${AUDITOR_RUN_TIMEOUT:-1800}
@@ -1111,6 +1145,481 @@ def unpack(archive, filename, algo, expected, dest):
         print("  %s: %s" % (shown(name), why))
 
 
+# ---- lock-budget: the CI budget of checklist 11 §11.11 over a set lock-delta.sh set wrote ------------------
+SET_HEADER = "eco\tlockfile\tname\told\tnew\toldsource\tsource\tmarks"
+SET_ECOS = {"npm": (r"^(@[A-Za-z0-9~-][A-Za-z0-9._~-]*/)?[A-Za-z0-9~-][A-Za-z0-9._~-]*$", 214),
+            "crates": (r"^[A-Za-z][A-Za-z0-9_-]{0,63}$", 64),
+            "pypi": (r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$", 100)}
+SEMVER = r"^(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})(-[0-9A-Za-z.-]{1,64})?(\+[0-9A-Za-z.-]{1,64})?$"
+PEP440 = r"^[0-9][0-9A-Za-z.!+_-]{0,63}$"
+CATEGORY = (("direct", 1), ("pin", 2), ("key", 3), ("install", 4), ("young", 5), ("source-change", 6))
+BUDGET, ASK_CAP, ASK_SECONDS, CRATES_GAP, QUARANTINE = 40, 1000, 300, 1.0, 14
+
+
+def set_rows(path):
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    if not lines or lines[0] != SET_HEADER:
+        fail("%s is not a set lock-delta.sh set wrote: its first line is not the header" % path)
+    rows, odd = [], 0
+    for i, line in enumerate(lines[1:]):
+        if not line:
+            continue
+        cells = line.split("\t")
+        if len(cells) != 8:
+            odd += 1
+            continue
+        eco, lockfile, name, old, new, oldsource, source, marks = cells
+        spec = SET_ECOS.get(eco)
+        vspec = PEP440 if eco == "pypi" else SEMVER
+        if spec is None or not re.match(spec[0], name) or len(name) > spec[1]:
+            odd += 1
+            continue
+        public = source == "public" and bool(re.match(vspec, new))
+        if old != "-" and not re.match(vspec, old):
+            old, oldsource = "-", "-"
+        rows.append({"i": i, "eco": eco, "lockfile": lockfile, "name": name, "old": old, "new": new,
+                     "oldsource": oldsource, "source": source, "public": public,
+                     "marks": {m.split("=")[0] for m in marks.split(",") if m and m != "-"}})
+    return rows, odd
+
+
+def rank(row):
+    got = [c for m, c in CATEGORY if m in row["marks"]]
+    return min(got) if got else 7
+
+
+def services(path, age):
+    rows, _ = set_rows(path)
+    out = []
+    for eco, host in (("npm", "npmjs.org"), ("crates", "crates.io"), ("pypi", "pypi.org")):
+        mine = [r for r in rows if r["eco"] == eco and r["public"]]
+        if not mine:
+            continue
+        if age == "on" or (eco != "pypi" and any(rank(r) < 7 and r["old"] != r["new"] for r in mine)):
+            out.append(host)
+    print("\n".join(out))
+
+
+class Fetcher:
+    def __init__(self, scratch, deadline, maxsize, agent, log):
+        self.scratch, self.deadline, self.maxsize, self.agent, self.log = scratch, deadline, maxsize, agent, log
+        self.count, self.last_crates, self.k = 0, 0.0, 0
+
+    def get(self, url, accept_json=False, compressed=False):
+        import subprocess, time
+        if url.startswith("https://crates.io/"):
+            wait = self.last_crates + CRATES_GAP - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            self.last_crates = time.time()
+        left = int(self.deadline - time.time())
+        if left < 5:
+            return None, "the run reached its time limit (AUDITOR_RUN_TIMEOUT)"
+        self.k += 1
+        out = os.path.join(self.scratch, "get-%d" % self.k)
+        args = ["curl", "-q", "--proto", "=https", "--proto-redir", "=https", "--tlsv1.2", "-sS", "--connect-timeout", "30",
+                "--max-time", str(min(left - 2, 300)), "--max-filesize", str(self.maxsize), "-A", self.agent]
+        if accept_json:
+            args += ["-H", "Accept: application/json"]
+        if compressed:
+            args += ["--compressed"]
+        args += ["-o", out, "-w", "%{http_code}", "--", url]
+        self.count += 1
+        p = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        code = p.stdout.decode("ascii", "replace")[-3:]
+        self.log.write("GET %s -> %s\n" % (url, code if p.returncode == 0 else "curl exit %d" % p.returncode))
+        if p.returncode != 0:
+            return None, "the request to %s did not finish (curl exit %d: %s)" % (url, p.returncode, shown(p.stderr.decode("utf-8", "replace").strip())[:200])
+        if not re.match(r"^[0-9]{3}$", code):
+            return None, "the request to %s gave no HTTP status" % url
+        if code != "200":
+            return None, "HTTP %s from %s" % (code, url)
+        return out, ""
+
+
+def when(text):
+    import calendar
+    m = re.match(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})[T ]([0-9]{2}):([0-9]{2}):([0-9]{2})", str(text or ""))
+    if not m:
+        return None
+    t = calendar.timegm(tuple(int(x) for x in m.groups()) + (0, 0, 0))
+    off = re.search(r"([+-])([0-9]{2}):?([0-9]{2})$", str(text))
+    if off and not str(text).endswith("Z"):
+        t -= (1 if off.group(1) == "+" else -1) * (int(off.group(2)) * 3600 + int(off.group(3)) * 60)
+    return t
+
+
+def history(eco, name, path, wanted):
+    # {version: (published, publisher, yanked)}, and the records fetch-artifact reads for the versions in
+    # <wanted>, from one registry answer
+    data = load(path)
+    hist, records = {}, {}
+    if eco == "npm":
+        times = data.get("time") if isinstance(data.get("time"), dict) else {}
+        versions = data.get("versions") if isinstance(data.get("versions"), dict) else {}
+        for v, rec in versions.items():
+            if not isinstance(rec, dict):
+                continue
+            user = rec.get("_npmUser") if isinstance(rec.get("_npmUser"), dict) else {}
+            hist[v] = (when(times.get(v)), str(user.get("name") or "") or None, False)
+            if v in wanted:
+                records[v] = {"name": rec.get("name"), "version": rec.get("version"), "dist": rec.get("dist")}
+    elif eco == "crates":
+        for rec in data.get("versions") or []:
+            if not isinstance(rec, dict) or not isinstance(rec.get("num"), str):
+                continue
+            by = rec.get("published_by") if isinstance(rec.get("published_by"), dict) else {}
+            hist[rec["num"]] = (when(rec.get("created_at")), str(by.get("login") or "") or None, bool(rec.get("yanked")))
+            if rec["num"] in wanted:
+                records[rec["num"]] = {"version": {"num": rec["num"], "crate": rec.get("crate") or name, "checksum": rec.get("checksum")}}
+    else:
+        for v, files in (data.get("releases") or {}).items():
+            if not isinstance(files, list):
+                continue
+            stamps = [when(f.get("upload_time_iso_8601") or f.get("upload_time")) for f in files if isinstance(f, dict)]
+            stamps = [s for s in stamps if s is not None]
+            hist[v] = (min(stamps) if stamps else None, None, bool(files) and all(isinstance(f, dict) and f.get("yanked") for f in files))
+    return hist, records
+
+
+def npm_url_path(name):
+    return name.replace("/", "%2F") if name.startswith("@") else name
+
+
+def age_check(rows, fetcher, now, log):
+    import time
+    names, seen = [], set()
+    for r in sorted((r for r in rows if r["public"]), key=lambda r: (rank(r), r["i"])):
+        k = (r["eco"], r["name"])
+        if k not in seen:
+            seen.add(k)
+            names.append(k)
+    wanted = {}
+    for r in rows:
+        wanted.setdefault((r["eco"], r["name"]), set()).update((r["new"], r["old"]))
+    start = time.time()
+    results, records, asked, not_checked = {}, {}, 0, {}
+    for eco, name in names:
+        why = ""
+        if asked >= ASK_CAP:
+            why = "the 1,000-request cap"
+        elif time.time() - start > ASK_SECONDS:
+            why = "the 300-second bound"
+        if not why:
+            url = {"npm": "https://registry.npmjs.org/" + npm_url_path(name), "crates": "https://crates.io/api/v1/crates/" + name,
+                   "pypi": "https://pypi.org/pypi/%s/json" % name}[eco]
+            asked += 1
+            got, why = fetcher.get(url, True, eco == "npm")
+            if got:
+                try:
+                    hist, recs = history(eco, name, got, wanted.get((eco, name), set()))
+                except BaseException as e:
+                    why = "the answer cannot be read: %s" % (str(e) or type(e).__name__)
+                else:
+                    results[(eco, name)] = hist
+                    for v, rec in recs.items():
+                        records[(eco, name, v)] = rec
+                finally:
+                    os.remove(got)
+        if why:
+            not_checked[(eco, name)] = why
+    out = {}
+    for r in rows:
+        if not r["public"]:
+            continue
+        k = (r["eco"], r["name"])
+        if k in not_checked:
+            out[r["i"]] = {"why": not_checked[k]}
+            continue
+        hist = results.get(k, {})
+        if r["new"] not in hist:
+            out[r["i"]] = {"flags": ["unlisted"], "why": "the registry does not list %s" % r["new"]}
+            continue
+        published, publisher, yanked = hist[r["new"]]
+        flags = []
+        earlier = sorted({p for v, (t, p, y) in hist.items() if p and t is not None and published is not None and t < published})
+        older = [v for v, (t, p, y) in hist.items() if t is not None and published is not None and t < published]
+        if published is not None and (now - published) < QUARANTINE * 86400:
+            flags.append("young")
+        if published is not None and not older and "young" in flags:
+            flags.append("first-release")
+        if publisher and earlier and publisher not in earlier:
+            flags.append("publisher-change")
+        if yanked:
+            flags.append("yanked")
+        out[r["i"]] = {"published": published, "publisher": publisher, "earlier": earlier, "flags": flags}
+    return out, records, asked, time.time() - start, not_checked
+
+
+def tree_files(top):
+    # {path below the top directory of the archive: absolute path}, regular files only (unpack makes no other kind)
+    out = {}
+    for d, dirs, files in os.walk(top):
+        for f in files:
+            full = os.path.join(d, f)
+            rel = os.path.relpath(full, top).split(os.sep)
+            out["/".join(rel[1:]) if len(rel) > 1 else rel[0]] = full
+    return out
+
+
+SC059_PATH = re.compile(r"(^|/)(build\.rs|setup\.py|binding\.gyp)$")
+SC059_LINE = re.compile(r"\x22(preinstall|install|postinstall|prepare)\x22\s*:|proc-macro\s*=\s*true|build-backend")
+SC060_LINE = re.compile(r"(child_process|execSync|spawn\(|Command::new|std::process|os\.system|subprocess|eval\(|new Function|vm\.run|fetch\(|https?://|TcpStream|reqwest|env::var|process\.env|\.config/solana|id\.json|[A-Za-z0-9+/=]{120,})")
+
+
+def read_text(path):
+    with open(path, "rb") as f:
+        data = f.read()
+    if b"\0" in data[:8192]:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def sweep(old_top, new_top, left_out):
+    import collections
+    old = tree_files(old_top) if old_top else {}
+    new = tree_files(new_top)
+    hits, binary = [], []
+    added = [p for p in new if p not in old]
+    changed = []
+    for p in new:
+        if p in old:
+            with open(old[p], "rb") as a, open(new[p], "rb") as b:
+                if a.read() != b.read():
+                    changed.append(p)
+    removed = [p for p in old if p not in new]
+    for p in sorted(added + changed):
+        if SC059_PATH.search(p):
+            hits.append(("SC-059", p, 0, "a %s file %s" % (p.rsplit("/", 1)[-1], "added" if p in added else "changed")))
+        text = read_text(new[p])
+        if text is None:
+            binary.append(p)
+            continue
+        lines = text.splitlines()
+        if p in old:
+            before = read_text(old[p])
+            counts = collections.Counter(before.splitlines() if before is not None else [])
+        else:
+            counts = collections.Counter()
+        for n, line in enumerate(lines, 1):
+            if counts[line] > 0:
+                counts[line] -= 1
+                continue
+            if SC059_LINE.search(line):
+                hits.append(("SC-059", p, n, line))
+            if SC060_LINE.search(line):
+                hits.append(("SC-060", p, n, line))
+    for entry in left_out:
+        hits.append(("SC-060", entry, 0, "an entry left out of the unpacked files: a link, a special file or an unsafe name"))
+    return {"added": len(added), "changed": len(changed), "removed": len(removed), "hits": hits, "binary": binary}
+
+
+def fetch_one(fetcher, eco, name, version, records, dest):
+    # the record (from the publish-age answer when there is one), the artifact, its digest, the unpacked files
+    import contextlib, shutil
+    rec = records.get((eco, name, version))
+    recfile = os.path.join(fetcher.scratch, "record.json")
+    if rec is not None:
+        with open(recfile, "w", encoding="utf-8") as f:
+            json.dump(rec, f)
+    else:
+        url = ("https://registry.npmjs.org/%s/%s" % (npm_url_path(name), version) if eco == "npm"
+               else "https://crates.io/api/v1/crates/%s/%s" % (name, version))
+        got, why = fetcher.get(url, True)
+        if not got:
+            return False, why, []
+        shutil.move(got, recfile)
+
+    def quiet(fn, *args):
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                return True, fn(*args), buf.getvalue()
+        except SystemExit:
+            return False, None, buf.getvalue()
+        except Exception as why:
+            return False, None, buf.getvalue() + "cannot read the answer or the artifact: %s\n" % (str(why) or type(why).__name__)
+    ok, _, said = quiet(artifact, "crates" if eco == "crates" else "npm", name, version, recfile)
+    if not ok:
+        return False, said.strip().split("\n")[-1], []
+    parts = said.strip().split("\n")[-1].split("\t")
+    if len(parts) != 4:
+        return False, "the registry record names no artifact", []
+    url, algo, digest, filename = parts
+    got, why = fetcher.get(url)
+    if not got:
+        return False, why, []
+    os.mkdir(dest, 0o700)
+    shutil.copyfile(got, os.path.join(dest, filename))
+    os.mkdir(os.path.join(dest, "files"), 0o700)
+    ok, _, said = quiet(unpack, got, filename, algo, digest, os.path.join(dest, "files"))
+    os.remove(got)
+    if not ok:
+        return False, said.strip().split("\n")[-1], []
+    left = [shown(l.strip()).split(": ")[0] for l in said.split("\n") if l.startswith("  ")]
+    return True, said.strip().split("\n")[0], left
+
+
+def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, maxsize, agent):
+    import time
+    now = time.time()
+    rows, odd = set_rows(setfile)
+    log = open(os.path.join(outdir, "requests.txt"), "w", encoding="utf-8")
+    fetcher = Fetcher(scratch, float(deadline), int(maxsize), agent, log)
+    out, summary = [], []
+    out.append("lock-budget: %s: %d rows%s" % (setname, len(rows), "; %d lines that are not a row of the set, never sent" % odd if odd else ""))
+    ages, records, asked, took, not_checked = {}, {}, 0, 0.0, {}
+    if age == "on":
+        ages, records, asked, took, not_checked = age_check(rows, fetcher, now, log)
+    flagged = {f: [r for r in rows if f in ages.get(r["i"], {}).get("flags", [])] for f in ("young", "first-release", "publisher-change", "yanked", "unlisted")}
+    unchecked = sum(1 for r in rows if r["public"] and "why" in ages.get(r["i"], {}) and "flags" not in ages.get(r["i"], {}))
+    public = [r for r in rows if r["public"]]
+    if age == "on":
+        line = ("publish age: %d names asked in %d s; not checked: %d of %d rows%s; under %d days: %d; first releases: %d; publisher changes: %d; yanked: %d; not listed by the registry: %d"
+                % (asked, took, unchecked, len(public), (" (" + ", ".join(sorted({w for w in not_checked.values()})) + ")") if unchecked else "",
+                   QUARANTINE, len(flagged["young"]), len(flagged["first-release"]), len(flagged["publisher-change"]), len(flagged["yanked"]), len(flagged["unlisted"])))
+    else:
+        line = "publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: %d of %d rows" % (len(public), len(public))
+    out.append(line)
+    summary.append(line)
+    with open(os.path.join(outdir, "ages.tsv"), "w", encoding="utf-8") as f:
+        f.write("eco\tname\tversion\tpublished\tage_days\tpublisher\tearlier_publishers\tflags\n")
+        for r in public:
+            a = ages.get(r["i"], {})
+            t = a.get("published")
+            f.write("\t".join(shown(x) for x in (r["eco"], r["name"], r["new"],
+                    time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t)) if t else "-",
+                    "%d" % ((now - t) // 86400) if t else "-", a.get("publisher") or "-",
+                    ",".join(a.get("earlier", [])[:20]) or "-", ",".join(a.get("flags", [])) or a.get("why", "-"))) + "\n")
+    for f, title in (("unlisted", "not listed by the registry"), ("publisher-change", "published by an account that published no earlier version"),
+                     ("first-release", "the first release of the package"), ("young", "published under %d days ago" % QUARANTINE), ("yanked", "yanked")):
+        for r in flagged[f][:50]:
+            a = ages[r["i"]]
+            extra = ""
+            if f == "publisher-change":
+                extra = ": %s (earlier: %s)%s" % (a.get("publisher"), ", ".join(a.get("earlier", [])[:5]),
+                                                  ", trusted publishing from CI" if a.get("publisher") == "GitHub Actions" else "")
+            out.append("  %s: %s %s %s (%s)%s" % (title, r["eco"], r["name"], r["new"], r["lockfile"], extra))
+        if len(flagged[f]) > 50:
+            out.append("  %s: %d more in %s/ages.tsv" % (title, len(flagged[f]) - 50, outname))
+    for r in rows:
+        if "young" in ages.get(r["i"], {}).get("flags", []):
+            r["marks"].add("young")
+    candidates, seen = [], set()
+    for r in sorted((r for r in rows if r["public"] and r["eco"] in ("npm", "crates") and r["old"] != r["new"]),
+                    key=lambda r: (rank(r), r["i"])):
+        k = (r["eco"], r["name"], r["old"], r["new"])
+        if k not in seen:
+            seen.add(k)
+            candidates.append(r)
+    pool = [r for r in candidates if rank(r) < 7]
+    chosen, over = pool[:BUDGET], pool[BUDGET:]
+    by = {}
+    for r in chosen:
+        name = dict((c, m) for m, c in CATEGORY)[rank(r)]
+        by[name] = by.get(name, 0) + 1
+    line = ("budget: %d entries to compare (%s); over the %d-entry budget: %d; metadata only: %d; PyPI rows, metadata only: %d; same version with a new checksum: %d; not public, never fetched (SC-061): %d; a version outside its registry grammar, never sent: %d"
+            % (len(chosen), ", ".join("%s %d" % (m, by.get(m, 0)) for m, _ in CATEGORY), BUDGET, len(over), len(candidates) - len(pool),
+               sum(1 for r in rows if r["eco"] == "pypi" and r["public"] and r["old"] != r["new"]), sum(1 for r in rows if r["old"] == r["new"]),
+               sum(1 for r in rows if r["source"] != "public"), sum(1 for r in rows if r["source"] == "public" and not r["public"])))
+    out.append(line)
+    summary.append(line)
+    fetched = failed = 0
+    failures, results = [], []
+    for k, r in enumerate(chosen, 1):
+        sides = [("new", r["new"])] + ([("old", r["old"])] if r["old"] != "-" and r["oldsource"] == "public" else [])
+        got = {}
+        os.mkdir(os.path.join(outdir, str(k)), 0o700)
+        for side, version in sides:
+            dest = os.path.join(outdir, str(k), side)
+            ok, said, left = fetch_one(fetcher, r["eco"], r["name"], version, records, dest)
+            if not ok:
+                time.sleep(2)
+                if os.path.exists(dest):
+                    shutil_rm(dest)
+                ok, said, left = fetch_one(fetcher, r["eco"], r["name"], version, records, dest)
+            if ok:
+                fetched += 1
+                got[side] = (os.path.join(dest, "files"), left)
+            else:
+                failed += 1
+                failures.append("%s %s %s: %s" % (r["eco"], r["name"], version, said))
+        if "new" in got and ("old" in got or len(sides) == 1):
+            s = sweep(got["old"][0] if "old" in got else None, got["new"][0], got["new"][1])
+        else:
+            s = None
+        results.append((k, r, s))
+    line = "artifacts: %d entries, %d artifacts fetched, %d failed after one retry" % (len(chosen), fetched, failed)
+    out.append(line)
+    summary.append(line)
+    for f in failures:
+        out.append("  not fetched: %s" % f)
+    tot59 = sum(1 for _, _, s in results if s for h in s["hits"] if h[0] == "SC-059")
+    tot60 = sum(1 for _, _, s in results if s for h in s["hits"] if h[0] == "SC-060")
+    totbin = sum(len(s["binary"]) for _, _, s in results if s)
+    line = ("sweep: SC-059 %d hits in %d entries, SC-060 %d hits in %d entries, binary files added or changed %d in %d entries; the hits are in the report"
+            % (tot59, sum(1 for _, _, s in results if s and any(h[0] == "SC-059" for h in s["hits"])),
+               tot60, sum(1 for _, _, s in results if s and any(h[0] == "SC-060" for h in s["hits"])),
+               totbin, sum(1 for _, _, s in results if s and s["binary"])))
+    out.append(line)
+    summary.append(line)
+    out.append("")
+    out.append("== the entries compared, counts first (files under %s/<n>/new/files and old/files)" % outname)
+    for k, r, s in results:
+        cats = ",".join(m for m, _ in CATEGORY if m in r["marks"])
+        if s is None:
+            out.append("%d. %s %s %s -> %s [%s] not compared: an artifact was not fetched" % (k, r["eco"], r["name"], r["old"], r["new"], cats))
+            continue
+        out.append("%d. %s %s %s -> %s [%s] SC-059 %d, SC-060 %d, binary %d; files +%d ~%d -%d%s"
+                   % (k, r["eco"], r["name"], r["old"], r["new"], cats, sum(1 for h in s["hits"] if h[0] == "SC-059"),
+                      sum(1 for h in s["hits"] if h[0] == "SC-060"), len(s["binary"]), s["added"], s["changed"], s["removed"],
+                      "" if r["old"] != "-" and r["oldsource"] == "public" else "; no earlier public version: every file is new"))
+    if over:
+        out.append("")
+        out.append("== over the %d-entry budget, metadata only" % BUDGET)
+        for r in over[:200]:
+            out.append("  %s %s %s -> %s [%s]" % (r["eco"], r["name"], r["old"], r["new"], ",".join(m for m, _ in CATEGORY if m in r["marks"])))
+        if len(over) > 200:
+            out.append("  ... %d more" % (len(over) - 200))
+    out.append("")
+    out.append("== the hits, by entry (at most 30 lines a file and 300 an entry)")
+    for k, r, s in results:
+        if not s or not (s["hits"] or s["binary"]):
+            continue
+        out.append("-- %d. %s %s %s -> %s" % (k, r["eco"], r["name"], r["old"], r["new"]))
+        per, total = {}, 0
+        for kind, p, n, text in s["hits"]:
+            per[p] = per.get(p, 0) + 1
+            if per[p] > 30 or total >= 300:
+                continue
+            total += 1
+            out.append("%s %s:%d: %s" % (kind, shown(p), n, shown(text.strip())[:240]))
+        for p in s["binary"][:30]:
+            out.append("binary %s" % shown(p))
+        extra = len(s["hits"]) - total
+        if extra > 0:
+            out.append("  ... %d more hits in this entry" % extra)
+    log.close()
+    with open(report, "w", encoding="utf-8") as f:
+        f.write("\n".join(shown(x) if x else "" for x in out) + "\n")
+    for line in summary:
+        print(">> " + shown(line))
+    if failed:
+        print("%d of %d selected artifacts could not be fetched after one retry" % (failed, failed + fetched))
+        sys.exit(3)
+    flags = tot59 + tot60 + totbin + sum(len(v) for v in flagged.values())
+    sys.exit(1 if flags else 0)
+
+
+def shutil_rm(path):
+    import shutil
+    shutil.rmtree(path, ignore_errors=True)
+
+
 try:
     what = sys.argv[1]
     if what == "time":
@@ -1121,6 +1630,10 @@ try:
         verify(*sys.argv[2:5])
     elif what == "unpack":
         unpack(*sys.argv[2:7])
+    elif what == "plan":
+        services(sys.argv[2], sys.argv[3])
+    elif what == "budget":
+        budget(*sys.argv[2:12])
 except SystemExit:
     raise
 except BaseException as why:
@@ -1345,4 +1858,31 @@ case "$ACTION" in
     printf '%s\n' "$result" >> "$DEPS/$ACTION-$N.txt"
     [ "$rc" = 0 ] || done_with 3 "${result##*$'\n'}"
     done_with 0 "$NAME $VER, its $algo digest as $reg gives it, unpacked into $R/deps/$ACTION-$N/files" ;;
+  lock-budget)
+    plan=$(registry_py plan "$WT/$SETF" "$AGE") || done_with 3 "${plan:-the set cannot be read}"
+    for svc in $plan; do
+      case "$svc:$AGE" in
+        npmjs.org:on) disclose npmjs.org "the name of each new npm package in this set (its registry record: publish times and publishers), then the tarballs of the versions its budget selects" "$SETF" ;;
+        npmjs.org:off) disclose npmjs.org "the npm versions this set's budget selects (each version's registry record, then its tarball)" "$SETF" ;;
+        crates.io:on) disclose crates.io "the name of each new crate in this set (its crates.io record: publish times and publishers), then the .crate files of the versions its budget selects" "$SETF" ;;
+        crates.io:off) disclose crates.io "the crate versions this set's budget selects (each version's crates.io record, then its .crate download)" "$SETF" ;;
+        pypi.org:on) disclose pypi.org "the name of each new PyPI project in this set (its PyPI JSON record: upload times)" "$SETF" ;;
+      esac
+    done
+    : > "$S/head"
+    keep "$S/head"
+    AD=$DEPS/$ACTION-$N
+    confine_mkdir "$AD" || done_with 3 "cannot create $R/deps/$ACTION-$N"
+    STEP_OUT=$S/summary
+    step / ${NET[@]+"${NET[@]}"} python3 -I -c "$REGISTRY_PY" budget "$WT/$SETF" "$SETF" "$S" "$AD" "$R/deps/$ACTION-$N" "$S/report" "$AGE" "$DEADLINE" "$GET_MAX" "$UA"
+    STEP_OUT=""
+    [ ! -f "$S/report" ] || cat "$S/report" >> "$DEPS/$ACTION-$N.txt"
+    [ ! -f "$S/summary" ] || grep '^>> ' "$S/summary"
+    why=$(stopped)
+    [ -z "$why" ] || done_with 3 "lock-budget stopped: $why"
+    case "$STEP_END" in
+      'exit 0') done_with 0 "nothing flagged" ;;
+      'exit 1') done_with 1 "rows or hits flagged, counts first in the report" ;;
+      *) last=$(tail -n 1 "$S/summary" 2>/dev/null); done_with 3 "${last:-lock-budget failed ($STEP_END)}" ;;
+    esac ;;
 esac

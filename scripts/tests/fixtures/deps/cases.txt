@@ -5,10 +5,10 @@
 # not set.
 # One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each
 # case prints nothing on stdout, makes no scratch directory and changes nothing in the working directory.
-64	deps: refused: usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact	nope
-64	deps: refused: usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact	--help
-64	deps: refused: usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact	CARGO-AUDIT
-64	deps: refused: give --run <R>, the run directory (usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact)	cargo-audit
+64	deps: refused: usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info, fetch-artifact and lock-budget	nope
+64	deps: refused: usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info, fetch-artifact and lock-budget	--help
+64	deps: refused: usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info, fetch-artifact and lock-budget	CARGO-AUDIT
+64	deps: refused: give --run <R>, the run directory (usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info, fetch-artifact and lock-budget)	cargo-audit
 64	deps: refused: --run needs a value	cargo-audit	--run
 64	deps: refused: give --run once	cargo-audit	--run	audit_1	--run	audit_1
 64	deps: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: linkdir	cargo-audit	--run	linkdir
@@ -26,7 +26,7 @@
 64	deps: refused: --manifest is larger than 50 MB: big/Cargo.lock	cargo-audit	--run	audit_1	--manifest	big/Cargo.lock
 64	deps: refused: cargo-audit takes no package name: extra	cargo-audit	--run	audit_1	--manifest	Cargo.lock	extra
 64	deps: refused: give --no-fetch once	cargo-audit	--run	audit_1	--manifest	Cargo.lock	--no-fetch	--no-fetch
-64	deps: refused: --offline is not an argument deps.sh takes (usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact)	cargo-audit	--run	audit_1	--manifest	Cargo.lock	--offline
+64	deps: refused: --offline is not an argument deps.sh takes (usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info, fetch-artifact and lock-budget)	cargo-audit	--run	audit_1	--manifest	Cargo.lock	--offline
 64	deps: refused: cargo-audit takes one --manifest, a Cargo.lock	cargo-audit	--run	audit_1	--manifest	Cargo.lock	--manifest	sub/Cargo.lock
 64	deps: refused: cargo-tree takes --manifest <dir>/Cargo.toml, the one cargo runs on, first	cargo-tree	--run	audit_1	--manifest	Cargo.lock
 64	deps: refused: the Cargo.lock goes beside the first Cargo.toml, Cargo.toml	cargo-tree	--run	audit_1	--manifest	Cargo.toml	--manifest	sub/Cargo.lock
@@ -58,7 +58,7 @@
 64	deps: refused: a crate name is a letter, then letters, digits, - and _, at most 64, not 9serde	crate-info	--run	audit_1	9serde
 64	deps: refused: a crate name is a letter, then letters, digits, - and _, at most 64, not ser.de	crate-info	--run	audit_1	ser.de
 64	deps: refused: a version is <n>.<n>.<n>, with an optional -<pre-release> and +<build>, not 1.0	crate-info	--run	audit_1	serde	1.0
-64	deps: refused: -x is not an argument deps.sh takes (usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact)	pypi-info	--run	audit_1	-x
+64	deps: refused: -x is not an argument deps.sh takes (usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info, fetch-artifact and lock-budget)	pypi-info	--run	audit_1	-x
 64	deps: refused: a PyPI project name is letters, digits and -._, starting and ending with a letter or digit, at most 100, not _x	pypi-info	--run	audit_1	_x
 64	deps: refused: a PyPI project name is letters, digits and -._, starting and ending with a letter or digit, at most 100, not x_	pypi-info	--run	audit_1	x_
 64	deps: refused: a PyPI project name is letters, digits and -._, starting and ending with a letter or digit, at most 100, not a/b	pypi-info	--run	audit_1	a/b
@@ -73,3 +73,12 @@
 64	deps: refused: an npm package name is [@<scope>/]<name>, of letters, digits and -._~, at most 214 bytes, not nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn...	npm-view	--run	audit_1	nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn
 64	deps: refused: a crate name is a letter, then letters, digits, - and _, at most 64, not ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc	crate-info	--run	audit_1	ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 64	deps: refused: an npm package name is [@<scope>/]<name>, of letters, digits and -._~, at most 214 bytes, not left-pad?	npm-view	--run	audit_1	left-pad
+64	deps: refused: lock-budget takes one word: the set lock-delta.sh set wrote, <R>/deps/lock-set-<n>.tsv	lock-budget	--run	audit_1
+64	deps: refused: lock-budget takes one word: the set lock-delta.sh set wrote, <R>/deps/lock-set-<n>.tsv	lock-budget	--run	audit_1	audit_1/deps/lock-set-1.tsv	extra
+64	deps: refused: lock-budget takes no --manifest	lock-budget	--run	audit_1	--manifest	Cargo.lock	audit_1/deps/lock-set-1.tsv
+64	deps: refused: lock-budget takes a set in this run, audit_1/deps/lock-set-<n>.tsv, not Cargo.lock	lock-budget	--run	audit_1	Cargo.lock
+64	deps: refused: lock-budget takes a set in this run, audit_1/deps/lock-set-<n>.tsv, not audit_1/deps/lock-set-0.tsv	lock-budget	--run	audit_1	audit_1/deps/lock-set-0.tsv
+64	deps: refused: lock-budget takes a set in this run, audit_1/deps/lock-set-<n>.tsv, not incident_1/deps/lock-set-1.tsv	lock-budget	--run	audit_1	incident_1/deps/lock-set-1.tsv
+64	deps: refused: lock-budget takes a set in this run, audit_1/deps/lock-set-<n>.tsv, not audit_1/deps/lock-set-1x.tsv	lock-budget	--run	audit_1	audit_1/deps/lock-set-1x.tsv
+64	deps: refused: lock-budget takes a set in this run, audit_1/deps/lock-set-<n>.tsv, not audit_1/deps/../deps/lock-set-1.tsv	lock-budget	--run	audit_1	audit_1/deps/../deps/lock-set-1.tsv
+64	deps: refused: the set is not an existing regular file: audit_1/deps/lock-set-9.tsv	lock-budget	--run	audit_1	audit_1/deps/lock-set-9.tsv
