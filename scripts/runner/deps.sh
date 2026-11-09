@@ -58,8 +58,9 @@
 #                   then at most 40 of the other npm and crates rows whose version changed, in this order:
 #                   direct dependencies, pins, install scripts, versions under 14 days, sources now on the
 #                   public registry; PyPI rows and the rest are metadata only. Each entry's new and
-#                   old artifacts are fetched as fetch-artifact fetches one, with one retry, into
-#                   <R>/deps/lock-budget-<n>/<k>/new and old, and compared: the files added, changed and
+#                   old artifacts are fetched as fetch-artifact fetches one, its digest checked before it is
+#                   kept, with one retry, at most 50 MB a download and 500 MB unpacked in the whole call (one
+#                   past either counts as failed), into <R>/deps/lock-budget-<n>/<k>/new and old, and compared: the files added, changed and
 #                   removed, the added lines matched against SC-059's and SC-060's patterns, binary files and
 #                   entries left out of the unpacked files, counts first. A row from a source that is not
 #                   public is never sent or fetched. The report goes to <R>/deps/lock-budget-<n>.txt, the
@@ -809,6 +810,8 @@ except ImportError:
     lzma = None
 
 FILES, BYTES = 50000, 512 * 1024 * 1024
+# What an unpack may take, and what it says past that: BYTES, or for lock-budget what its call has left.
+CAP = [BYTES, "the artifact unpacks to more than 512 MiB"]
 # What a tar may hold in pax and GNU long-name headers in all, and in global pax headers; what a zip
 # central directory may take.
 EXTENDED, GLOBAL, CENTRAL = 4 * 1024 * 1024, 128, 16 * 1024 * 1024
@@ -934,8 +937,8 @@ class Capped(tarfile.TarInfo):
         else:
             tf.chain = 0
             tf.data_bytes = getattr(tf, "data_bytes", 0) + self.size
-            if tf.data_bytes > BYTES:
-                fail("the artifact unpacks to more than 512 MiB")
+            if tf.data_bytes > CAP[0]:
+                fail(CAP[1])
         if self.type == tarfile.XGLTYPE:
             tf.global_bytes = getattr(tf, "global_bytes", 0) + self.size
             if tf.global_bytes > GLOBAL:
@@ -1099,8 +1102,8 @@ def unpack(archive, filename, algo, expected, dest):
         if declared_size < 0:
             fail("the artifact gives an entry a size below zero")
         declared += declared_size
-        if declared > BYTES:
-            fail("the artifact unpacks to more than 512 MiB")
+        if declared > CAP[0]:
+            fail(CAP[1])
         entries.append((name, kind, declared_size if kind == "file" else 0, ref))
     files = dirs = size = 0
     for e in entries:
@@ -1167,6 +1170,8 @@ MARKS = (("key", 0),) + CATEGORY
 BUDGET, ASK_CAP, ASK_SECONDS, CALL_SECONDS, CRATES_GAP, QUARANTINE = 40, 1000, 300, 540, 1.0, 14
 # At most this many publish-age requests in flight; crates.io takes one a second whatever the number.
 IN_FLIGHT = 8
+# At most this much a download of the budget, and this much unpacked in one call.
+ARTIFACT_MAX, CALL_UNPACKED = 50 * 1000 * 1000, 500 * 1000 * 1000
 # The publisher the npm registry names for a release made by trusted publishing from GitHub Actions.
 CI_PUBLISHER = "GitHub Actions"
 
@@ -1229,10 +1234,10 @@ class Fetcher:
     def __init__(self, scratch, deadline, maxsize, agent, log):
         import threading
         self.scratch, self.deadline, self.maxsize, self.agent, self.log = scratch, deadline, maxsize, agent, log
-        self.count, self.last_crates, self.k = 0, 0.0, 0
+        self.count, self.last_crates, self.k, self.unpacked = 0, 0.0, 0, 0
         self.lock, self.crates_lock = threading.Lock(), threading.Lock()
 
-    def get(self, url, accept_json=False, compressed=False, most=120):
+    def get(self, url, accept_json=False, compressed=False, most=120, size=None):
         import subprocess, time
         if url.startswith("https://crates.io/"):
             with self.crates_lock:
@@ -1248,7 +1253,7 @@ class Fetcher:
             self.count += 1
             out = os.path.join(self.scratch, "get-%d" % self.k)
         args = ["curl", "-q", "--proto", "=https", "--proto-redir", "=https", "--tlsv1.2", "-sS", "--connect-timeout", "30",
-                "--max-time", str(min(left - 2, most)), "--max-filesize", str(self.maxsize), "-A", self.agent]
+                "--max-time", str(min(left - 2, most)), "--max-filesize", str(size or self.maxsize), "-A", self.agent]
         if accept_json:
             args += ["-H", "Accept: application/json"]
         if compressed:
@@ -1258,12 +1263,17 @@ class Fetcher:
         code = p.stdout.decode("ascii", "replace")[-3:]
         with self.lock:
             self.log.write("GET %s -> %s\n" % (url, code if p.returncode == 0 else "curl exit %d" % p.returncode))
+        if p.returncode == 63 and size:
+            return None, "the artifact at %s is larger than %d MB" % (url, size // 1000000)
         if p.returncode != 0:
             return None, "the request to %s did not finish (curl exit %d: %s)" % (url, p.returncode, shown(p.stderr.decode("utf-8", "replace").strip())[:200])
         if not re.match(r"^[0-9]{3}$", code):
             return None, "the request to %s gave no HTTP status" % url
         if code != "200":
             return None, "HTTP %s from %s" % (code, url)
+        if size and os.path.getsize(out) > size:
+            os.remove(out)
+            return None, "the artifact at %s is larger than %d MB" % (url, size // 1000000)
         return out, ""
 
 
@@ -1516,16 +1526,30 @@ def fetch_one(fetcher, eco, name, version, records, dest):
     if len(parts) != 4:
         return False, "the registry record names no artifact", []
     url, algo, digest, filename = parts
-    got, why = fetcher.get(url)
+    got, why = fetcher.get(url, size=ARTIFACT_MAX)
     if not got:
         return False, why, []
+    # the digest first, so an artifact that does not match is neither kept nor unpacked
+    ok, _, said = quiet(verify, got, algo, digest)
+    if not ok:
+        os.remove(got)
+        return False, said.strip().split("\n")[-1], []
     os.mkdir(dest, 0o700)
     shutil.copyfile(got, os.path.join(dest, filename))
     os.mkdir(os.path.join(dest, "files"), 0o700)
-    ok, _, said = quiet(unpack, got, filename, algo, digest, os.path.join(dest, "files"))
-    os.remove(got)
+    room = CALL_UNPACKED - fetcher.unpacked
+    CAP[:] = [min(BYTES, room), "the artifact unpacks to more than 512 MiB" if room >= BYTES
+              else "the artifacts of this call would unpack to more than %d MB" % (CALL_UNPACKED // 1000000)]
+    try:
+        ok, _, said = quiet(unpack, got, filename, algo, digest, os.path.join(dest, "files"))
+    finally:
+        CAP[:] = [BYTES, "the artifact unpacks to more than 512 MiB"]
+        os.remove(got)
     if not ok:
+        shutil.rmtree(dest, ignore_errors=True)
         return False, said.strip().split("\n")[-1], []
+    m = re.search(r"^unpacked: [0-9]+ files, ([0-9]+) bytes", said, re.M)
+    fetcher.unpacked += int(m.group(1)) if m else 0
     left = [shown(l.strip()).split(": ")[0] for l in said.split("\n") if l.startswith("  ")]
     return True, said.strip().split("\n")[0], left
 

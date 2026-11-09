@@ -2333,7 +2333,7 @@ check "lock-budget: an AUDITOR_PUBLISH_AGE other than on or off is refused befor
 # an npm tarball with two first folders, whose second copy of index.js is the one npm keeps, and an entry
 # whose name is not UTF-8; a package the registry has no record of; a call out of time
 python3 -I - "$T/fix" <<'PY'
-import base64, hashlib, io, json, os, sys, tarfile, time
+import base64, hashlib, io, json, os, sys, tarfile, time, zlib
 fix = sys.argv[1]
 def put(url, data):
     key = url.replace("/", "_").replace(":", "_").replace("%", "_").replace("@", "_")
@@ -2355,6 +2355,32 @@ put("https://registry.npmjs.org/lb-twotop", json.dumps({"name": "lb-twotop", "ti
 put("https://registry.npmjs.org/lb-flaky", "{}")
 open(os.path.join(fix, "https___registry.npmjs.org_lb-flaky.status"), "w").write("500")
 put("https://registry.npmjs.org/lb-notime", json.dumps({"name": "lb-notime", "time": {}, "versions": {"1.0.0": {"name": "lb-notime", "version": "1.0.0", "_npmUser": {"name": "gus"}}}}))
+# the bounds and the checks every selected artifact passes: a download over 50 MB, one that declares more than the
+# call's 500 MB unpacked, one whose digest does not match, and one whose entries climb out, sit at an absolute
+# path or are links
+def record(name, data, integrity=None):
+    url = "https://registry.npmjs.org/%s/-/%s-1.0.0.tgz" % (name, name)
+    put(url, data)
+    rec = {"name": name, "version": "1.0.0", "_npmUser": {"name": "hal"},
+           "dist": {"tarball": url, "integrity": integrity or "sha512-" + base64.b64encode(hashlib.sha512(data).digest()).decode()}}
+    put("https://registry.npmjs.org/%s/1.0.0" % name, json.dumps(rec))
+record("lb-big", b"\0" * 50000001)
+info = tarfile.TarInfo("package/x")
+info.size = 501000000
+c = zlib.compressobj(9, zlib.DEFLATED, 31)
+record("lb-huge", c.compress(info.tobuf(tarfile.USTAR_FORMAT) + b"\0" * 1024) + c.flush())
+record("lb-baddigest", b"x" * 100, "sha512-" + base64.b64encode(b"\0" * 64).decode())
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w:gz") as t:
+    for name, kind in (("package/index.js", "file"), ("package/../escape.txt", "file"), ("/abs.txt", "file"), ("package/link", "sym")):
+        ti = tarfile.TarInfo(name)
+        if kind == "file":
+            ti.size = 3
+            t.addfile(ti, io.BytesIO(b"ok\n"))
+        else:
+            ti.type, ti.linkname = tarfile.SYMTYPE, "/etc/passwd"
+            t.addfile(ti)
+record("lb-unsafe", buf.getvalue())
 PY
 LBN=106
 lb_set "$LBN" 'npm	package-lock.json	lb-twotop	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-gone	-	3.0.0	-	public	-'
@@ -2371,6 +2397,23 @@ lb_set "$LBN" 'npm	package-lock.json	lb-flaky	-	1.0.0	-	public	-' 'npm	package-l
 run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 check "lock-budget: a lookup that fails twice, and a version with no publish time, count as not checked, and the call goes on" \
   sh -c "[ '$RC' = 0 ] && grep -q '^>> publish age: 2 names asked in [0-9]* s; not checked: 2 of 2 rows (HTTP 500 from https://registry.npmjs.org/lb-flaky, no publish time);' '$T/out' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-flaky\$' '$T/calls') = 2 ]"
+LBN=111
+lb_set "$LBN" 'npm	package-lock.json	lb-big	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-huge	-	1.0.0	-	public	direct' \
+  'npm	package-lock.json	lb-baddigest	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/.*; output audit_1\/deps\/lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/err")
+LBR=$WT/audit_1/deps/lock-budget-$n.txt
+check "lock-budget: a download over 50 MB, more than the call's 500 MB unpacked and a digest that does not match each fail, exit 3" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 3 of 3 selected artifacts could not be fetched after one retry; output ' '$T/err' && grep -qxF '  not fetched: npm lb-big 1.0.0: the artifact at https://registry.npmjs.org/lb-big/-/lb-big-1.0.0.tgz is larger than 50 MB' '$LBR' && grep -qxF '  not fetched: npm lb-huge 1.0.0: the artifacts of this call would unpack to more than 500 MB' '$LBR' && grep -q '^  not fetched: npm lb-baddigest 1.0.0: the digest does not match: ' '$LBR'"
+check "... none of the three is kept or unpacked" sh -c "[ -d '$WT/audit_1/deps/lock-budget-$n/3' ] && [ -z \"\$(find '$WT/audit_1/deps/lock-budget-$n' -mindepth 2 -print)\" ]"
+LBN=112
+lb_set "$LBN" 'npm	package-lock.json	lb-unsafe	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+LBR=$WT/audit_1/deps/lock-budget-$n.txt
+check "lock-budget: entries that climb out, sit at an absolute path or are links are left out and listed, each an SC-060 hit" \
+  sh -c "[ '$RC' = 1 ] && grep -q '^SC-060 package/../escape.txt:0: an entry left out of the unpacked files' '$LBR' && grep -q '^SC-060 /abs.txt:0: an entry left out' '$LBR' && grep -q '^SC-060 package/link:0: an entry left out' '$LBR' && [ -f '$WT/audit_1/deps/lock-budget-$n/1/new/files/package/index.js' ] && [ ! -e '$WT/audit_1/deps/lock-budget-$n/1/new/escape.txt' ] && [ -z \"\$(find '$WT/audit_1/deps/lock-budget-$n' ! -type f ! -type d -print)\" ]"
+check "... and the run directory still passes its check" sh -c "(cd '$WT' && '$ROOT/scripts/rundir.sh' check audit_1) >/dev/null"
 LBN=107
 lb_set "$LBN" 'npm	package-lock.json	lb-young	-	0.1.0	-	public	direct'
 run "$DEPS" "$WT" AUDITOR_RUN_TIMEOUT=3 -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
