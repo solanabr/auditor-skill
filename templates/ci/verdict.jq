@@ -47,7 +47,8 @@ def verdict_ok:
   and (.verdict | member(["pass", "fail"]))
   and (.threshold | int_in(1; 10))
   and (.run | int_in(0; 999999))
-  and (.stopped | member(["none", "preflight", "run-directory", "arguments", "changed-set", "denied"]))
+  and (.stopped | member(["none", "preflight", "run-directory", "arguments", "changed-set", "denied", "corpus-pass",
+    "line-budget"]))
   and (.analyzers_run | names)
   and (.analyzers_not_run | names)
   and ([.analyzers_run[], .analyzers_not_run[]] | length == (unique | length));
@@ -78,7 +79,7 @@ def findings_ok:
   and (.final | type == "boolean")
   and (.verdict | member(["pass", "fail"]))
   and (.threshold | int_in(1; 10))
-  and (.stopped | member(["none", "arguments", "changed-set", "denied"]))
+  and (.stopped | member(["none", "arguments", "changed-set", "denied", "corpus-pass", "line-budget"]))
   and (.run | type == "string" and test("^audit_[0-9]+$"))
   and .report == .run + (if .command == "diff-audit" then "/PR-REPORT.md" else "/QUICK-SCAN.md" end)
   and (.commits | type == "object" and (keys - ["base", "head"]) == [] and (.head | sha)

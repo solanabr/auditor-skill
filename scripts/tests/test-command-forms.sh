@@ -1291,6 +1291,7 @@ commands/diff-audit.md	A USD budget Claude Code shows you is a backstop, not a p
 commands/quick-scan.md	never stop reading early to save spend, and never give a budget, turn or time limit as the reason a file went unread
 commands/diff-audit.md	never stop reading early to save spend, and never give a budget, turn or time limit as the reason a file went unread
 docs/ci.md	Give a quick-scan in CI `--max-budget-usd 10`.
+docs/ci.md	a section or vector file its selection lists was left unread (`stopped: corpus-pass`)
 commands/diff-audit.md	first, with the Read tool, before any verdict of this step, whatever the size of the change
 commands/diff-audit.md	Each verdict names the checklist item id or the vector step it rests on
 commands/deep-review.md	Each verdict names the checklist item id or the vector step it rests on

@@ -32,9 +32,9 @@
       "type": "integer"
     },
     "stopped": {
-      "description": "none, or the step the run stopped at: preflight (a refusal), run-directory (rundir.sh refused), arguments, changed-set, denied.",
+      "description": "none, or the step the run stopped at: preflight (a refusal), run-directory (rundir.sh refused), arguments, changed-set, denied, corpus-pass (a section or vector file audit_<n>/scope.md lists, left unread), line-budget (a change over the line budget, with --over-budget fail).",
       "type": "string",
-      "enum": ["none", "preflight", "run-directory", "arguments", "changed-set", "denied"]
+      "enum": ["none", "preflight", "run-directory", "arguments", "changed-set", "denied", "corpus-pass", "line-budget"]
     },
     "analyzers_run": {
       "description": "The analyzers that ran, as findings.json names them.",

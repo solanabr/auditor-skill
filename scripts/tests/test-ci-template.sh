@@ -362,6 +362,9 @@ else bad "findings-to-sarif.jq failed on the sample: $(sed -n 1p "$T/sarif.err")
 jq '.analyzers[1].status = "not-run"' "$T/fail-findings.json" > "$T/notrun-findings.json"
 got=$(jq -f "$CI/findings-to-sarif.jq" "$T/notrun-findings.json" | jq -r '.runs[0].invocations[0].executionSuccessful')
 check "an analyzer that did not run makes the invocation unsuccessful" [ "$got" = false ]
+jq '.stopped = "corpus-pass" | .verdict = "fail"' "$T/pass-findings.json" > "$T/vp-findings.json"
+got=$(jq -f "$CI/findings-to-sarif.jq" "$T/vp-findings.json" | jq -r '.runs[0].invocations[0].executionSuccessful')
+check "a corpus pass cut short makes the invocation unsuccessful" [ "$got" = false ]
 printf '%s\n' '{"schema_version":1,"command":"diff-audit"}' > "$T/empty.json"
 if out=$(jq -f "$CI/findings-to-sarif.jq" "$T/empty.json" 2> /dev/null); then bad "findings-to-sarif.jq accepted a file with no findings"
 elif [ -n "$out" ]; then bad "findings-to-sarif.jq printed something for a file with no findings"
@@ -397,6 +400,25 @@ same "fail: an [UNDETERMINED] finding counts" "auditor: verdict: fail (threshold
 jq '.findings[0].rule5b = "partial"' "$T/fail-findings.json" | jq '.verdict = "pass"' > "$T/f.json"
 same "pass: a [PARTIAL] finding does not count" "auditor: verdict: pass (threshold 7, $RAN)" \
   "$(verdict "$T/pass-result.json" "$T/f.json")"
+jq '.structured_output.stopped = "corpus-pass" | .structured_output.verdict = "fail"' "$T/pass-result.json" > "$T/v.json"
+same "fail: a corpus pass that left a selected file unread" "auditor: verdict: fail (threshold 7, $RAN; stopped: corpus-pass)" \
+  "$(verdict "$T/v.json" "$T/vp-findings.json")"
+jq '.command = "quick-scan" | .report = "audit_3/QUICK-SCAN.md" | del(.commits.base)' "$T/vp-findings.json" > "$T/f.json"
+jq '.structured_output.command = "quick-scan"' "$T/v.json" > "$T/v2.json"
+same "fail: a corpus pass cut short, in a quick-scan" "auditor: verdict: fail (threshold 7, $RAN; stopped: corpus-pass)" \
+  "$(verdict "$T/v2.json" "$T/f.json" 7 quick-scan)"
+jq '.verdict = "pass"' "$T/vp-findings.json" > "$T/f.json"
+jq '.structured_output.stopped = "corpus-pass"' "$T/pass-result.json" > "$T/v2.json"
+same "fail: a findings file that says pass for a corpus pass cut short" \
+  "auditor: verdict: fail (threshold 7, $RAN; stopped: corpus-pass; the run's findings file does not match templates/ci/findings.schema.json)" \
+  "$(verdict "$T/v2.json" "$T/f.json")"
+same "fail: a result that stops at corpus-pass while its findings file stopped nowhere" \
+  "auditor: verdict: fail (threshold 7, $RAN; stopped: corpus-pass; the findings file and the result disagree)" \
+  "$(verdict "$T/v.json" "$T/pass-findings.json")"
+jq '.stopped = "line-budget" | .verdict = "fail"' "$T/pass-findings.json" > "$T/f.json"
+jq '.structured_output.stopped = "line-budget" | .structured_output.verdict = "fail"' "$T/pass-result.json" > "$T/v.json"
+same "fail: a change over the line budget, with the owner switch set to fail" \
+  "auditor: verdict: fail (threshold 7, $RAN; stopped: line-budget)" "$(verdict "$T/v.json" "$T/f.json")"
 jq '.threshold = 9 | .verdict = "pass"' "$T/fail-findings.json" > "$T/f.json"
 jq '.structured_output.threshold = 9 | .structured_output.verdict = "pass"' "$T/fail-result.json" > "$T/v.json"
 same "pass: the severity-8 finding at threshold 9" "auditor: verdict: pass (threshold 9, $RAN)" \

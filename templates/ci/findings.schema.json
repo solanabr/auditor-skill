@@ -28,8 +28,8 @@
       "maximum": 10
     },
     "stopped": {
-      "description": "none, or the step the run stopped at once its run directory existed: arguments (a --fail-on value or range the command does not take), changed-set (git-ro.sh could not give the range's changed files or pin its ends), denied (a call the run cannot do without was denied).",
-      "enum": ["none", "arguments", "changed-set", "denied"]
+      "description": "none, or the step the run stopped at once its run directory existed: arguments (a --fail-on value or range the command does not take), changed-set (git-ro.sh could not give the range's changed files or pin its ends), denied (a call the run cannot do without was denied), corpus-pass (a checklist section or known-vector file that audit_<n>/scope.md lists was left unread), line-budget (with --over-budget fail, a change larger than the changed-code budget of references/depth-scope.md §6).",
+      "enum": ["none", "arguments", "changed-set", "denied", "corpus-pass", "line-budget"]
     },
     "run": {
       "description": "The run directory, audit_<n>.",
@@ -76,7 +76,7 @@
       "then": { "properties": { "verdict": { "const": "fail" } } }
     },
     {
-      "if": { "properties": { "stopped": { "enum": ["arguments", "changed-set", "denied"] } } },
+      "if": { "properties": { "stopped": { "enum": ["arguments", "changed-set", "denied", "corpus-pass", "line-budget"] } } },
       "then": { "properties": { "verdict": { "const": "fail" } } }
     }
   ],
