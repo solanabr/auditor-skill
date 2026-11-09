@@ -5,7 +5,7 @@
 A run uses it in this order:
 1. Work out the domains (§1) and, for diff-audit, the kind of each changed file (§4), with Grep over the code, never by judgment.
 2. Write the selection to `audit_<n>/scope.md` in the form of §9, with the Write tool. No checklist section and no vector file is read before it; `known-vectors/INDEX.md`, whose cells select the rows, may be.
-3. Read exactly what scope.md lists: each section with the Read tool at its start line, with its line count as the limit; each vector file whole.
+3. Read exactly what scope.md lists: each section with the Read tool from its `## ` heading to the next one, which is its Start line with its Lines count as the limit (when the line at Start is not the heading, Grep the file for the heading and read from there to the next `## `); each vector file whole.
 4. Before the report, check the reads against scope.md, and read any it lists that is missing. A section or file scope.md lists and the run leaves unread is an early stop (`corpus-pass`).
 
 ## 1. Domains and markers

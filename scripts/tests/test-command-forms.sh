@@ -1265,8 +1265,12 @@ commands/quick-scan.md	select the checklist sections of its §2 and the vector r
 commands/quick-scan.md	The DevOps and supply-chain rows apply to every repository.
 docs/ci.md	That is at most 62 sections, about 97 KB, for a change that touches every kind of file, and at most 46 for a change to on-chain code alone.
 commands/quick-scan.md	Write the selection to `audit_<n>/scope.md`, in the form of its §9, with the Write tool, before you read any checklist section or vector file.
-commands/quick-scan.md	each section with the Read tool at its start line, with its line count as the limit, and each vector file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, whole, with no line limit
-commands/quick-scan.md	except the items no site in scope reaches, which share the section's one N/A line (its §8)
+commands/quick-scan.md	each section with the Read tool from its `## ` heading to the next one: at its start line, with its line count as the limit, or, when that line is not the heading, from the line Grep finds the heading on to the next `## `; and each vector file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, whole, with no line limit
+commands/diff-audit.md	each section with the Read tool from its `## ` heading to the next one: at its start line, with its line count as the limit, or, when that line is not the heading, from the line Grep finds the heading on to the next `## `; and each vector file
+references/depth-scope.md	(when the line at Start is not the heading, Grep the file for the heading and read from there to the next `## `)
+commands/quick-scan.md	an item that needs a call this scan does not make, which gets `[N/A at this depth — needs <call>]`
+commands/diff-audit.md	an item that needs a call this review does not make, which gets `[N/A at this depth — needs <call>]`
+commands/quick-scan.md	except the items no site in scope reaches, which share the section's one N/A line, and an item
 commands/quick-scan.md	scan the two with the most source lines, and in Coverage & Limitations give each other one its own line, `/auditor:quick-scan <its path>`
 commands/quick-scan.md	A section or vector file that `audit_<n>/scope.md` lists and the run leaves unread is an early stop: give findings.json `"stopped": "corpus-pass"`
 commands/quick-scan.md	otherwise run the scanners of `${CLAUDE_PLUGIN_ROOT}/discovery/grep-commands.md`
