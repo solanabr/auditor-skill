@@ -133,13 +133,13 @@ The CI-only rows:
 | `checklists/11-supply-chain.md` | §11.11 Dependency-Update Review (Delta) | 112 | 34 |
 | `checklists/13-deployment-infrastructure.md` | §13.13 GitHub Actions Trigger Trust | 180 | 11 |
 
-A section is selected once, whatever number of files select it. The most a change can select is 62 sections, about 97 KB.
+A section is selected once, whatever number of files select it. The most a change can select is 62 sections, about 97 KB, and only when it touches every kind of file; a change to on-chain code alone selects at most 46.
 
 ## 5. CI: vector rows
 
-- **Floor:** min(`--fail-on`, 7) − 1, so 6 by default. Rule 1 sets no cap per row: a row of severity 6 can produce a finding of 7.
+- **Floor, on marker rows only:** min(`--fail-on`, 7) − 1, so 6 by default. Rule 1 sets no cap per row: a row of severity 6 can produce a finding of 7.
 - **The marker rows at or above the floor** whose markers occur in the changed files.
-- **The `always (…)` rows at or above the floor** of the domains the changed files detect (§3's phases), except the repository-level rows below. Each of those is read only when a changed file holds one of its subject markers. Otherwise the report gives it the fixed line "repository-level; /auditor:quick-scan and /auditor:audit cover it".
+- **Every `always (…)` row** of the domains the changed files detect (§3's phases), whatever the floor, except the repository-level rows below. Each of those is read only when a changed file holds one of its subject markers. Otherwise the report gives it the fixed line "repository-level; /auditor:quick-scan and /auditor:audit cover it".
 
 | Row | Subject markers, in a changed file's path or text |
 |---|---|

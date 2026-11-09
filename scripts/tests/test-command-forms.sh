@@ -1262,6 +1262,8 @@ commands/quick-scan.md	Write `audit_<n>/QUICK-SCAN.md` from `${CLAUDE_PLUGIN_ROO
 commands/deep-review.md	`audit_<n>/DEEP-REVIEW-<unit>.md`, from `${CLAUDE_PLUGIN_ROOT}/templates/pr-report.md`
 commands/quick-scan.md	Read `${CLAUDE_PLUGIN_ROOT}/references/depth-scope.md` and `${CLAUDE_PLUGIN_ROOT}/known-vectors/INDEX.md` with the Read tool
 commands/quick-scan.md	select the checklist sections of its §2 and the vector rows of its §3, exactly as those tables say: none is chosen by judgment
+commands/quick-scan.md	The DevOps and supply-chain rows apply to every repository.
+docs/ci.md	That is at most 62 sections, about 97 KB, for a change that touches every kind of file, and at most 46 for a change to on-chain code alone.
 commands/quick-scan.md	Write the selection to `audit_<n>/scope.md`, in the form of its §9, with the Write tool, before you read any checklist section or vector file.
 commands/quick-scan.md	each section with the Read tool at its start line, with its line count as the limit, and each vector file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, whole, with no line limit
 commands/quick-scan.md	except the items no site in scope reaches, which share the section's one N/A line (its §8)
@@ -1270,7 +1272,7 @@ commands/quick-scan.md	A section or vector file that `audit_<n>/scope.md` lists 
 commands/quick-scan.md	otherwise run the scanners of `${CLAUDE_PLUGIN_ROOT}/discovery/grep-commands.md`
 commands/diff-audit.md	Read `${CLAUDE_PLUGIN_ROOT}/references/depth-scope.md` and `${CLAUDE_PLUGIN_ROOT}/known-vectors/INDEX.md` first, with the Read tool
 commands/diff-audit.md	then select the checklist sections of its §4 and the vector rows of its §5, exactly as those tables say: none is chosen by judgment
-commands/diff-audit.md	The floor of §5 is min(`--fail-on`, 7) − 1, so 6 by default.
+commands/diff-audit.md	The floor of §5 is min(`--fail-on`, 7) − 1, so 6 by default, and it applies to marker rows only
 commands/diff-audit.md	Write the selection to `audit_<n>/scope.md`, in the form of its §9, with the Write tool, before you read any checklist section or vector file.
 commands/diff-audit.md	A repository-level row that no changed file touches gets §5's fixed line instead.
 commands/diff-audit.md	Then apply the changed-code budget of §6 of `${CLAUDE_PLUGIN_ROOT}/references/depth-scope.md`

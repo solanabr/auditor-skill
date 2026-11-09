@@ -91,7 +91,7 @@ The tools job's line is simpler: `auditor: tools: pass` when every analyzer ran 
 
 What a pass does not tell you:
 
-- It is a Quick review: the changed code and its direct callers and callees, not a whole audit. It reads the checklist sections and known-vector rows that `references/depth-scope.md` selects for the kinds of file the change holds, and at most 5,000 changed lines, riskiest first. PR-REPORT.md counts what that leaves out.
+- It is a Quick review: the changed code and its direct callers and callees, not a whole audit. It reads the checklist sections and known-vector rows that `references/depth-scope.md` selects for the kinds of file the change holds, and at most 5,000 changed lines, riskiest first. That is at most 62 sections, about 97 KB, for a change that touches every kind of file, and at most 46 for a change to on-chain code alone. PR-REPORT.md counts what that leaves out.
 - semgrep honours the repository's own `.semgrepignore` files and `nosemgrep` comments, which a pull request can change. The tools log names each `.semgrepignore` that narrows the scan, and on a pull request from your own branches the review sees such a change in the diff; a fork's pull request gets no review. semgrep's documented defaults also leave out files over 1 MB and, in a repository with no `.semgrepignore`, folders such as `test/`, `tests/`, `vendor/`, `build/` and `dist/`.
 - A `yarn.lock`, `pnpm-lock.yaml` or `bun.lock` with no npm lockfile beside it gets no dependency audit in the tools job, and its log says so.
 - The review reads the pull request's text, and text written to steer a reviewer can steer it too. The last step catches a reply that contradicts its own findings file, not a review that was talked into missing something.
