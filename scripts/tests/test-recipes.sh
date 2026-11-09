@@ -291,7 +291,7 @@ else:
     put("go.sum", "example.invalid/a v1.0.1 h1:b=\n")
 PY
 git init -q "$LS" && python3 -I "$T/lockset.py" "$LS" base && (cd "$LS" && c base >/dev/null && git tag t-base) \
-  && python3 -I "$T/lockset.py" "$LS" head && mkdir "$LS/link" && ln -s ../web/package-lock.json "$LS/link/package-lock.json" \
+  && python3 -I "$T/lockset.py" "$LS" head \
   && (cd "$LS" && c head >/dev/null && git tag t-head && "$RUNDIR" new audit >/dev/null) || { echo "could not build the set fixture" >&2; exit 1; }
 run "$LS" "$LD" --run audit_1 set t-base..t-head
 SETF="$LS/audit_1/deps/lock-set-1.tsv"
@@ -301,9 +301,8 @@ for want in \
   'lockfiles compared: Cargo.lock (cargo, changed, 4 rows); bun/bun.lock (bun, added, 2 rows); poetry/poetry.lock (poetry, added, 2 rows); py/uv.lock (uv, added, 2 rows); web/package-lock.json (npm, changed, 10 rows); yarn/yarn.lock (yarn, changed, 2 rows)' \
   'not compared: berry/yarn.lock (yarn berry yarn.lock needs a YAML parser)' \
   'not compared: go.sum (Go modules are checked at metadata level only, never fetched)' \
-  'not compared: link/package-lock.json (a symbolic link)' \
   'not compared: pnpm-lock.yaml (pnpm-lock.yaml needs a YAML parser)' \
-  'entries: 22 (16 new packages, 5 new versions of a package, 1 with the same version and a new checksum); 22 names; 1 packages removed' \
+  'entries: 22 (16 new packages, 5 new versions of a package, 1 copies of a version already there, from another source or with another checksum); 22 names; 1 packages removed' \
   'sources: 18 from the public registry; 4 not public (git 3, registry 1): SC-061, never fetched' \
   'marks: direct 8, pin 3, key 4, install 1, source-change 1, integrity 1, new-dep 2, url-mismatch 2, close 1, known-bad 2'; do
   check "lock-delta set prints: $want" has "$T/out" "$want"
@@ -346,6 +345,69 @@ rm -f "$T"/fired-*
 run "$LS" "$LD" --run audit_1 set t-base..t-head
 check "lock-delta set: the same rows under the hostile config, and none of the programs it names runs" \
   sh -c "[ '$RC' = 0 ] && cmp -s '$SETF' '$LS/audit_1/deps/lock-set-3.tsv' && [ -z \"\$(find '$T' -maxdepth 1 -name 'fired-*' -print)\" ]"
+
+# set and the copies a package manager installs: a second copy of a name@version from another host, a version
+# moved to git with its checksum gone, an empty "name" (npm then takes the folder's), a BOM, bun.lock comments, and
+# a yarn v1 lockfile that also holds a __metadata: line; then the lockfiles set cannot compare, which stop it
+LS2="$T/lockset2"
+cat > "$T/lockset2.py" <<'PY'
+import json, os, sys
+top, side = sys.argv[1], sys.argv[2]
+def put(path, text, bom=False):
+    os.makedirs(os.path.dirname(os.path.join(top, path)) or top, exist_ok=True)
+    with open(os.path.join(top, path), "w", encoding="utf-8") as f:
+        f.write(("﻿" if bom else "") + text)
+def e(pkg, version, url=None, integrity=True, **kw):
+    d = {"version": version, "resolved": url or "https://registry.npmjs.org/%s/-/%s-%s.tgz" % (pkg, pkg.split("/")[-1], version)}
+    if integrity:
+        d["integrity"] = "sha512-" + pkg + version
+    d.update(kw)
+    return d
+root = {"name": "app", "dependencies": {"foo": "^1", "baz": "^2", "@solana/web3.js": "^1"}}
+packages = {"": root, "node_modules/foo": e("foo", "1.0.0"), "node_modules/baz": e("baz", "2.0.0"),
+            "node_modules/@solana/web3.js": e("@solana/web3.js", "1.95.5")}
+yarn = '# yarn lockfile v1\n\n\nsigner@^1:\n  version "%s"\n  resolved "https://registry.yarnpkg.com/signer/-/signer-%s.tgz#aa"\n  integrity sha512-S\n'
+bun = '{\n  "lockfileVersion": 1,\n  "packages": {\n    "kit": ["@solana/kit@%s", "", {}, "sha512-K"],\n  }\n}\n'
+if side == "base":
+    put("package-lock.json", json.dumps({"lockfileVersion": 3, "packages": packages}, indent=2) + "\n")
+    put("yarn/yarn.lock", yarn % ("1.0.0", "1.0.0"))
+    put("bun/bun.lock", bun % "2.0.0")
+else:
+    packages["node_modules/bar"] = e("bar", "1.0.0")
+    packages["node_modules/bar/node_modules/foo"] = e("foo", "1.0.0", url="https://elsewhere.invalid/foo/-/foo-1.0.0.tgz", hasInstallScript=True)
+    packages["node_modules/baz"] = e("baz", "2.0.0", url="git+ssh://git@github.com/x/baz.git#0123456789abcdef0123456789abcdef01234567", integrity=False)
+    packages["node_modules/@solana/web3.js"] = e("@solana/web3.js", "1.95.6", name="")
+    put("package-lock.json", json.dumps({"lockfileVersion": 3, "packages": packages}, indent=2) + "\n", bom=True)
+    put("yarn/yarn.lock", "__metadata:\n  version: 8\n\n" + yarn % ("1.1.0", "1.1.0"))
+    put("bun/bun.lock", "// a comment bun reads past\n" + (bun % "2.1.0").replace('"packages": {', '"packages": { /* and another */'))
+PY
+git init -q "$LS2" && python3 -I "$T/lockset2.py" "$LS2" base && (cd "$LS2" && c base >/dev/null && git tag t-base) \
+  && python3 -I "$T/lockset2.py" "$LS2" head && (cd "$LS2" && c head >/dev/null && git tag t-head && "$RUNDIR" new audit >/dev/null) \
+  || { echo "could not build the second set fixture" >&2; exit 1; }
+run "$LS2" "$LD" --run audit_1 set t-base..t-head
+SET2="$LS2/audit_1/deps/lock-set-1.tsv"
+check "lock-delta set reads a BOM, bun.lock's comments, and a yarn v1 lockfile that holds a __metadata: line" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF 'lockfiles compared: bun/bun.lock (bun, changed, 1 rows); package-lock.json (npm, changed, 4 rows); yarn/yarn.lock (yarn, changed, 1 rows)' '$T/out'"
+for want in \
+  'npm	package-lock.json	foo	1.0.0	1.0.0	public	registry:elsewhere.invalid	integrity,direct,install' \
+  'npm	package-lock.json	baz	2.0.0	2.0.0	public	git	integrity,direct' \
+  'npm	package-lock.json	@solana/web3.js	1.95.5	1.95.6	public	public	direct,key,known-bad' \
+  'npm	yarn/yarn.lock	signer	1.0.0	1.1.0	public	public	-' \
+  'npm	bun/bun.lock	@solana/kit	2.0.0	2.1.0	public	public	key'; do
+  check "lock-delta set row: ${want//$TAB/ }" has "$SET2" "$want"
+done
+LS3="$T/lockset3"
+git init -q "$LS3" && mkdir -p "$LS3/deep" "$LS3/man" "$LS3/config" && (cd "$LS3" \
+  && printf '{"lockfileVersion": 3, "packages": {}}\n' > deep/package-lock.json && cp deep/package-lock.json man/package-lock.json \
+  && printf '{}\n' > man/package.json && printf '{"lockfileVersion": 3, "packages": {}}\n' > config/deps.json \
+  && printf '{"lockfileVersion": 3, "packages": {}}\n' > package-lock.json && c base >/dev/null && git tag t-base \
+  && python3 -I -c 'import sys; open("deep/package-lock.json", "w").write("{\"lockfileVersion\": 3, \"packages\": {}, \"x\": " + "[" * 5000 + "]" * 5000 + "}\n")' \
+  && printf 'not json\n' > man/package.json && printf '{"lockfileVersion": 3, "packages": {"node_modules/a": {"version": "1.0.0"}}}\n' > man/package-lock.json \
+  && rm package-lock.json && ln -s config/deps.json package-lock.json \
+  && c head >/dev/null && git tag t-head && "$RUNDIR" new audit >/dev/null) || { echo "could not build the third set fixture" >&2; exit 1; }
+run "$LS3" "$LD" --run audit_1 set t-base..t-head
+check "lock-delta set: a link, a lockfile it cannot read and a package.json that is not JSON stop it, exit 3, with the set kept" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'lock-delta: set could not compare 3 of the lockfiles it reads, so the set is incomplete: deep/package-lock.json (cannot be read: maximum recursion depth exceeded while decoding a JSON array from a unicode string)' '$T/err' && grep -qxF 'not compared: man/package-lock.json (the package.json beside it is not a JSON object)' '$T/out' && grep -qxF 'not compared: package-lock.json (a symbolic link)' '$T/out' && grep -qxF 'lock-set: audit_1/deps/lock-set-1.tsv (0 rows)' '$T/out'"
 
 # =================================================================================================
 # web3js-history.sh

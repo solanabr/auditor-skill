@@ -28,12 +28,17 @@
 #          dependency the lockfile's root or workspace entries, or the manifest beside it, name), pin (an
 #          override, resolution, [patch] or [replace] entry, or a uv override or constraint), key (the closed list
 #          of checklist 11 §11.11's CI budget), install (npm's hasInstallScript), source-change (now from the
-#          public registry, before from elsewhere), integrity (the same version with a new checksum),
+#          public registry, before from elsewhere), integrity (another copy of a version already there, from
+#          another source or with a new or missing checksum),
 #          new-dep=<names> (a new version that adds dependencies), url-mismatch (a resolved tarball or a file
 #          whose name is not the entry's name and version), close=<name> (a new package one edit away from a
 #          name on the closed list) and known-bad (KV-077 Step 2's releases). pnpm-lock.yaml, a yarn berry
-#          yarn.lock, bun.lockb and go.sum are named as not compared, with the reason, and so is a lockfile
-#          larger than 64 MiB, a link, a submodule or one that cannot be read. Needs python3 as well.
+#          yarn.lock, bun.lockb and go.sum are named as not compared, with the reason. A lockfile of a kind set
+#          reads that it cannot compare (larger than 64 MiB, a link, a submodule, text it cannot read, or a
+#          manifest beside it that is a link, over 4 MiB or, for package.json, not a JSON object) is named the
+#          same way, and set then exits 3 with the table kept: it is incomplete. Each copy of a name@version is
+#          kept apart, so a second copy from another source or with another checksum is a row. Needs python3
+#          as well.
 #
 # --repo <dir> is "." (the default) or a path relative to the working directory, with no "..", and no symbolic
 # link on the way, that is the top level of a repository whose git directory lies inside the working directory
@@ -56,7 +61,7 @@
 #
 # Output: every control character other than TAB and LF, NUL included, prints as ?, on stdout and stderr; a CR
 # that ends a lockfile line is dropped first for npm. Standard input is never read.
-# Exit: 0 done, whether or not a line printed · 3 set could not compute or keep its table · 64 refused · git's
+# Exit: 0 done, whether or not a line printed · 3 set could not compute, compare or keep its table · 64 refused · git's
 # own status when git fails (128: a revision it cannot find). Needs bash >= 3.2 and git; env, find, wc, od, tr,
 # awk, sed, mktemp and rmdir.
 
@@ -334,7 +339,7 @@ def toml(text):
 
 # ---- names, versions and sources ------------------------------------------------------------------------
 def vkey(v):
-    return tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in re.split(r"[.+-]", v))
+    return tuple((0, int(p), "") if re.fullmatch(r"[0-9]+", p) else (1, 0, p) for p in re.split(r"[.+-]", v))
 
 
 def pypi_name(n):
@@ -539,13 +544,13 @@ def pyproject_direct(text):
 
 # ---- lockfile readers: each returns ({(name, version): Entry}, direct names, pin names) ------------------
 def add(out, e):
-    k = (e.name, e.version)
+    # one entry per copy: two copies of a name@version from another source or with another checksum stay apart
+    k = (e.name, e.version, e.source, e.integrity)
     if k in out:
         o = out[k]
         o.install = o.install or e.install
         o.deps |= e.deps
-        if not o.integrity:
-            o.integrity = e.integrity
+        o.files += [f for f in e.files if f not in o.files]
     else:
         out[k] = e
 
@@ -570,7 +575,7 @@ def read_npm(text, man):
                 continue
             if e.get("link"):
                 continue
-            name = e.get("name") if isinstance(e.get("name"), str) else key.rsplit("node_modules/", 1)[1]
+            name = e.get("name") if isinstance(e.get("name"), str) and e.get("name") else key.rsplit("node_modules/", 1)[1]
             version = e.get("version")
             if not isinstance(version, str) or not name:
                 continue
@@ -600,7 +605,7 @@ def read_npm(text, man):
 
 def read_yarn(text, man):
     out, cur, sub = {}, None, None
-    if re.search(r"(?m)^__metadata:", text):
+    if re.search(r"(?m)^__metadata:", text) and not re.search(r"(?m)^  version \x22", text):
         return None
     entries = []
     for raw in text.splitlines():
@@ -639,9 +644,20 @@ def read_yarn(text, man):
 
 
 def jsonc(text):
+    # JSON with trailing commas and comments, as bun reads bun.lock
     out, i, n, inside = [], 0, len(text), False
     while i < n:
         c = text[i]
+        if not inside and text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if not inside and text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            if j < 0:
+                raise ValueError("a comment has no end")
+            i = j + 2
+            continue
         if inside:
             out.append(c)
             if c == "\\" and i + 1 < n:
@@ -825,20 +841,22 @@ def compare(kind, path, old, new):
     n_entries, direct, pins = new
     if eco == "pypi":
         direct = {pypi_name(d) for d in direct}
-    by_name = {}
+    by_name, by_version = {}, {}
     for e in o_entries.values():
         by_name.setdefault(e.name, []).append(e)
+        by_version.setdefault((e.name, e.version), []).append(e)
     rows, removed = [], 0
     names_new = {e.name for e in n_entries.values()}
-    for (name, version), e in o_entries.items():
-        if name not in names_new:
-            removed += 1
-    for (name, version), e in n_entries.items():
+    removed = len({(e.name, e.version) for e in o_entries.values() if e.name not in names_new})
+    for key, e in n_entries.items():
+        if key in o_entries:
+            continue
+        name, version = e.name, e.version
         marks = []
-        o = o_entries.get((name, version))
-        if o is not None:
-            if not (e.integrity and o.integrity and e.integrity != o.integrity):
-                continue
+        same = by_version.get((name, version))
+        if same:
+            # the same version, another copy: its source or its checksum changed, or the checksum is gone
+            o = next((x for x in same if x.source == e.source), same[0])
             marks.append("integrity")
         else:
             o = nearest(by_name.get(name, []), version)
@@ -871,8 +889,9 @@ def compare(kind, path, old, new):
     return rows, removed
 
 
-def main(scratch, out_tsv, summary_out):
-    rows, compared, not_compared, removed = [], [], [], 0
+def main(scratch, out_tsv, summary_out, fatal_out):
+    # not_compared: the lockfiles set names with a reason; fatal: those of a kind set reads, which it could not
+    rows, compared, not_compared, removed, fatal = [], [], [], 0, []
     with open(os.path.join(scratch, "list"), encoding="utf-8") as f:
         listing = [line.rstrip("\n").split("\t") for line in f if line.strip()]
     for k, status, m1, m2 in listing:
@@ -891,16 +910,36 @@ def main(scratch, out_tsv, summary_out):
                 why = "a symbolic link"
             elif m == "160000":
                 why = "a submodule"
-        if os.path.exists(os.path.join(scratch, k + ".old.big")) or os.path.exists(os.path.join(scratch, k + ".new.big")):
-            why = "larger than 64 MiB"
         if why:
             not_compared.append((path, why))
+            fatal.append((path, why))
             continue
+        if os.path.exists(os.path.join(scratch, k + ".old.big")) or os.path.exists(os.path.join(scratch, k + ".new.big")):
+            why = "larger than 64 MiB"
+        mname = MANIFEST[kind]
+        if os.path.exists(os.path.join(scratch, k + ".man.link")):
+            why = why or "the %s beside it is a symbolic link" % mname
+        if os.path.exists(os.path.join(scratch, k + ".man.big")):
+            why = why or "the %s beside it is larger than 4 MiB" % mname
         man = ""
         mp = os.path.join(scratch, k + ".man")
-        if os.path.exists(mp):
-            with open(mp, encoding="utf-8", errors="replace") as f:
-                man = f.read()
+        if not why and os.path.exists(mp):
+            try:
+                with open(mp, encoding="utf-8-sig") as f:
+                    man = f.read()
+            except UnicodeDecodeError:
+                why = "the %s beside it is not UTF-8" % mname
+            if not why and mname == "package.json":
+                try:
+                    ok = isinstance(json.loads(man), dict)
+                except (ValueError, RecursionError):
+                    ok = False
+                if not ok:
+                    why = "the package.json beside it is not a JSON object"
+        if why:
+            not_compared.append((path, why))
+            fatal.append((path, why))
+            continue
         sides = []
         try:
             for side in ("old", "new"):
@@ -908,7 +947,7 @@ def main(scratch, out_tsv, summary_out):
                 if not os.path.exists(p):
                     sides.append(({}, set(), set()))
                     continue
-                with open(p, encoding="utf-8") as f:
+                with open(p, encoding="utf-8-sig") as f:
                     text = f.read()
                 got = READERS[kind](text, man if side == "new" else "")
                 if got is None:
@@ -919,15 +958,20 @@ def main(scratch, out_tsv, summary_out):
                 not_compared.append((path, "yarn berry yarn.lock needs a YAML parser"))
             else:
                 not_compared.append((path, "cannot be read: %s" % shown(why)[:200]))
+                fatal.append(not_compared[-1])
             continue
         except (UnicodeDecodeError, RecursionError) as why:
-            not_compared.append((path, "cannot be read: %s" % shown(why)[:200]))
+            not_compared.append((path, "cannot be read: %s" % (shown(why)[:200] or type(why).__name__)))
+            fatal.append(not_compared[-1])
             continue
         r, gone = compare(kind, path, sides[0], sides[1])
         rows += r
         removed += gone
         compared.append((path, kind, {"A": "added", "D": "deleted"}.get(status, "changed"), len(r)))
-    with open(out_tsv, "w", encoding="utf-8") as f:
+    with open(fatal_out, "w", encoding="utf-8", errors="backslashreplace") as f:
+        for path, why in fatal:
+            f.write(shown("%s (%s)" % (path, why)) + "\n")
+    with open(out_tsv, "w", encoding="utf-8", errors="backslashreplace") as f:
         f.write("eco\tlockfile\tname\told\tnew\toldsource\tsource\tmarks\n")
         for r in rows:
             f.write("\t".join(shown(x) for x in r) + "\n")
@@ -941,7 +985,7 @@ def main(scratch, out_tsv, summary_out):
     names = {(r[0], r[2]) for r in rows}
     bumps = sum(1 for r in rows if r[3] != "-" and r[3] != r[4])
     same = sum(1 for r in rows if r[3] == r[4])
-    lines.append("entries: %d (%d new packages, %d new versions of a package, %d with the same version and a new checksum); %d names; %d packages removed"
+    lines.append("entries: %d (%d new packages, %d new versions of a package, %d copies of a version already there, from another source or with another checksum); %d names; %d packages removed"
                  % (len(rows), len(rows) - bumps - same, bumps, same, len(names), removed))
     kinds = {}
     for r in rows:
@@ -970,12 +1014,12 @@ def main(scratch, out_tsv, summary_out):
                      "" if r[5] in ("-", r[6]) else ", was " + r[5], r[7]))
     if len(flagged) > 100:
         lines.append("  ... %d more flagged rows in the set" % (len(flagged) - 100))
-    with open(summary_out, "w", encoding="utf-8") as f:
+    with open(summary_out, "w", encoding="utf-8", errors="backslashreplace") as f:
         f.write("\n".join(shown(x) for x in lines) + "\n")
 
 
 try:
-    main(sys.argv[1], sys.argv[2], sys.argv[3])
+    main(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])
 except SystemExit:
     raise
 except BaseException as why:
@@ -1063,11 +1107,18 @@ run_set() {
       *) man="" ;;
     esac
     case "$path" in */*) dir=${path%/*}/ ;; *) dir="" ;; esac
-    if [ -n "$man" ] && [ -e "$S/$k.new" ] && [ "$(hgit_tree "$REPO" cat-file -t "$H:$dir$man" 2>/dev/null)" = blob ]; then
-      set_blob "$H:$dir$man" "$S/$k.man" 4194304 || exit
+    if [ -n "$man" ] && [ -e "$S/$k.new" ]; then
+      entry=$(hgit_tree "$REPO" ls-tree --full-tree -z "$H" -- "$dir$man" | tr '\000' '\n') || exit
+      m=${entry%% *} o=${entry#* }
+      o=${o#* }
+      o=${o%%$'\t'*}
+      case "$m" in
+        100644|100755) set_blob "$o" "$S/$k.man" 4194304 || exit ;;
+        120000) : > "$S/$k.man.link" ;;
+      esac
     fi
   done < "$S/raw"
-  (cd / && exec python3 -I -c "$SET_PY" "$S" "$S/set.tsv" "$S/summary") || blocker "the set cannot be computed"
+  (cd / && exec python3 -I -c "$SET_PY" "$S" "$S/set.tsv" "$S/summary" "$S/fatal") || blocker "the set cannot be computed"
   D=$WT/$RUN/deps
   if [ ! -d "$D" ] && [ ! -L "$D" ]; then confine_mkdir "$D" || blocker "cannot create $RUN/deps"; fi
   [ -d "$D" ] && [ ! -L "$D" ] || blocker "$RUN/deps is not a directory of its own"
@@ -1080,6 +1131,10 @@ run_set() {
   cat "$S/summary"
   rc=$(($(wc -l < "$S/set.tsv") - 1))
   printf 'lock-set: %s/deps/lock-set-%s.tsv (%s rows)\n' "$RUN" "$n" "$rc"
+  # a lockfile of a kind set reads that it could not compare: the set is incomplete, and lock-delta did not run
+  if [ -s "$S/fatal" ]; then
+    blocker "set could not compare $(wc -l < "$S/fatal" | tr -d ' ') of the lockfiles it reads, so the set is incomplete: $(sed -n 1p "$S/fatal")"
+  fi
 }
 
 delta() { # delta <range> <pathspec>...: the diff the lines are read from
