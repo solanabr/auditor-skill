@@ -14,14 +14,16 @@ Each figure comes from a single run, so read it as a size, not a quote.
 
 | Depth | Command | 3K-line program | 7K-line program | 12K-line program |
 |---|---|---|---|---|
-| Quick | `/auditor:diff-audit <base>..<head>` | $2.94 · 7.7 min (`f9cfe33`, $5 cap) | not run (the repository has one commit, so there is no range) | $1.68 · 3.7 min (`d623bd3`, $3 cap); $1.77 · 3.9 min (`3eebe7c`, $3 cap) |
+| Quick | `/auditor:diff-audit <base>..<head>` | $4.84 · 10.5 min (`28815ca`, $10 cap) | not run (the repository has one commit, so there is no range) | $1.68 · 3.7 min (`d623bd3`, $3 cap); $1.77 · 3.9 min (`3eebe7c`, $3 cap) |
 | Quick | `/auditor:quick-scan` | $6.78 · 16.4 min (`f9cfe33`, $10 cap) | $7.14 · 11.9 min (`f9cfe33`, $10 cap) | $2.84 · 5.5 min (`d623bd3`, $5 cap) |
 | Standard | `/auditor:audit <path> --scope program` | $13.07 · 36 min | $14.70 · 36 min | $18.83 · 56 min |
 | Full | `/auditor:audit-cycle <path> --scope program` | $19.52 · 61 min | not run | not run |
 | CI | the tools tier, then the review job's `diff-audit --ci` | tools tier $0; review job $1.72 · 4.9 min (`15b2de8`, $5 cap) | | |
 
 - **quick-scan's coverage:** the whole repository for the 3K- and 7K-line programs, and only the program's directory for the 12K-line one. It kept and read 98, 95 and 55 vector files.
-- **diff-audit's coverage:** the 3K-line range selected and read 48 vector files. The 12K-line range read 21 and 16.
+- **diff-audit's coverage:**
+  - The 3K-line range adds a 787-package npm lockfile. It selected and read 58 vector files whole, plus checklists 04 and 06 and checklist 11's §11.11. Its report names the scope table's other checklists as not read, with no verdict on their items. So a run that reads every one of them costs more.
+  - The 12K-line range read 21 and 16 vector files.
 - **The CI figure** is one dry run of the CI template's review step, `--json-schema` and strict mode included, on the 3K-line program's range. It ran before diff-audit read the vector corpus. On the current commands the review job costs what diff-audit costs.
 - **Before the Quick commands read the corpus:**
   - diff-audit cost $1.23 and $0.84, then $1.29 and $0.83.
@@ -32,8 +34,8 @@ Each figure comes from a single run, so read it as a size, not a quote.
 - **When a session states its selection.** A session names its kept vectors in the report's Coverage & Limitations, and may not list them before reading.
 - **A cap close to the run's cost.** A full vector pass on a large kept set needs a cap of about $10. Under a $5 cap, a session rations: it stops reading early, and its report says what it skipped. Claude Code shows the session its budget ("USD budget: $spent/$max; $remaining remaining"), and the session plans by it.
   - At a $5 cap, two whole-repository quick-scans each kept about 80 vector files and read only 14 and 15 of them.
-  - The 3K-line diff-audit, whose range adds a large lockfile, left its checklists unread. Its figure above is for that run, so a complete one costs more.
-  - At a $10 cap, quick-scan read every kept file.
+  - The same 3K-line diff-audit at a $5 cap read its 48 selected vector files, but left its checklists unread "to stay within the USD 5 session cap". It cost $2.94.
+  - At a $10 cap, quick-scan read every kept file, and that diff-audit read all 58 of its selected vector files without mentioning its budget.
 
 **A fuller setup may cost somewhat more.** Two things kept these runs lighter than a full one:
 
@@ -42,15 +44,17 @@ Each figure comes from a single run, so read it as a size, not a quote.
 
 In short:
 
-- **Quick** costs about $2 to $7 and takes 4 to 16 minutes. diff-audit costs $2 to $3, more when its range adds a large lockfile. quick-scan costs about $3 on one program and about $7 on a whole repository.
+- **Quick** costs about $2 to $7 and takes 4 to 16 minutes.
+  - diff-audit costs about $2, and about $5 when its range adds a large lockfile.
+  - quick-scan costs about $3 on one program and about $7 on a whole repository.
 - **Standard** costs about $13 to $19 and takes 35 to 60 minutes.
 - **Full** cost $19.52 and took an hour on the 3K-line program. It ran once, on that program only, without `--with-poc`.
-- **CI** runs Quick on each pull request, at what diff-audit costs, about $2 to $3.
+- **CI** runs Quick on each pull request, at what diff-audit costs: about $2 to $5.
   - Give quick-scan a `--max-budget-usd` of about $10.
-  - Give diff-audit the same when its range adds a large lockfile. At $5, the 3K-line range's run rationed.
+  - Give diff-audit $10 too. At $5, the run on a range that adds a large lockfile rationed; at $10 it read every selected vector file for $4.84.
   - Under a $5 cap, expect the early stop above.
 
-No run reached its cap: $3 and $5 for diff-audit, $5 and $10 for quick-scan, $5 for the CI review, $25 for Standard and $60 for Full.
+No run reached its cap: $3, $5 and $10 for diff-audit, $5 and $10 for quick-scan, $5 for the CI review, $25 for Standard and $60 for Full.
 
 ## The three repositories
 
@@ -72,7 +76,7 @@ No run reached its cap: $3 and $5 for diff-audit, $5 and $10 for quick-scan, $5 
 |---|---|---|
 | `SKILL.md`, `OUTPUT-RULES.md`, `FULL-AUDIT.md` | ~33K tokens | **Standard and Full:** `OUTPUT-RULES.md` 6 to 9 times a run, once for each agent and once for the session. **Quick:** diff-audit reads `SKILL.md`'s scope table, and quick-scan `OUTPUT-RULES.md`. |
 | Checklists (20 files, 1,465 items) | ~74K tokens | **Standard and Full:** the in-scope ones only. For a Rust program, Standard took 604 items (checklists 01–07 and 16) and Full took 531 (01–07). **diff-audit:** the scope table's checklists for the changed code. **quick-scan:** none. |
-| Known vectors (141 procedures) | ~125K tokens | **Quick:** `INDEX.md`, then every vector file it keeps, whole. quick-scan read 55 to 98, and diff-audit 16 to 48. **Standard and Full:** 57 to 59 of the 140 for a Rust program, and all 140 for Full, judged mostly from `INDEX.md`. |
+| Known vectors (141 procedures) | ~125K tokens | **Quick:** `INDEX.md`, then every vector file it keeps, whole. quick-scan read 55 to 98, and diff-audit 16 to 58. **Standard and Full:** 57 to 59 of the 140 for a Rust program, and all 140 for Full, judged mostly from `INDEX.md`. |
 | `references/` | ~160K tokens | **Standard and Full:** 2 to 10 files a run, when a marker in the code calls for one. |
 
 ## How the runs were set up
@@ -108,6 +112,6 @@ No run reached its cap: $3 and $5 for diff-audit, $5 and $10 for quick-scan, $5 
 - These depths on a large program of 50K lines or more.
 - Sonnet as the session's model, and a higher effort.
 - quick-scan and the audits with semgrep installed.
-- diff-audit on a range with a large lockfile under a cap that lets it finish.
+- diff-audit reading every checklist its scope table names.
 - Repeat runs, to see how far each figure varies.
 - `deep-review`, `audit-assist`, `re-audit`, `audit-cycle --with-poc`, `spec-audit`, and the incident commands `hunt` and `respond`.
