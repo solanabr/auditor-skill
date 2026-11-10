@@ -1346,7 +1346,7 @@ skills/dnr-analyze/SKILL.md	  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" 
 skills/dnr-analyze/SKILL.md	its Generated field holding the line `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` prints, run as a Bash call of its own right before you write it |
 skills/dnr-analyze/SKILL.md	its Generated field holding the line `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` prints, run as a Bash call of its own right before you write it,
 OUTPUT-RULES.md	Every report carries, in its Generated field, the line `rundir.sh stamp` printed right before it was written, and claims no more review by a person than that line's statement says
-docs/ci.md	| `AUDITOR_REVIEW_STATEMENT` | empty | the last sentence of the Generated line each review's report carries
+docs/ci.md	| `AUDITOR_REVIEW_STATEMENT` | empty | the statement that ends the Generated line of each review's report
 templates/report-template.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
 templates/pr-report.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
 templates/incident-report.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
