@@ -9,7 +9,7 @@
 > template, or a command). Read it before either flow so the run matches how firms work.
 >
 > *(Credit: public firm methodologies — see `firm-coverage.md`. Patterns re-implemented natively
-> are credited in `ATTRIBUTION.md`.)*
+> are credited in `docs/attribution.md`.)*
 
 ---
 

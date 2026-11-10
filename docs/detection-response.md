@@ -1,6 +1,6 @@
 # Detection & Response
 
-*Method credited to anthropics/defending-code-reference-harness (dnr-hunt, dnr-respond); see ATTRIBUTION.md.*
+*Method credited to anthropics/defending-code-reference-harness (dnr-hunt, dnr-respond); see docs/attribution.md.*
 
 Everything else in auditor-skill is pre-deployment — find the flaw before an
 attacker does. This track is for the morning after, for a team that suspects an

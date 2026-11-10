@@ -89,7 +89,7 @@ A rule such as `Bash("${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" *)` approves that
 
 Each tool confines itself to the directory it starts in, so the flows run every one of them from the working directory, never after a `cd`. Their suites run them on hostile arguments under macOS `/bin/bash` 3.2 and under bash 5 with GNU tools.
 
-**No `bin/` wrappers.** A plugin's `bin/` directory is on the Bash tool's `PATH` while the plugin is enabled, so the commands could call these tools by bare name. auditor-skill ships no `bin/`: the commands and their allow rules keep each tool's absolute `${CLAUDE_PLUGIN_ROOT}` path. claude.ai and Cowork do not install a plugin that has a top-level `bin/` (Claude Code's plugins reference), the `install.sh` and `solanabr/ai-kit` layouts need the absolute paths anyway, and `scripts/check-hygiene.sh` refuses a `bin/` at the plugin root ([CONTRIBUTING.md](../CONTRIBUTING.md#load-surfaces-at-the-plugin-root)).
+**No `bin/` wrappers.** A plugin's `bin/` directory is on the Bash tool's `PATH` while the plugin is enabled, so the commands could call these tools by bare name. auditor-skill ships no `bin/`: the commands and their allow rules keep each tool's absolute `${CLAUDE_PLUGIN_ROOT}` path. claude.ai and Cowork do not install a plugin that has a top-level `bin/` (Claude Code's plugins reference), the `install.sh` and `solanabr/ai-kit` layouts need the absolute paths anyway, and `scripts/check-hygiene.sh` refuses a `bin/` at the plugin root ([docs/CONTRIBUTING.md](CONTRIBUTING.md#load-surfaces-at-the-plugin-root)).
 
 Each decision is asked once, in the flow, and not again as a permission prompt:
 

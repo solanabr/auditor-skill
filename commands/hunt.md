@@ -23,7 +23,7 @@ allowed-tools:
 
 # auditor-skill — Threat Hunt (no alert in hand)
 
-*Method credited to anthropics/defending-code-reference-harness (dnr-hunt); see ATTRIBUTION.md.*
+*Method credited to anthropics/defending-code-reference-harness (dnr-hunt); see docs/attribution.md.*
 
 **Arguments:** $ARGUMENTS
 

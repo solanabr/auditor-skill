@@ -8,11 +8,11 @@ It checks 1,465 items and 141 known vectors, but an AI auditor cannot do everyth
 
 ## Which AI model should I use?
 
-In Claude Code each agent names its own model tier: seven run on Opus, and context-builder and audit-reporter on Sonnet ([docs/agents.md](agents.md)). `/auditor:quick-scan` and `/auditor:diff-audit` start no agent, so your session's model runs them (`/model`, or `claude --model`); an agent that `/auditor:deep-review` starts runs on the tier its definition names. [COSTS.md](../COSTS.md)'s figures were measured with `claude-opus-5-5` as the session model; Sonnet as the session model is not measured yet.
+In Claude Code each agent names its own model tier: seven run on Opus, and context-builder and audit-reporter on Sonnet ([docs/agents.md](agents.md)). `/auditor:quick-scan` and `/auditor:diff-audit` start no agent, so your session's model runs them (`/model`, or `claude --model`); an agent that `/auditor:deep-review` starts runs on the tier its definition names. [docs/costs.md](costs.md)'s figures were measured with `claude-opus-5-5` as the session model; Sonnet as the session model is not measured yet.
 
 ## How long does an audit take?
 
-It depends on the depth, the repository's size and the model. Quick scales with the change, Standard with the module, and Full takes longest: six agents carry it from context reconstruction through a threat model and peer review to the report, and `--with-poc` adds two more. Measured: Quick 4 to 23 minutes, the longest a quick-scan of a whole 3K-line repository; Standard 36 minutes on 3K- and 7K-line programs and 56 on a 12K-line one; Full 61 minutes on the 3K-line one. Nothing at 50K lines was measured ([COSTS.md](../COSTS.md)).
+It depends on the depth, the repository's size and the model. Quick scales with the change, Standard with the module, and Full takes longest: six agents carry it from context reconstruction through a threat model and peer review to the report, and `--with-poc` adds two more. Measured: Quick 4 to 23 minutes, the longest a quick-scan of a whole 3K-line repository; Standard 36 minutes on 3K- and 7K-line programs and 56 on a 12K-line one; Full 61 minutes on the 3K-line one. Nothing at 50K lines was measured ([docs/costs.md](costs.md)).
 
 ## Can I use this in CI/CD?
 
@@ -22,7 +22,7 @@ Yes. CI runs Quick on pull requests from your own branches, and the bundled anal
 - **The review job** runs `/auditor:diff-audit --ci` on pull requests from your own branches, other than Dependabot's, in strict mode with nothing built. It fails when a counted finding reaches `AUDITOR_FAIL_ON` (7 by default), when an analyzer did not run, or when the review stopped early ([what the verdict means](ci.md#what-the-verdict-means)).
 - **Cost.** A diff-audit cost $1.68 to $8.10 in measured runs, and $8.10 on the shipped text for a 7,830-line range. On that text a narrow change, 1,248 lines of the 12K-line program with no lockfile, cost $3.99. The review job on the shipped text is not measured yet, and the template caps it at $15.
 - **Public repositories.** The job posts pass/fail only — no finding text or counts: logs, job summaries and uploaded artifacts are readable by any signed-in GitHub user. So the details stay on the runner, you read them by running the same command in a clone of your own, and the job never fails only because no private channel exists (OUTPUT-RULES Rule 11d).
-- **A scheduled scan** of the default branch: run `/auditor:quick-scan --ci`, with a `--max-budget-usd` of $15. A cap close to a full pass's cost makes the session stop reading early ([COSTS.md](../COSTS.md#cost-and-time-by-depth)).
+- **A scheduled scan** of the default branch: run `/auditor:quick-scan --ci`, with a `--max-budget-usd` of $15. A cap close to a full pass's cost makes the session stop reading early ([docs/costs.md](costs.md#cost-and-time-by-depth)).
 
 For a job of your own, such as a Full run on a release branch:
 

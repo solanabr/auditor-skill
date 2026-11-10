@@ -167,7 +167,7 @@ Next steps:
       cd "$DEST/tools/auditor-tools" && cargo build --release --locked
     Build them only from an install outside any repository you audit, or under
     OUTPUT-RULES.md Rule 11a isolated mode: cargo reads config from every parent directory.
-  • Review the measured costs before a full run: $DEST/COSTS.md
+  • Review the measured costs before a full run: $DEST/docs/costs.md
 EOF
 }
 

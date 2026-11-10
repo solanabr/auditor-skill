@@ -11,10 +11,10 @@ auditor-skill/
 ├── OUTPUT-RULES.md          ← Mandatory output format, severity scale
 ├── FULL-AUDIT.md            ← Step-by-step execution plan for complete audits
 ├── QUESTIONS.md             ← Pre-audit questionnaire (intake asks it in a Full run)
-├── COSTS.md                 ← Measured cost and time per depth
-├── CONTRIBUTING.md          ← Branch / PR flow, corpus-count rules, no AI-attribution policy
-├── SECURITY.md              ← Private vulnerability reporting for the skill and its tooling
-├── ATTRIBUTION.md           ← Credits for the third-party methodology, used by reference
+├── docs/costs.md                 ← Measured cost and time per depth
+├── docs/CONTRIBUTING.md          ← Branch / PR flow, corpus-count rules, no AI-attribution policy
+├── docs/SECURITY.md              ← Private vulnerability reporting for the skill and its tooling
+├── docs/attribution.md           ← Credits for the third-party methodology, used by reference
 ├── LICENSE                  ← MIT
 ├── install.sh               ← The install script (README, Installation, Option 2)
 ├── .claude-plugin/          ← plugin.json and marketplace.json: the `auditor` plugin and its marketplace

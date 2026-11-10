@@ -38,7 +38,8 @@ ok()  { pass=$((pass + 1)); if [ -n "${VERBOSE:-}" ]; then echo "ok   $*"; fi; }
 bad() { failn=$((failn + 1)); echo "FAIL $*"; }
 
 STRICT_FILES=$(ls commands/*.md agents/*.md skills/*/SKILL.md 2>/dev/null)
-RUN_FILES=$(ls SKILL.md FULL-AUDIT.md AGENTS.md OUTPUT-RULES.md README.md; find references discovery docs templates checklists known-vectors -name '*.md' | sort)
+# docs/CONTRIBUTING.md is left out: contributors run its commands from the repository root.
+RUN_FILES=$(ls SKILL.md FULL-AUDIT.md AGENTS.md OUTPUT-RULES.md README.md; find references discovery docs templates checklists known-vectors -name '*.md' ! -path docs/CONTRIBUTING.md | sort)
 
 # A bundled path preceded by start of line or a non-path character, after any ./ or ../ prefix.
 PRE='(^|[^A-Za-z0-9_./}>-])(\.\.?/)*'
@@ -355,7 +356,7 @@ for line in \
   'from `audit_<n>/threat-model.md` or `audit_<n>/intake.md` §6' \
   'write `incident_<n>/INCIDENTS.json` and `INCIDENT_REPORT.md`' \
   "(\`\${CLAUDE_PLUGIN_ROOT}\`; for a non-plugin install, the directory holding this skill's SKILL.md)" \
-  '*Method credited to anthropics/defending-code-reference-harness (dnr-hunt); see ATTRIBUTION.md.*' \
+  '*Method credited to anthropics/defending-code-reference-harness (dnr-hunt); see docs/attribution.md.*' \
   'the hard rules (README rule 3, README § "allowed-tools is not a sandbox")'; do
   expect_corpus no "$line"
 done

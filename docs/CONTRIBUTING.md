@@ -21,7 +21,7 @@ improvements.
   tooling to help write a contribution is fine; the author of record is the human who opens the PR and takes
   responsibility for the content.
 - **Security issues in this repository** (install script, Rust tools, workflows, or corpus content that
-  could mislead an auditor into a dangerous action) go through [SECURITY.md](SECURITY.md), not a public
+  could mislead an auditor into a dangerous action) go through [docs/SECURITY.md](SECURITY.md), not a public
   issue.
 
 ---
@@ -107,7 +107,7 @@ There are two kinds of bump:
 - **Minor or major (X.Y+1.0).** Every version reference moves together, the release is tagged with a GitHub
   Release, and the release-only steps below run.
 
-A minor or major release PR also re-checks every row of ATTRIBUTION.md's "Assessed, not vendored" table against its
+A minor or major release PR also re-checks every row of docs/attribution.md's "Assessed, not vendored" table against its
 re-check trigger and updates the assessed commit.
 
 A minor or major release PR also regenerates `templates/poc/Cargo.lock`, the pins every PoC crate starts from. The
@@ -145,7 +145,7 @@ release author owns this step; nothing is built, and the only hosts contacted ar
    (default to `always (<phase>)` unless the vector is provably feature-specific), and update the totals at
    the bottom of the index (`Total vector files`, `Distinct concepts`, the per-version tally).
 4. Bump the vector count in every file that quotes it: `SKILL.md` (description + header + "up to N"),
-   `README.md`, `FULL-AUDIT.md`, `COSTS.md`, `OUTPUT-RULES.md`, `templates/report-template.md`,
+   `README.md`, `FULL-AUDIT.md`, `docs/costs.md`, `OUTPUT-RULES.md`, `templates/report-template.md`,
    `docs/README.md`, `docs/getting-started.md`, `.claude-plugin/plugin.json`. `scripts/check-corpus.sh`
    tells you which ones you missed.
 5. If the vector is feature-gated, add a row to the advisory table in
@@ -157,7 +157,7 @@ release author owns this step; nothing is built, and the only hosts contacted ar
    (ids are never reused, even if an item is removed). New sections get the next `NN.x` heading.
 2. Update the per-checklist counts in `SKILL.md` (Checklists Reference table) and `README.md` (the Supported
    languages table and the checklist list under The corpus), the totals everywhere the item total is quoted
-   (`SKILL.md`, `README.md`, `COSTS.md`, `docs/README.md`, `templates/audit-report.md`,
+   (`SKILL.md`, `README.md`, `docs/costs.md`, `docs/README.md`, `templates/audit-report.md`,
    `templates/report-template.md`, `.claude-plugin/plugin.json`), and the `...through XX-NNN` line for that
    checklist in `templates/report-template.md`.
 
@@ -205,7 +205,7 @@ version in a trailing comment.
 
 A command's allow rule names a bundled entry point with any words after it, as in
 `Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" *)`, so such a tool must be safe whatever arguments follow
-([docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#why-that-is-safe)). A new one, or a change to
+([docs/permissions-and-isolation.md](permissions-and-isolation.md#why-that-is-safe)). A new one, or a change to
 one:
 
 - runs directly by its quoted path: a `#!/bin/bash` first line and mode `100755`. A Python one opens with the

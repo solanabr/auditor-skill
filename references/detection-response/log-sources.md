@@ -1,6 +1,6 @@
 # Solana log sources — what each proves, how to collect, how to query
 
-*Method credited to anthropics/defending-code-reference-harness (dnr-hunt, dnr-respond); see ATTRIBUTION.md.*
+*Method credited to anthropics/defending-code-reference-harness (dnr-hunt, dnr-respond); see docs/attribution.md.*
 
 > **Load when:** collecting or profiling a corpus for `/auditor:hunt` /
 > `/auditor:respond`. Read `references/detection-response/README.md` first — the

@@ -1137,7 +1137,9 @@ for f in commands/*.md agents/*.md skills/*/SKILL.md SKILL.md; do [ -f "$f" ] &&
 [ $# -gt 0 ] || { bad "no command, agent or skill files in $TREE"; }
 nbodies=$#
 for f in FULL-AUDIT.md checklists/*.md known-vectors/*.md discovery/*.md; do [ -f "$f" ] && set -- "$@" "$f"; done
-find references templates docs -type f -name '*.md' 2>/dev/null | LC_ALL=C sort > "$T/corpus-files"
+# docs/CONTRIBUTING.md is for contributors working in this repository: its calls run from the repository
+# root, and its allowed-tools examples are written as a command's frontmatter writes them.
+find references templates docs -type f -name '*.md' ! -path docs/CONTRIBUTING.md 2>/dev/null | LC_ALL=C sort > "$T/corpus-files"
 while IFS= read -r f; do set -- "$@" "$f"; done < "$T/corpus-files"
 [ $# -gt $((nbodies + 100)) ] || bad "only $(($# - nbodies)) corpus files in $TREE"
 # Findings the tree has until the edits that fix them land, one to a line, each <check> <file> <the text it

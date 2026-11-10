@@ -23,7 +23,7 @@ allowed-tools:
 
 # auditor-skill — Incident Response (lead in hand)
 
-*Method credited to anthropics/defending-code-reference-harness (dnr-respond); see ATTRIBUTION.md.*
+*Method credited to anthropics/defending-code-reference-harness (dnr-respond); see docs/attribution.md.*
 
 **Arguments:** $ARGUMENTS
 

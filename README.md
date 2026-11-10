@@ -185,7 +185,7 @@ It installs the 17 `/auditor:*` commands and 9 agents, and fetches the Trail of 
 
 auditor-skill vendors **Trail of Bits** ([trailofbits/skills](https://github.com/trailofbits/skills), CC-BY-SA 4.0) as a git submodule (`vendor/trailofbits`) for real tool execution — SAST, fuzzing, coverage, mutation. The plugin and the install script fetch it; for a clone, run `git submodule update --init --depth 1 -- vendor/trailofbits` in the auditor-skill folder.
 
-**Pinned at** [`711af09`](https://github.com/trailofbits/skills/tree/711af095215ad4ecde5b90cd1d0124b3f1c4ca9e) — trailofbits/skills `main` of 2026-11-02. Upstream publishes no tags or releases, so the pin is a commit, and it moves only after a reviewed bump ([CONTRIBUTING.md §5](CONTRIBUTING.md#5-tooling-changes)); CI fails if this line and the submodule disagree, and plugin installs receive a new pin with the next release. To read the pin of any checkout without initializing the submodule: `git ls-tree HEAD vendor/trailofbits`.
+**Pinned at** [`711af09`](https://github.com/trailofbits/skills/tree/711af095215ad4ecde5b90cd1d0124b3f1c4ca9e) — trailofbits/skills `main` of 2026-11-02. Upstream publishes no tags or releases, so the pin is a commit, and it moves only after a reviewed bump ([docs/CONTRIBUTING.md §5](docs/CONTRIBUTING.md#5-tooling-changes)); CI fails if this line and the submodule disagree, and plugin installs receive a new pin with the next release. To read the pin of any checkout without initializing the submodule: `git ls-tree HEAD vendor/trailofbits`.
 
 Without the submodule the corpus falls back to grep-based checks and notes where deeper tooling would run ([power-tools.md](docs/power-tools.md#trail-of-bits-plugins)). The optional Rust tools, `audit-scan`, `audit-mem` and `audit-logs`, build in the installation (`<auditor-skill root>`), and need a rebuild after every update, since the flows pass a contract marker that an older build refuses ([getting-started.md](docs/getting-started.md), "Build the Rust tools"):
 
@@ -209,14 +209,14 @@ claude --setting-sources "" --strict-mcp-config --plugin-dir "<auditor-skill roo
 
 Pick by what you want checked: what changed, one module, or the release.
 
-| Depth | When | Run | [Cost and time](COSTS.md#cost-and-time-by-depth) |
+| Depth | When | Run | [Cost and time](docs/costs.md#cost-and-time-by-depth) |
 |-------|------|-----|------|
 | **Quick** | a branch or pull request, a first look at a repository, one function | `/auditor:diff-audit` · `/auditor:quick-scan` (whole repository) · `/auditor:deep-review <file> <fn>` | $2–8 · 4–23 min |
 | **Standard** | one module or program before it merges | `/auditor:audit <path> --scope …` | $13–19 · 36–56 min |
 | **Full** | a release, or a report for someone outside the team | `/auditor:audit-cycle` (unattended) · `/auditor:audit-assist` (you steer) · `/auditor:re-audit` after fixes | about $20 · about 1 h, on a 3K-line program |
 | **[CI](docs/ci.md)** | every pull request: the analyzers on all of them, the review on those from your own branches | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | tools job $0; review about a diff-audit's cost, capped at $15 |
 
-Quick and Standard need nothing set; Full starts with intake ([QUESTIONS.md](QUESTIONS.md)), and Standard and Full take a `--scope` ([SKILL.md](SKILL.md#scope-gated-loading--load-what-the-repo-needs)). The costs come from one run each, with `claude-opus-5-5`, on 3K-, 7K- and 12K-line programs, measured from 2026-11-08 to 2026-11-10 ([COSTS.md](COSTS.md)). A diff-audit of a narrow change to the 12K-line program, 1,248 lines with no lockfile, cost $3.99 in 9 minutes. What each depth reads and writes: [audit-flows.md](docs/audit-flows.md#pick-a-depth).
+Quick and Standard need nothing set; Full starts with intake ([QUESTIONS.md](QUESTIONS.md)), and Standard and Full take a `--scope` ([SKILL.md](SKILL.md#scope-gated-loading--load-what-the-repo-needs)). The costs come from one run each, with `claude-opus-5-5`, on 3K-, 7K- and 12K-line programs, measured from 2026-11-08 to 2026-11-10 ([docs/costs.md](docs/costs.md)). A diff-audit of a narrow change to the 12K-line program, 1,248 lines with no lockfile, cost $3.99 in 9 minutes. What each depth reads and writes: [audit-flows.md](docs/audit-flows.md#pick-a-depth).
 
 ### Claude Code with the plugin
 
@@ -269,7 +269,7 @@ Copy `templates/ci/auditor-pr.yml` into `.github/workflows/`, pin it to the full
 
 ### Models and time
 
-Seven agents run on Opus, and context-builder and audit-reporter on Sonnet; quick-scan and diff-audit start no agent, so your session's model runs them. Quick scales with the change, Standard with the module, and Full takes longest ([docs/faq.md](docs/faq.md#how-long-does-an-audit-take), [COSTS.md](COSTS.md)).
+Seven agents run on Opus, and context-builder and audit-reporter on Sonnet; quick-scan and diff-audit start no agent, so your session's model runs them. Quick scales with the change, Standard with the module, and Full takes longest ([docs/faq.md](docs/faq.md#how-long-does-an-audit-take), [docs/costs.md](docs/costs.md)).
 
 ## Output format
 
@@ -299,7 +299,7 @@ The command flags are in [docs/commands.md](docs/commands.md), and the CI templa
 
 ### solana-ai-kit
 
-[solana-ai-kit](https://github.com/solanabr/ai-kit) vendors auditor-skill as a skill pack at a pinned commit and never runs `install.sh`, so a release reaches kit users when the kit moves its pin ([CONTRIBUTING.md §5](CONTRIBUTING.md#bumping-vendortrailofbits)). A kit project ships its own `.claude/` and `.mcp.json`: default mode notes them, and strict mode refuses the tree.
+[solana-ai-kit](https://github.com/solanabr/ai-kit) vendors auditor-skill as a skill pack at a pinned commit and never runs `install.sh`, so a release reaches kit users when the kit moves its pin ([docs/CONTRIBUTING.md §5](docs/CONTRIBUTING.md#bumping-vendortrailofbits)). A kit project ships its own `.claude/` and `.mcp.json`: default mode notes them, and strict mode refuses the tree.
 
 ### Other agents
 
@@ -321,7 +321,7 @@ Read the auditor-skill files in ~/.claude/skills/auditor-skill/ and perform a fu
 - **Outside services are disclosed, not gated:** the report lists each one, such as the public registries a lockfile review asks while `AUDITOR_PUBLISH_AGE` is on ([Rule 11b](OUTPUT-RULES.md#11b--outside-service-disclosure)).
 - **Output stays private:** run directories ignore themselves in git, and CI on a public repository publishes pass or fail only ([Rule 11d](OUTPUT-RULES.md#11d--output-hygiene)).
 
-What remains a risk: [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#what-remains-a-risk). To report a vulnerability in auditor-skill itself, see [SECURITY.md](SECURITY.md).
+What remains a risk: [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#what-remains-a-risk). To report a vulnerability in auditor-skill itself, see [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Upgrading
 
@@ -370,7 +370,7 @@ Newest first; each entry in full, with the earlier releases: [docs/changelog.md]
 | [docs/faq.md](docs/faq.md), [docs/other-agents.md](docs/other-agents.md) | questions people ask; auditor-skill without the plugin |
 | [docs/changelog.md](docs/changelog.md), [docs/repository-layout.md](docs/repository-layout.md) | what each release added; every folder and file |
 
-The agent reads [SKILL.md](SKILL.md), [OUTPUT-RULES.md](OUTPUT-RULES.md), [FULL-AUDIT.md](FULL-AUDIT.md), [QUESTIONS.md](QUESTIONS.md) and [AGENTS.md](AGENTS.md). For people: [COSTS.md](COSTS.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [ATTRIBUTION.md](ATTRIBUTION.md).
+The agent reads [SKILL.md](SKILL.md), [OUTPUT-RULES.md](OUTPUT-RULES.md), [FULL-AUDIT.md](FULL-AUDIT.md), [QUESTIONS.md](QUESTIONS.md) and [AGENTS.md](AGENTS.md). For people: [docs/costs.md](docs/costs.md), [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md), [docs/SECURITY.md](docs/SECURITY.md) and [docs/attribution.md](docs/attribution.md).
 
 ## Folder structure
 
@@ -378,7 +378,7 @@ The skill's files sit at the top (`SKILL.md`, `OUTPUT-RULES.md`, `FULL-AUDIT.md`
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) first — branch + PR flow (nothing lands on `main` directly), the corpus-count consistency rule enforced by `scripts/check-corpus.sh` in CI, and the no-AI-attribution commit policy (enable the hook with `git config core.hooksPath scripts/hooks`). How to add a known vector, checklist items or a protocol methodology: [CONTRIBUTING.md §4](CONTRIBUTING.md#4-adding-corpus-content). When models or prices change, re-measure and update [COSTS.md](COSTS.md).
+Read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) first — branch + PR flow (nothing lands on `main` directly), the corpus-count consistency rule enforced by `scripts/check-corpus.sh` in CI, and the no-AI-attribution commit policy (enable the hook with `git config core.hooksPath scripts/hooks`). How to add a known vector, checklist items or a protocol methodology: [docs/CONTRIBUTING.md §4](docs/CONTRIBUTING.md#4-adding-corpus-content). When models or prices change, re-measure and update [docs/costs.md](docs/costs.md).
 
 ## Inspirations and acknowledgments
 
@@ -399,7 +399,7 @@ The Full lifecycle is modelled on how audit firms work ([firm-coverage.md](refer
 
 ### Acknowledgments
 
-auditor-skill builds on these projects, credited in full, with what was taken from each, in [ATTRIBUTION.md](ATTRIBUTION.md):
+auditor-skill builds on these projects, credited in full, with what was taken from each, in [docs/attribution.md](docs/attribution.md):
 
 - **[Frank Castle](https://github.com/Frankcastleauditor) — [safe-solana-builder](https://github.com/Frankcastleauditor/safe-solana-builder)** (MIT): Solana security depth (reward and staking accounting, Token-2022 extension abuse, framework validation idioms, zero-copy footguns), re-authored audit-side.
 - **[Trail of Bits](https://github.com/trailofbits) — [skills](https://github.com/trailofbits/skills)** (CC-BY-SA 4.0): tool execution, vendored at `vendor/trailofbits`.

@@ -27,7 +27,7 @@ auditor-skill has three depths and a CI mode. Pick by what you want checked: wha
 - **Full:** a release, or a report for someone outside the team. `/auditor:audit-cycle` (unattended) or `/auditor:audit-assist` (you steer), then `/auditor:re-audit` after the fixes.
 - **CI:** every pull request. The bundled analyzers run on all of them, and `/auditor:diff-audit --ci` on those from your own branches; on a public repository the job publishes pass or fail only ([ci.md](ci.md)).
 
-What each depth reads and writes, and what it costs and how long it takes in the measured runs: [Pick a depth](audit-flows.md#pick-a-depth), and [COSTS.md](../COSTS.md#cost-and-time-by-depth) for the runs themselves.
+What each depth reads and writes, and what it costs and how long it takes in the measured runs: [Pick a depth](audit-flows.md#pick-a-depth), and [docs/costs.md](costs.md#cost-and-time-by-depth) for the runs themselves.
 
 ## I want to… → use this
 
@@ -96,10 +96,10 @@ What each depth reads and writes, and what it costs and how long it takes in the
 
 - **[repository-layout.md](repository-layout.md)** — what each folder of the repository holds.
 - **[changelog.md](changelog.md)** — what each release added.
-- **[COSTS.md](../COSTS.md)** — measured cost and time per depth, and what drives them.
-- **[CONTRIBUTING.md](../CONTRIBUTING.md)** — how a change gets in: corpus content, tooling, the pin of Trail of Bits, review.
-- **[SECURITY.md](../SECURITY.md)** — what counts as a security issue in auditor-skill, and how to report one.
-- **[ATTRIBUTION.md](../ATTRIBUTION.md)** — the sources the corpus draws on, and their licences.
+- **[docs/costs.md](costs.md)** — measured cost and time per depth, and what drives them.
+- **[docs/CONTRIBUTING.md](CONTRIBUTING.md)** — how a change gets in: corpus content, tooling, the pin of Trail of Bits, review.
+- **[docs/SECURITY.md](SECURITY.md)** — what counts as a security issue in auditor-skill, and how to report one.
+- **[docs/attribution.md](attribution.md)** — the sources the corpus draws on, and their licences.
 
 ## Root references (outside `docs/`)
 

@@ -1,6 +1,6 @@
 # Hypothesis ledger — {TARGET}
 
-<!-- credited to anthropics/defending-code-reference-harness; see ATTRIBUTION.md.
+<!-- credited to anthropics/defending-code-reference-harness; see docs/attribution.md.
      templates/hunt-ledger.md → incident_<n>/LEDGER.md. The audit trail for a
      /auditor:hunt or /auditor:respond run. Contract and rules:
      references/detection-response/README.md § "The hypothesis ledger". -->

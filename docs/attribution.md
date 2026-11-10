@@ -8,7 +8,7 @@ into this repository — and credits the source here.
 
 Source: https://github.com/trailofbits/skills
 
-Pinned commit: see README.md → Installation → "Tool execution (Trail of Bits)". It moves only after the review in CONTRIBUTING.md §5.
+Pinned commit: see README.md → Installation → "Tool execution (Trail of Bits)". It moves only after the review in docs/CONTRIBUTING.md §5.
 
 Vendored as a git submodule at `vendor/trailofbits` and invoked at runtime for
 tool **execution** (static analysis, fuzzing, coverage, mutation, IR-level

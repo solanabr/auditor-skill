@@ -1,6 +1,6 @@
 # Response plan — INC-{N}.{k}: {title}
 
-<!-- credited to anthropics/defending-code-reference-harness; see ATTRIBUTION.md.
+<!-- credited to anthropics/defending-code-reference-harness; see docs/attribution.md.
      templates/response-plan.md → incident_<n>/RESPONSE-INC-<n>.<k>.md, written by
      /auditor:respond. One plan per lead; never overwrite another lead's plan.
      Action menu and rules: references/detection-response/containment-playbook.md. -->

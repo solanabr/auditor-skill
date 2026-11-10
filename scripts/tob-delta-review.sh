@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tob-delta-review.sh — summarize what moving the vendor/trailofbits pin from OLD to NEW changes, for the
-# review in CONTRIBUTING.md §5 ("Bumping vendor/trailofbits"). Prints markdown to stdout.
+# review in docs/CONTRIBUTING.md §5 ("Bumping vendor/trailofbits"). Prints markdown to stdout.
 #
 # Usage: bash scripts/tob-delta-review.sh [--fetch] <tob-clone> <old-sha> <new-sha>
 #   <tob-clone>  a full (non-shallow) clone of https://github.com/trailofbits/skills
@@ -211,7 +211,7 @@ if [ -s "$tmp/mv" ]; then
 fi
 
 section "LICENSE"
-if g diff "${DIFFSAFE[@]}" --quiet "$old" "$new" -- LICENSE; then echo "unchanged"; else echo "**CHANGED** — re-check ATTRIBUTION.md"; fi
+if g diff "${DIFFSAFE[@]}" --quiet "$old" "$new" -- LICENSE; then echo "unchanged"; else echo "**CHANGED** — re-check docs/attribution.md"; fi
 awk -F'\t' '{print $NF}' "$tmp/ns" | grep -iE '(^|/)(LICEN[CS]E|COPYING|NOTICE)[^/]*$' | grep -vx 'LICENSE' > "$tmp/lic" || true
 if [ -s "$tmp/lic" ]; then echo "Other licence files added or changed:"; cat "$tmp/lic"; fi
 

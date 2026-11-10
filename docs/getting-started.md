@@ -87,7 +87,7 @@ The agents run them by absolute path from the installation, never from your proj
 
 Build them again after every update of auditor-skill, with `cargo build --release --locked` in the same directory. The flows call them with a contract marker (`--contract=1`) that an older build refuses, and until you rebuild they go on as if the tools were absent. A plugin update installs auditor-skill into a new versioned directory, so the tools need a build there too.
 
-- **`audit-scan`** — deterministic AST pass that emits the risky surface (instructions, account constraints, PDAs, arithmetic, panics, CPIs) as one JSON, at no model cost. Its map replaces part of the reading the audit would otherwise do; how much that saves has not been measured ([COSTS.md](../COSTS.md#keeping-the-cost-down)). It is a *map to verify*, not a set of verdicts. With `--workflows .github/workflows` it also maps each GitHub Actions workflow's triggers, jobs and steps.
+- **`audit-scan`** — deterministic AST pass that emits the risky surface (instructions, account constraints, PDAs, arithmetic, panics, CPIs) as one JSON, at no model cost. Its map replaces part of the reading the audit would otherwise do; how much that saves has not been measured ([docs/costs.md](costs.md#keeping-the-cost-down)). It is a *map to verify*, not a set of verdicts. With `--workflows .github/workflows` it also maps each GitHub Actions workflow's triggers, jobs and steps.
 - **`audit-mem`** — SQLite store for exact de-dup, FIXED→REGRESSED detection, false-positive suppression, and warm re-audits.
 - **`audit-logs`** — the incident analysis recipes `profile.sh`, `frames.py` and `deltas.py` as one offline binary with the same output. `/auditor:hunt` and `/auditor:respond` use it when it is built, and the scripts otherwise.
 
@@ -132,7 +132,7 @@ Audit the Solana program in programs/my-program/ using the auditor-skill with PR
 /auditor:audit-cycle --scope full
 ```
 
-The report lands at `audit_<n>/REPORT.md`, in a new run directory. An existing one is reused only after you confirm which, and never one that git tracks ([Report file naming](output-and-rigor.md#report-file-naming), [Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). Review [COSTS.md](../COSTS.md) first: a Full run cost about $20 and an hour on a 3K-line program.
+The report lands at `audit_<n>/REPORT.md`, in a new run directory. An existing one is reused only after you confirm which, and never one that git tracks ([Report file naming](output-and-rigor.md#report-file-naming), [Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). Review [docs/costs.md](costs.md) first: a Full run cost about $20 and an hour on a 3K-line program.
 
 **CI** — to run the analyzers on every pull request and Quick on those from your own branches, copy `templates/ci/auditor-pr.yml` into `.github/workflows/` and follow [ci.md](ci.md). A CI run asks nothing and denies every call that would ask ([section 7](#7-prompts-and-isolation)); an analyzer that did not run fails its verdict.
 
@@ -161,4 +161,4 @@ Scope is enforced by *scope-gated loading*: out-of-scope checklists are never re
 - Prompts, isolation and `claude -p`: [permissions-and-isolation.md](permissions-and-isolation.md)
 - The optional tools and the bundled scripts: [power-tools.md](power-tools.md)
 - After an incident: [detection-response.md](detection-response.md)
-- What a run costs: [COSTS.md](../COSTS.md)
+- What a run costs: [docs/costs.md](costs.md)

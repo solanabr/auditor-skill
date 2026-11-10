@@ -64,8 +64,8 @@ expect README.md "checks $tc items across ${#actual[@]} security domains, tests 
 expect README.md "| **Total** | **${#actual[@]}** | **$tc** |"
 expect README.md "$meth protocol methodologies ("
 expect README.md "$meth protocol playbooks ("
-expect COSTS.md "Checklists (${#actual[@]} files, $tc items)"
-expect COSTS.md "Known vectors ($vec procedures)"
+expect docs/costs.md "Checklists (${#actual[@]} files, $tc items)"
+expect docs/costs.md "Known vectors ($vec procedures)"
 expect FULL-AUDIT.md "KV-001..$vec"
 expect OUTPUT-RULES.md "KV-001 through KV-$vec"
 expect templates/report-template.md "| Total known vectors | $vec |"
@@ -119,11 +119,11 @@ fi
 # different commit of that repo. Gitlinks and .gitmodules are read from the index, so this works with
 # submodules uninitialized (CI checks out with submodules: false) and in worktrees. It runs only when this
 # directory is the top of its own checkout, so a copy inside another repo never reads the parent's pins.
-# A gitlink-only bump (Dependabot) fails here until a human updates the pin line (CONTRIBUTING.md §5).
+# A gitlink-only bump (Dependabot) fails here until a human updates the pin line (docs/CONTRIBUTING.md §5).
 # README.md is read byte by byte (LC_ALL=C), so a byte that is not UTF-8 stops no grep, sed or tr.
 export LC_ALL=C
 # The repositories a submodule may come from, space-separated, as the check spells them: https, no .git suffix.
-# One is added here only after its content is reviewed like code (CONTRIBUTING.md §5).
+# One is added here only after its content is reviewed like code (docs/CONTRIBUTING.md §5).
 SUBMODULE_URLS='https://github.com/trailofbits/skills'
 gm() { # .gitmodules from the index, else from the working tree
   git config --blob :.gitmodules "$@" 2>/dev/null || { [[ -f .gitmodules ]] && git config -f .gitmodules "$@"; }

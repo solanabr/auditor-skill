@@ -1,6 +1,6 @@
 # Containment playbook — proposed, never executed
 
-*Method credited to anthropics/defending-code-reference-harness (dnr-respond); see ATTRIBUTION.md.*
+*Method credited to anthropics/defending-code-reference-harness (dnr-respond); see docs/attribution.md.*
 
 > **Load when:** writing the containment / recovery / detection sections of a
 > `/auditor:respond` plan (`templates/response-plan.md`). Read

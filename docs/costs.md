@@ -93,7 +93,7 @@ No run reached its cap: $3, $5, $8, $10 and $15 for diff-audit, $5 and $10 for q
 - **Nothing from the repositories ran.** Every run had `AUDITOR_EXEC_MODE=none`, so no build, test or PoC from them ran.
 - **The CI dry run** used the CI template's environment as well: `AUDITOR_STRICT=1`, with strict preflight before the paid call, and `--output-format json --json-schema` with the verdict schema in place of `stream-json`.
 - **Permissions.** No permission mode was set, so Claude Code denied any call the command doesn't pre-approve. Each run had 0 to 26 such denials. They were the session's own extra shell commands, and none of them stopped a run.
-  - For `audit-cycle` only, the run passed the `Skill(auditor:…)` rules from [Turns and resuming](docs/permissions-and-isolation.md#turns-and-resuming) with `--settings`, so its intake and triage steps could start. Its command line also carried `--auto`, which is not one of audit-cycle's options.
+  - For `audit-cycle` only, the run passed the `Skill(auditor:…)` rules from [Turns and resuming](permissions-and-isolation.md#turns-and-resuming) with `--settings`, so its intake and triage steps could start. Its command line also carried `--auto`, which is not one of audit-cycle's options.
 - **Tools.**
   - The bundled Rust tools in `tools/auditor-tools` were built, so `audit-scan` mapped each program, except in the final Quick runs.
   - cargo-audit read a local copy of the RustSec database, except in the final quick-scan, which had none.

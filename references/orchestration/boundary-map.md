@@ -4,7 +4,7 @@ auditor-skill's native corpus is the **knowledge** layer (checklists, vectors, s
 Trail of Bits (vendored at `vendor/trailofbits`) is the **execution** layer — real tools that
 auditor-skill's prose + grep cannot run. Subagents delegate to it when present, and fall back to
 native grep checks when a clone has not initialized the submodule. The pinned commit is the one
-README.md names (Installation → Tool execution); it moves only through the review in `CONTRIBUTING.md` §5.
+README.md names (Installation → Tool execution); it moves only through the review in `docs/CONTRIBUTING.md` §5.
 
 Two rules from `OUTPUT-RULES.md` Rule 11 apply to the rows below. A row that builds or runs target code
 follows the execution mode recorded at intake (Rule 11a). A row that sends code or dependency data to an
