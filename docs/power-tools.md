@@ -6,7 +6,7 @@ The Rust tools, the workflow analyzers, Trail of Bits, Surfpool and the PoC tool
 
 | Tool | Buys you | Built/enabled by |
 |------|----------|------------------|
-| [`audit-scan`](#audit-scan) | ~30-40% fewer input tokens; a map of the risky surface | `cargo build --release --locked` |
+| [`audit-scan`](#audit-scan) | a map of the risky surface; fewer files read in full | `cargo build --release --locked` |
 | [`audit-mem`](#audit-mem) | exact de-dup, regression detection, FP suppression, warm re-audits | `cargo build --release --locked` |
 | [`audit-logs`](#audit-logs) | the incident recipes `profile.sh`, `frames.py` and `deltas.py` as one offline binary, with the same output | `cargo build --release --locked` |
 | [GitHub Actions workflow analysis](#github-actions-workflow-analysis) | a map of each workflow's triggers, jobs and steps, then pinned zizmor and CodeQL runs | `audit-scan` built; zizmor and CodeQL installed by you |
@@ -30,7 +30,7 @@ cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked 
 "<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" --contract=1 ./programs/my-program/src --pretty --out audit_1/prescan.json
 ```
 
-The installation belongs outside the repository under audit. If it sits inside it anyway (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6.0), the build runs inside the target tree, where cargo and rustup read the target's `.cargo/config*` and `rust-toolchain*` from every parent directory. Build there only in [Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside the repository (the plugin, or `install.sh ~/.claude/skills/auditor-skill`) and build that one. Never move or update a copy you find inside a repository ([README](../README.md#installation)).
+Build in the installation, never inside the repository under audit: a build there reads that repository's `.cargo/config*` and `rust-toolchain*`. [getting-started.md](getting-started.md#4-build-the-rust-tools-optional) says what to do with a copy installed inside a repository.
 
 Recursively walks the `*.rs` files under the directory it is given (`.` or a relative path inside the repository, reached through no symbolic link), skipping `.git/`, `node_modules/` and a `target/` cargo built in (one holding cargo's `CACHEDIR.TAG` or `.rustc_info.json`), and, for `.`, the run directories and the `.audit-memory/` store an audit made (a directory of such a name that the repository tracks is scanned). It parses each with `syn::parse_file` and prints one JSON object to stdout, or writes it to `--out audit_<n>/prescan.json` (or `prescan-<slug>.json`) in a run directory. It follows no symbolic link, goes no deeper than 128 directories, and parses only regular files with one name, of at most 4 MiB, whose groups nest at most 256 deep and whose token chains run at most 20,000, one at a time in a child, a new one after a file it does not finish (it starts no program but git and, to parse, itself); `skipped` lists every directory it did not enter, every link and every `*.rs` it did not parse, a file the parser could not finish or one after the scan's 90 seconds among them, with why. Any other path is refused with exit 2 and one `audit-scan: refused: …` line ([tools/auditor-tools/README.md](../tools/auditor-tools/README.md#where-it-reads-and-writes)). Every call carries `--contract=1` first; a build older than that contract refuses it: build it again.
 
@@ -50,15 +50,15 @@ Recursively walks the `*.rs` files under the directory it is given (`.` or a rel
 | `unsafe_blocks[]`, `functions[]` | unsafe surface + call-graph seed |
 | `skipped[]` | directories not entered, links not followed, `*.rs` files not parsed (one the parser could not finish, or one after the report was full or the scan's 90 seconds, too), files listed only in part (past 20,000 sites, or 32 MiB), and files a parsed one brings in by `#[path]` or `include!` that are not parsed (not named `*.rs`, outside the directory scanned, in a directory the walk did not enter, or not found; for a `#[path]` inside an inline module, at each place rustc may find it; and one whose path leaves a link or another directory the walk did not enter by `..`, named with that directory, as it may lie elsewhere), with why: read them by hand, but for the directories skipped by design (`.git/`, `node_modules/`, a `target/` cargo built in, an audit's own run directories and store), unless one sits where source does; a file in one of them that a parsed file brings in is listed on its own |
 
-### The one rule: it is a map, not a verdict
+### A map, not a verdict
 
-The scan output has **no verdicts**. A raw `arithmetic_sites` or `panic_sites` entry is a *candidate*, never a confirmed bug — it still goes through the checklist + Rule 5b reachability/bounds analysis. Never report a scan hit as a finding on its own.
+<a id="the-one-rule-it-is-a-map-not-a-verdict"></a>The scan output has **no verdicts**. A raw `arithmetic_sites` or `panic_sites` entry is a *candidate*, never a confirmed bug — it still goes through the checklist + Rule 5b reachability/bounds analysis. Never report a scan hit as a finding on its own.
 
 It is a syntactic pass: it does not resolve macros, generics, or cross-crate types, so it **under-reports** (macro-generated handlers, trait-dispatched CPIs, calls through an import under another name, a helper whose name does not hold `invoke`, the call through a function value, which `cpi_sites[]` lists where the value is taken as `ref:<name>`, not where it is called, or a derivation through a program's own helper of another name, which `pdas[]` lists where the helper derives, not where it is called) and **over-reports** (raw arithmetic on already-bounded operands, a call whose name only holds `invoke`, a `ref:` site that names a value such as a local `invoke_accounts`). The report must state that a deterministic pre-scan seeded the review and its output was *verified, not trusted*, by the item-by-item walk.
 
-### The token win
+### What it saves
 
-Feed `prescan.json` to the auditor at Phase 0. Two effects: (1) the instruction/constraint/PDA/arithmetic tables are already built, so Phase 0.2-0.4 cost near-zero; (2) a file with **zero** scan hits gets a spot-check instead of a full read. This collapses the mechanical multipliers (checklist cross-ref ~0.3×, discovery ~0.2×, checkpoint re-reads ~0.1×) toward ~0.1× total — on a 50K-line program roughly **200-300K fewer input tokens** (variable multiplier ~1.6× → ~1.0×). Used at Phase 0 of the automated flow and by `context-builder`; falls back to the grep walk when `cargo` is absent.
+<a id="the-token-win"></a>Feed `prescan.json` to the auditor at Phase 0. Two effects: (1) the instruction/constraint/PDA/arithmetic tables are already built, so Phase 0.2-0.4 read the JSON instead of the code; (2) a file with **zero** scan hits gets a spot-check instead of a full read. How much that saves has not been measured: [COSTS.md](../COSTS.md#keeping-the-cost-down) compares no two runs that differ only in it, and says only that its map replaces part of the reading. Used at Phase 0 of the automated flow and by `context-builder`; falls back to the grep walk when `cargo` is absent.
 
 Reference: [`references/orchestration/pre-scan.md`](../references/orchestration/pre-scan.md).
 
