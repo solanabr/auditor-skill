@@ -1333,6 +1333,26 @@ templates/pr-report.md	- diff-audit: "changed lines not reviewed: {N} of {M}" an
 docs/ci.md	`git ls-remote https://github.com/solanabr/auditor-skill refs/heads/main` prints the current one
 docs/ci.md	`git ls-remote https://github.com/solanabr/auditor-skill 'refs/tags/<tag>^{}'` prints the commit that tag names
 templates/ci/auditor-pr.yml	# auditor-skill at one commit: the full id of a commit on its main branch
+commands/diff-audit.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/quick-scan.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/deep-review.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/audit-report.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/audit-cycle.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/audit-assist.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/audit.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/re-audit.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/audit-report.md	  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" *)'
+skills/dnr-analyze/SKILL.md	  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp)'
+skills/dnr-analyze/SKILL.md	its Generated field holding the line `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` prints, run as a Bash call of its own right before you write it |
+skills/dnr-analyze/SKILL.md	its Generated field holding the line `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` prints, run as a Bash call of its own right before you write it,
+OUTPUT-RULES.md	Every report carries, in its Generated field, the line `rundir.sh stamp` printed right before it was written, and claims no more review by a person than that line's statement says
+docs/ci.md	| `AUDITOR_REVIEW_STATEMENT` | empty | the last sentence of the Generated line each review's report carries
+templates/report-template.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
+templates/pr-report.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
+templates/incident-report.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
+templates/audit-report.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
+templates/re-audit.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
+templates/response-plan.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
 docs/ci.md	Under a $10 cap, the depth-scope selection read 38 vector files and 49 checklist sections in that repository, for $6.98.
 commands/quick-scan.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
 commands/diff-audit.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
@@ -1489,6 +1509,9 @@ docs/ci.md	from the auditor-skill release you use
 docs/ci.md	the full commit id of that release's tag
 templates/ci/auditor-pr.yml	the release tag you install
 templates/ci/auditor-pr.yml	the commit of the auditor-skill release you use
+templates/pr-report.md	- **Plugin:** auditor-skill {version}
+templates/report-template.md	**Date:** <!-- YYYY-MM-DD -->
+templates/incident-report.md	**Date:** {ISO}
 GONE
 
 # respond's step 5 and hunt's step 6 settle the mode as poc's step 5 does, each step read as one line so wording

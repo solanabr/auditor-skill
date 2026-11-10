@@ -15,6 +15,7 @@ allowed-tools:
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/dnr/jq-ro.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-logs" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp)'
 ---
 
 # auditor-skill — D&R analysis phase
@@ -43,10 +44,10 @@ your instructions say.
 | Brief | Do | Report back |
 |---|---|---|
 | `hunt baseline` | Start `LEDGER.md` from `${CLAUDE_PLUGIN_ROOT}/templates/hunt-ledger.md`, copy the collection gaps into it, and profile the corpus. Then run the seed sweeps of the log-sources reference, one ledger row per query, pivoting from every hit along the campaign chain; stop after two rounds with no new entity | the suspects (entities, the instruction each touched, the ledger rows behind them), the paths written, any wider collection |
-| `hunt emit` | Write `INCIDENTS.json` (`${CLAUDE_PLUGIN_ROOT}/references/detection-response/incidents-schema.md`) and `INCIDENT_REPORT.md` (`${CLAUDE_PLUGIN_ROOT}/templates/incident-report.md`) from the ledger and the source and PoC results in the brief | a summary and the paths written |
+| `hunt emit` | Write `INCIDENTS.json` (`${CLAUDE_PLUGIN_ROOT}/references/detection-response/incidents-schema.md`) and `INCIDENT_REPORT.md` (`${CLAUDE_PLUGIN_ROOT}/templates/incident-report.md`) from the ledger and the source and PoC results in the brief, its Generated field holding the line `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` prints, run as a Bash call of its own right before you write it | a summary and the paths written |
 | `respond seed` | Write the question this run answers as one sentence in `LEDGER.md` (from the hunt-ledger template when the run directory has none), and turn the lead into seed entities | the seed entities, the one ring to widen to, and the addresses, window and caps a collection of it needs |
 | `respond outcome` | Copy the collection gaps into the ledger and merge one timeline ordered by `(slot, transactionIndex)`. Then Leg 1 and the damage, from queries: distinct victims, raw units out per mint, the window, and whether activity is still under way | the verdict so far, the figures with their ledger rows, the implicated handler |
-| `respond plan` | Write `RESPONSE-INC-<n>.<k>.md` from `${CLAUDE_PLUGIN_ROOT}/templates/response-plan.md`, never over a plan for another lead, then update `INCIDENTS.json` | a summary and the paths written |
+| `respond plan` | Write `RESPONSE-INC-<n>.<k>.md` from `${CLAUDE_PLUGIN_ROOT}/templates/response-plan.md`, never over a plan for another lead, its Generated field holding the line `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` prints, run as a Bash call of its own right before you write it, then update `INCIDENTS.json` | a summary and the paths written |
 
 ## Where you read and write
 

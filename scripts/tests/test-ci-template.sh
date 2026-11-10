@@ -151,6 +151,9 @@ done
 n=$(printf '%s\n' "$code" | grep -c -E 'AUDITOR_(STRICT|EXEC_MODE):')
 check "nothing else sets AUDITOR_STRICT or AUDITOR_EXEC_MODE" [ "$n" -eq 2 ]
 # the defaults docs/ci.md's settings table gives are the ones the workflow sets
+n=$(printf '%s\n' "$top_env" | grep -c -x -F -- '  AUDITOR_REVIEW_STATEMENT: ""')
+m=$(grep -c -F -- '| `AUDITOR_REVIEW_STATEMENT` | empty |' docs/ci.md)
+check "the workflow's AUDITOR_REVIEW_STATEMENT is empty, as docs/ci.md's settings table says" [ "$n:$m" = 1:1 ]
 envval() { printf '%s\n' "$top_env" | sed -n "s/^  $1: \"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p"; }
 for row in "| \`AUDITOR_FAIL_ON\` | \`$(envval AUDITOR_FAIL_ON)\` |" \
            "| \`AUDITOR_MAX_BUDGET_USD\` | \`$(envval AUDITOR_MAX_BUDGET_USD)\` |" \

@@ -328,6 +328,8 @@ If a language has no dedicated checklist (e.g., Swift, Dart, Elixir):
 
 → Report-assembly format moved to [references/report-format.md](references/report-format.md) § Rule 9 — File Naming; loaded at report time.
 
+Every report carries, in its Generated field, the line `rundir.sh stamp` printed right before it was written, and claims no more review by a person than that line's statement says (`AUDITOR_REVIEW_STATEMENT`, else none).
+
 The directories these files live in (`audit_<n>/`, `.audit-memory/`, `incident_<n>/`) follow [Rule 11d](#11d--output-hygiene).
 
 ---

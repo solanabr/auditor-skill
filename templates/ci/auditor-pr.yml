@@ -51,6 +51,8 @@ env:
   # review; a name from a source that is not public is never sent. "off" sends no such request. Either way the review fetches the published code of every changed key-handling package
   # and of at most 40 other changed packages.
   AUDITOR_PUBLISH_AGE: "on"
+  # The last sentence of the Generated line in each review's report; empty says no person reviewed it.
+  AUDITOR_REVIEW_STATEMENT: ""
   # The tools job: the semgrep rulesets it runs, and the analyzer releases it installs. Pin a release that has
   # been out two weeks or more, so a broken one has had time to be pulled.
   SEMGREP_RULESETS: "p/rust p/trailofbits"

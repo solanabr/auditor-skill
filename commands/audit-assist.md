@@ -77,7 +77,7 @@ Fold the human's answers back in, re-synthesize, and continue.
 
 5. **Independent reconciliation.** Spawn `auditor:peer-reviewer` on the top-severity survivors (N≥8, plus any N≥7 the primary could not PoC); it re-derives from code, reusing the context worksheets. Reconcile CONFIRM / DISPUTE / DOWNGRADE. **⏸ Checkpoint 4 — after reconciliation:** present the reconciled set and any primary-vs-peer disagreements for the human to adjudicate.
 
-6. **Converge to the audit document.** Spawn `auditor:audit-reporter`: dedup by root-cause, order by severity / business importance, and fill the **client-facing** `templates/audit-report.md` (maturity + trust-model caveats + disclaimers, **no deploy guarantee**); the numeric Repository Risk Score stays in the internal `templates/report-template.md`. Emit `audit_<n>/REPORT.md`. Iterate on human feedback until the document is agreed.
+6. **Converge to the audit document.** Spawn `auditor:audit-reporter`: dedup by root-cause, order by severity / business importance, and fill the **client-facing** `templates/audit-report.md` (maturity + trust-model caveats + disclaimers, **no deploy guarantee**); the numeric Repository Risk Score stays in the internal `templates/report-template.md`. Emit `audit_<n>/REPORT.md`. Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9). Iterate on human feedback until the document is agreed, with a new stamp line each time you write it again.
 
 ## Re-runs against changed code
 

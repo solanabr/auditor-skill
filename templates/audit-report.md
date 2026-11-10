@@ -43,6 +43,7 @@ the proprietary knowledge base, and re-author all conventions in original wordin
 | **Report Version**    | {e.g. 1.0 — draft / 1.1 — final / 2.0 — post-fix}     |
 | **Audit Window**      | {YYYY-MM-DD → YYYY-MM-DD} <!-- when review work happened --> |
 | **Report Published**  | {YYYY-MM-DD} <!-- date THIS revision was issued --> |
+| **Generated**         | {the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands} |
 | **Classification**    | {Confidential — Client Only / Public / Draft}          |
 
 ### Revision History

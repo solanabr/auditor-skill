@@ -26,7 +26,7 @@ to do next. This is a Quick review, not a complete audit: `/auditor:audit` cover
 - **Pinned:** {diff-audit: base `{full BASE id}`, head `{full HEAD id}` · quick-scan and deep-review: HEAD
   `{full HEAD id}`}, from `git-ro.sh rev-parse`. The commands read files from the working tree, which can hold
   changes the pinned commit does not have; a finding cites the line it read.
-- **Plugin:** auditor-skill {version}
+- **Generated:** {the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands}
 - **Run directory:** `audit_<n>/` {and, with `--ci`, `audit_<n>/findings.json`}
 
 ## Findings

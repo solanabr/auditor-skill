@@ -13,6 +13,8 @@
 > run the pause/freeze runbook, and open a SEAL 911 ticket (`@seal_911_bot`;
 > verify any member who contacts you via the bot's keyword step).
 
+**Generated:** {the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands}
+
 ## 1. Verdict & summary
 
 {At most three sentences: the event, whether the attacker achieved it, and the

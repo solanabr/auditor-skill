@@ -13,7 +13,7 @@
 **Repository:** <!-- org/repo -->  
 **Commit:** <!-- short SHA -->  
 **Branch:** <!-- branch name -->  
-**Date:** <!-- YYYY-MM-DD -->  
+**Generated:** <!-- the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands -->  
 **Auditor:** <!-- Agent or human name -->  
 **Scope:** <!-- FULL / PROGRAM / BACKEND / FRONTEND / DEVOPS -->  
 **Program ID:** <!-- On-chain program address (if applicable) -->  
