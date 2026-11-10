@@ -205,7 +205,7 @@ claude --setting-sources "" --strict-mcp-config --plugin-dir "<auditor-skill roo
 
 ### Pick a depth
 
-Pick by what you want checked: what changed, one module, or the release. Quick, Standard and Full need nothing beyond installing the plugin.
+Pick by what you want checked: what changed, one module, or the release.
 
 | Depth | When | Run | [Cost and time](COSTS.md#cost-and-time-by-depth) |
 |-------|------|-----|------|
@@ -214,21 +214,9 @@ Pick by what you want checked: what changed, one module, or the release. Quick, 
 | **Full** | a release, or a report for someone outside the team | `/auditor:audit-cycle` (unattended) · `/auditor:audit-assist` (you steer) · `/auditor:re-audit` after fixes | about $20 · about 1 h, on a 3K-line program |
 | **[CI](docs/ci.md)** | every pull request: the analyzers on all of them, the review on those from your own branches | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | tools job $0; review about a diff-audit's cost, capped at $15 |
 
-Quick reads the changed code and one hop around it against the selection of `references/depth-scope.md` (diff-audit), a repository's SAST, dependency advisories and that selection (quick-scan), or one function (deep-review). It writes `PR-REPORT.md`, `QUICK-SCAN.md` or `DEEP-REVIEW-<unit>.md`. Standard gives every in-scope item a verdict and writes the internal `REPORT.md`, with a risk score and a deploy verdict. Full adds a threat model and peer review and writes the client `REPORT.md`, which gives no deploy guarantee; `/auditor:re-audit` then writes `RE-AUDIT.md`. What each depth reads and writes, in full: [docs/audit-flows.md](docs/audit-flows.md#pick-a-depth).
-
-The costs and times were measured from 2026-11-08 to 2026-11-10 with `claude-opus-5-5` as the session model, on 3K-, 7K- and 12K-line programs, one run each, so read them as sizes, not quotes. On the 12K-line program, a diff-audit of a narrow change, 1,248 lines with no lockfile, cost $3.99 in 9 minutes. Full ran once, on the 3K-line program, and nothing at 50K lines was measured. Every run, what it read and how it was set up: [COSTS.md](COSTS.md#cost-and-time-by-depth). Which model runs what: [Models and time](#models-and-time).
-
-Outside the depths: `poc`, `patch` and `economic-sim` work on one finding, and `triage` on a run's candidate findings; `intake` and `threat-model` are Full's building blocks; `audit-report` assembles the internal report from a walk run in pieces; `spec-audit` checks code against a spec; `hunt` and `respond` are for [after an incident](#after-an-incident).
-
-### Before running an audit
-
-1. **Intake, for Full only.** Full runs it for you: `/auditor:audit-cycle` with the [QUESTIONS.md](QUESTIONS.md) defaults, each listed in the report, and `/auditor:audit-assist` by asking at its first checkpoint. The answers set the severity calibration, the trust model and which compliance checklists apply. With an agent that has no commands, fill a copy of QUESTIONS.md first. Quick and Standard need no intake.
-2. **Check the cost:** [COSTS.md](COSTS.md) has the measured cost and time of each depth.
-3. **Choose your scope** for Standard and Full: `--scope full|program|backend|frontend` picks the part of the repository a run reviews. [SKILL.md](SKILL.md#scope-gated-loading--load-what-the-repo-needs) defines each one; the Quick commands take none.
+Quick and Standard need nothing set; Full starts with intake ([QUESTIONS.md](QUESTIONS.md)), and Standard and Full take a `--scope` ([SKILL.md](SKILL.md#scope-gated-loading--load-what-the-repo-needs)). The costs come from one run each, with `claude-opus-5-5`, on 3K-, 7K- and 12K-line programs, measured from 2026-11-08 to 2026-11-10 ([COSTS.md](COSTS.md)). A diff-audit of a narrow change to the 12K-line program, 1,248 lines with no lockfile, cost $3.99 in 9 minutes. What each depth reads and writes: [audit-flows.md](docs/audit-flows.md#pick-a-depth).
 
 ### Claude Code with the plugin
-
-Each depth is a command. Run it from the repository you audit:
 
 ```
 /auditor:diff-audit                                  # Quick: main's tip against HEAD
@@ -241,225 +229,148 @@ Each depth is a command. Run it from the repository you audit:
 /auditor:re-audit audit_1/REPORT.md main..HEAD       # Full: after the fixes
 ```
 
-`diff-audit` reviews commits, so commit your work first. With no argument it compares the tip of `main` with HEAD: rebase on `main` first, or changes `main` gained since you branched show up in the review. Every command and its arguments: [docs/commands.md](docs/commands.md).
+`diff-audit` reviews commits, so commit your work and rebase on `main` first. Every command and its arguments: [docs/commands.md](docs/commands.md).
 
 ### Every command
 
-There are 17 commands, each run as `/auditor:<name>`. Three are Quick, one is Standard, and three make up Full. The others work on one finding, build a Full run's pieces, assemble a report, check code against a spec, or handle an incident.
+There are 17 commands, each run as `/auditor:<name>`. Three are Quick, one is Standard and three make up Full; the others work on findings, build a Full run's pieces, assemble a report, check code against a spec, or handle an incident.
 
 | Command | Where it fits | What it does | Writes, in `audit_<n>/` |
 |---------|---------------|--------------|-------------------------|
-| `diff-audit [base..head]` | Quick | reviews the commits of a branch or pull request, with one hop of callers and callees | `PR-REPORT.md` |
-| `quick-scan [<path>]` | Quick | a first look at a whole repository: SAST, dependency advisories, and the sections and vectors `references/depth-scope.md` selects | `QUICK-SCAN.md` |
+| `diff-audit [base..head]` | Quick | the commits of a branch or pull request, with one hop of callers and callees | `PR-REPORT.md` |
+| `quick-scan [<path>]` | Quick | a first look: SAST, dependency advisories, the selection of `references/depth-scope.md` | `QUICK-SCAN.md` |
 | `deep-review <file> [fn]` | Quick | one function or instruction, in depth | `DEEP-REVIEW-<unit>.md` |
-| `audit [path] [--scope …]` | Standard | gives every in-scope item a verdict, item by item | `REPORT.md`, internal |
-| `audit-cycle [--with-poc]` | Full | runs the whole lifecycle, unattended | `REPORT.md`, client |
-| `audit-assist` | Full | runs the same lifecycle, pausing at checkpoints for your calls | `REPORT.md`, client |
-| `re-audit [prior] [base..head]` | Full, after fixes | classifies each prior finding (FIXED, STILL-OPEN, REGRESSED and the rest), reviews the change for new findings, and sweeps for unpatched siblings of each fix | `RE-AUDIT.md`, in `audit_<n+1>/` |
-| `intake` | Full's first step | records scope, protocol class, severity calibration, the trust model, the execution mode and whether live probes are allowed | `intake.md` |
-| `threat-model [--bootstrap]` | Full's building block | lists assets, actors and what each must not be able to do, trust boundaries and attacker goals; `--bootstrap` seeds them from history | `threat-model.md` |
-| `triage` | a set of findings | de-duplicates by root cause, re-applies the validation gate, and splits findings from Notes & Nitpicks | the triaged set and a suppression appendix |
-| `economic-sim <finding>` | one finding | puts a dollar profit and loss on an economic attack, on a Surfpool mainnet fork when one is available | the quantified PoC |
-| `poc <finding>` | one finding | builds a runnable exploit that asserts the flaw | `poc/F-xxx/` and a `[PoC-*]` tier |
-| `patch <finding>` | one finding | drafts a minimal fix and re-runs the exploit against it | `patches/F-xxx.patch`, `VERIFICATION.md` and a `[FIX-*]` tier |
-| `audit-report [dir]` | reporting | assembles the internal report from a walk run in pieces | `REPORT.md` |
-| `spec-audit <spec> [path]` | outside the depths | checks the code against a spec, a whitepaper or an RFC | a compliance matrix and findings |
-| `hunt [<address> …]` | after an incident | looks for an attack with no alert to start from | `INCIDENT_REPORT.md` and `INCIDENTS.json`, in `incident_<n>/` |
-| `respond <lead>` | after an incident | works one lead: whether it landed, the damage, the root cause and a proposed plan | `RESPONSE-INC-<n>.<k>.md`, in `incident_<n>/` |
+| `audit [path] [--scope …]` | Standard | a verdict for every in-scope item | `REPORT.md`, internal |
+| `audit-cycle [--with-poc]` | Full | the whole lifecycle, unattended | `REPORT.md`, client |
+| `audit-assist` | Full | the same lifecycle, pausing for your calls | `REPORT.md`, client |
+| `re-audit [prior] [base..head]` | Full, after fixes | each prior finding's status, new findings in the change, unpatched siblings of each fix | `RE-AUDIT.md`, in `audit_<n+1>/` |
+| `intake` | Full's first step | scope, protocol class, severity calibration, trust model, execution mode, live probes | `intake.md` |
+| `threat-model [--bootstrap]` | Full's building block | assets, actors, trust boundaries and attacker goals, seeded from history with `--bootstrap` | `threat-model.md` |
+| `triage` | a set of findings | de-duplicates by root cause and re-applies the validation gate | the triaged set |
+| `economic-sim <finding>` | one finding | the dollar profit and loss of an economic attack, on a Surfpool fork when available | the quantified PoC |
+| `poc <finding>` | one finding | a runnable exploit that asserts the flaw | `poc/F-xxx/`, a `[PoC-*]` tier |
+| `patch <finding>` | one finding | a minimal fix, checked against the exploit | `patches/F-xxx.patch`, a `[FIX-*]` tier |
+| `audit-report [dir]` | reporting | the internal report, from a walk run in pieces | `REPORT.md` |
+| `spec-audit <spec> [path]` | outside the depths | the code against a spec, a whitepaper or an RFC | a compliance matrix |
+| `hunt [<address> …]` | after an incident | looks for an attack with no alert to start from | `INCIDENT_REPORT.md`, in `incident_<n>/` |
+| `respond <lead>` | after an incident | one lead: whether it landed, the damage, the root cause, a plan | `RESPONSE-INC-<n>.<k>.md` |
 
-Two skills ship beside them. `auditor:dnr-analyze` runs one analysis phase of `hunt` or `respond` as a fork of the incident-responder agent. The root skill, `auditor:auditor-skill`, runs when you ask in plain words, such as "audit this repo".
+Two skills ship beside them: `auditor:dnr-analyze` runs one analysis phase of `hunt` or `respond` as a fork of the incident-responder agent, and the root skill, `auditor:auditor-skill`, runs when you ask in plain words.
 
 ### After an incident
 
-`/auditor:hunt` and `/auditor:respond` start from what already happened on chain: transaction history, program logs, and Geyser or indexer exports. They are a track of their own, never part of an audit, and they only propose.
-
-- **`/auditor:hunt [<address> …]`** — no alert to start from. It snapshots the deployed programs, baselines the transaction history, records each hypothesis and its query in a ledger, checks each suspect against the source deployed at the incident slot, and reproduces it on the program's real bytes → `incident_<n>/INCIDENT_REPORT.md` and `INCIDENTS.json`.
-- **`/auditor:respond <lead>`** — one lead: a signature, an address, an alert or an `INC-<n>.<k>` from a hunt. It settles whether it landed, the damage per mint and the root cause, and drafts containment, remediation and recovery steps for people to carry out → `RESPONSE-INC-<n>.<k>.md`.
-
-Neither command signs, sends, pauses or freezes anything. If funds may be moving right now, page your on-call, run the pause or freeze runbook and open a SEAL 911 ticket first: these commands are the after-the-fact workup. Guide: [docs/detection-response.md](docs/detection-response.md).
+`/auditor:hunt` looks for an attack with no alert to start from, and `/auditor:respond` works one lead, such as a signature, an address or an alert, to whether it landed, the damage per mint, the root cause and a plan for people to carry out. Both read transaction history, program logs and Geyser or indexer exports, and neither signs, sends, pauses or freezes anything. Run your pause or freeze runbook first: these are the after-the-fact workup ([docs/detection-response.md](docs/detection-response.md)).
 
 ### CI for pull requests
 
-To review every pull request, copy `templates/ci/auditor-pr.yml` into `.github/workflows/` and follow [docs/ci.md](docs/ci.md#setup). The workflow pins auditor-skill by a full commit id: use a `main` commit that holds the template, not a release tag, since no tag holds it yet and patch releases get none ([CONTRIBUTING.md §3](CONTRIBUTING.md#3-branch-and-pr-flow)). The template runs two jobs:
-
-- **The tools job** runs the bundled analyzers (semgrep, `cargo audit`, `npm audit`) on every pull request, forks included, with no model and no secrets. It costs runner minutes only.
-- **The review job** runs `/auditor:diff-audit --ci` on pull requests from your own branches, other than Dependabot's, in strict mode with nothing from the pull request built or run. It fails when a counted finding reaches `AUDITOR_FAIL_ON` (7 by default), when an analyzer did not run, or when the review stopped early ([what the verdict means](docs/ci.md#what-the-verdict-means)). A review costs about what a diff-audit of that change costs, and the template caps it at $15.
-
-On a fork's or Dependabot's pull request the review check shows Success with no review, so review those yourself before you merge. On a public repository the job posts pass or fail only, with no finding text or counts: logs, job summaries and uploaded artifacts are readable by any signed-in GitHub user. The details stay on the runner, you read them by running the same command in a clone of your own, and the job never fails only because no private channel exists (OUTPUT-RULES Rule 11d).
-
-For a scheduled scan of the default branch, run `/auditor:quick-scan --ci`, with a `--max-budget-usd` of $15: a cap close to a full pass's cost makes the session stop reading early ([COSTS.md](COSTS.md#cost-and-time-by-depth)). A CI job of your own, such as a Full run on a release branch, is a `claude -p` run: what it needs is in [docs/faq.md](docs/faq.md#can-i-use-this-in-cicd) and [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#non-interactive-runs-claude--p).
+Copy `templates/ci/auditor-pr.yml` into `.github/workflows/`, pin it to the full commit id of a `main` commit that holds the template, since no release tag holds it yet, and follow [docs/ci.md](docs/ci.md#setup). Its tools job runs semgrep, `cargo audit` and `npm audit` on every pull request with no secrets. Its review job runs `/auditor:diff-audit --ci` on pull requests from your own branches, other than Dependabot's, capped at $15. On a public repository it publishes pass or fail only.
 
 ### Models and time
 
-Time depends on the depth, the repository's size and the model. Quick scales with the change, Standard with the module, and Full takes longest: six agents carry it from context reconstruction through a threat model and peer review to the report, and `--with-poc` adds two more.
-
-In Claude Code each agent names its own model tier: seven run on Opus, and context-builder and audit-reporter on Sonnet ([docs/agents.md](docs/agents.md)). `/auditor:quick-scan` and `/auditor:diff-audit` start no agent, so your session's model runs them (`/model`, or `claude --model`); an agent that `/auditor:deep-review` starts runs on the tier its definition names. Sonnet as the session model is not measured yet.
+Seven agents run on Opus, and context-builder and audit-reporter on Sonnet; quick-scan and diff-audit start no agent, so your session's model runs them. Quick scales with the change, Standard with the module, and Full takes longest ([docs/faq.md](docs/faq.md#how-long-does-an-audit-take), [COSTS.md](COSTS.md)).
 
 ## Output format
 
-Every run writes into a run directory, `audit_<n>/` (`incident_<n>/` for the incident track), whose first file is a `.gitignore` holding `*`. The Quick commands write their reports from `templates/pr-report.md`: `PR-REPORT.md`, `QUICK-SCAN.md` or `DEEP-REVIEW-<unit>.md`, each opening with a summary of the verdict, the highest severity, the findings, what was reviewed, the analyzers that ran and the mode.
-
-`/auditor:audit` (Standard) writes the internal report below. `/auditor:audit-cycle` and `/auditor:audit-assist` (Full) write the client report instead, which follows firm convention and gives no deploy guarantee. The internal report is a structured markdown file with:
-
-1. **Executive Summary** — risk score (1-10), deploy/no-deploy verdict, severity distribution
-2. **Instruction Matrix** — every smart contract instruction mapped
-3. **State Model** — account structs, PDA seeds, relationships
-4. **Per-Item Verdicts** — every in-scope checklist item (up to 1,465) with `[PASS]`, `[FAIL-N]`, `[PARTIAL]`, or `[N/A]`
-5. **Known Vectors Results** — each in-scope attack vector (up to 141) with explicit verdict and evidence
-6. **Findings** — deduplicated, severity-sorted
-7. **Attack Scenarios** — narrative exploitable paths
-8. **Aggregate Score** — PASS/PARTIAL/FAIL percentages
-9. **Recommendations** — prioritized fix list
-
-The client report has an executive summary, a commit-pinned scope, findings with PoC or reachability, a code-maturity assessment, and disclaimers. Like a real firm's, it does **not** issue a "safe to deploy" guarantee. Method and firm coverage: [references/audit-lifecycle/](references/audit-lifecycle/). An optional PDF needs [pandoc](https://pandoc.org/) 2.15 or later and a PDF engine (xelatex, lualatex or pdflatex):
+Every run writes into a run directory, `audit_<n>/` or `incident_<n>/`, that git ignores. Quick writes `PR-REPORT.md`, `QUICK-SCAN.md` or `DEEP-REVIEW-<unit>.md`, each opening with a summary. Standard writes the internal `REPORT.md`, with a risk score and a deploy verdict. Full writes the client `REPORT.md`, with a commit-pinned scope, a code-maturity assessment and disclaimers, and no "safe to deploy" guarantee ([output-and-rigor.md](docs/output-and-rigor.md#two-report-templates)). High and Critical findings can add `poc/` and `patches/` ([poc-and-patches.md](docs/poc-and-patches.md)). A PDF needs pandoc 2.15 or later and a PDF engine:
 
 ```bash
-# from your project; <auditor-skill root> is where auditor-skill is installed
-"<auditor-skill root>/scripts/report-to-pdf.sh" audit_1/REPORT.md   # writes REPORT.pdf when pandoc and a PDF engine are installed; MD is always the deliverable
+"<auditor-skill root>/scripts/report-to-pdf.sh" audit_1/REPORT.md   # MD is always the deliverable
 ```
 
-For High and Critical findings, an optional `audit_<n>/poc/` (runnable exploits that assert the bug) and `audit_<n>/patches/` (minimal fixes proven to revert the exploit) accompany the report: [docs/poc-and-patches.md](docs/poc-and-patches.md). Every output file, by name: [docs/output-and-rigor.md](docs/output-and-rigor.md#report-file-naming). The complete specification: [OUTPUT-RULES.md](OUTPUT-RULES.md).
+Every output file: [output-and-rigor.md](docs/output-and-rigor.md#report-file-naming). The specification: [OUTPUT-RULES.md](OUTPUT-RULES.md).
 
 ## Configuration
 
-auditor-skill reads no configuration file of its own: environment variables, command flags and the intake answers set a run. Strict mode and the execution mode are the settings that matter most. Strict mode is off unless `AUDITOR_STRICT=1`, a command's `--strict` or intake's "Untrusted source" answer turns it on. The execution mode is native unless intake, `AUDITOR_EXEC_MODE` or strict mode says otherwise.
+auditor-skill reads no configuration file of its own. Environment variables, command flags and the intake answers set a run:
 
 | Setting | Default | What it does |
 |---------|---------|--------------|
-| `AUDITOR_STRICT=1`, or `--strict` on a command | off | strict mode: refuses what default mode only notes, and raises the execution mode to isolated at least ([Rule 11f](OUTPUT-RULES.md#11f--default-and-strict-mode)) |
-| `AUDITOR_EXEC_MODE` | native when nothing is recorded | `native`, `isolated` or `none`: how the runners build and test the project. They take the stricter of it, the run directory's recorded mode (intake's Q46) and strict mode ([Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety)) |
-| `AUDITOR_PUBLISH_AGE` | on | for a changed lockfile, asks each package's public registry for its publish times and publishers, once per name in the changed set; `off` sends no such request ([Security model](#security-model-and-limitations)) |
-| `--scope full\|program\|backend\|frontend` | `full` | the part of the repository a Standard or Full run reviews ([SKILL.md](SKILL.md#scope-gated-loading--load-what-the-repo-needs)) |
-| `--ci`, `--fail-on <N>` | off, 7 | an unattended Quick run that ends in a verdict line, and the severity that fails it ([docs/ci.md](docs/ci.md#running---ci-yourself)) |
-| `--over-budget fail` | count | diff-audit fails a change over 5,000 changed lines instead of reviewing its riskiest 5,000 and counting the rest |
-| `BASH_DEFAULT_TIMEOUT_MS`, `BASH_MAX_TIMEOUT_MS` | Claude Code's: a call times out after two minutes | raised in your user settings' `env`, they keep a long build or collection inside the command's pre-approvals ([Long steps](docs/permissions-and-isolation.md#long-steps)) |
+| `AUDITOR_STRICT=1`, `--strict` or intake's "Untrusted source" | off | strict mode ([Rule 11f](OUTPUT-RULES.md#11f--default-and-strict-mode)) |
+| `AUDITOR_EXEC_MODE` | native | `native`, `isolated` or `none`: how the runners build and test ([Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety)) |
+| `AUDITOR_PUBLISH_AGE` | on | `off` stops a lockfile review's publish-age lookups ([docs/ci.md](docs/ci.md#setup)) |
+| `BASH_DEFAULT_TIMEOUT_MS`, `BASH_MAX_TIMEOUT_MS` | two minutes | raised, they keep a long build inside the command's pre-approvals ([Long steps](docs/permissions-and-isolation.md#long-steps)) |
 
-The CI template's own settings (`AUDITOR_FAIL_ON`, `AUDITOR_MAX_BUDGET_USD`, `AUDITOR_OVER_BUDGET`, `AUDITOR_PUBLISH_AGE`, `SEMGREP_RULESETS` and the tool versions) are in its top-level `env:` block ([docs/ci.md](docs/ci.md#setup)). Every command's flags: [docs/commands.md](docs/commands.md).
-
-### Your project's layout
-
-auditor-skill was first built for one Solana/Anchor DeFi project and then generalized, and `discovery/file-map.md` still assumes that project's layout (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`). For Quick and Standard, pass the range or the path you want reviewed.
-
-For Full, record where your code lives at intake: the in-scope paths under `QUESTIONS.md` Q39 ("Specific files/modules") and the exclusions under Q44 go into the Layout table of `audit_<n>/intake.md` §1. The next interactive intake in the same checkout offers that table again and reuses it only on your yes; `/auditor:audit-cycle` runs intake with `--auto`, which never reuses it. Don't edit `discovery/file-map.md` in a shared or plugin install: the next update overwrites it. Everything else (checklists, known vectors, output rules) is portable as-is ([docs/getting-started.md](docs/getting-started.md), "Adapt to your repo").
+The command flags are in [docs/commands.md](docs/commands.md), and the CI template's settings in [docs/ci.md](docs/ci.md#setup). For Full, intake records where your code lives instead of `discovery/file-map.md` ([getting-started.md](docs/getting-started.md), "Adapt to your repo").
 
 ## Integrations
 
 ### solana-ai-kit
 
-[solana-ai-kit](https://github.com/solanabr/ai-kit) vendors auditor-skill as a skill pack at a pinned commit and never runs `install.sh`, so a release here reaches kit users when the kit moves its pin. The kit's skill registry also records the Trail of Bits pin, and a maintainer tells the kit the new commit after each bump ([CONTRIBUTING.md §5](CONTRIBUTING.md#bumping-vendortrailofbits)).
-
-A project built with the kit ships its own Claude Code config, a `.claude/` and a `.mcp.json`. Claude Code loads that config with the session unless you start it with the strict launch line. In default mode preflight notes it and the run goes on; strict mode refuses such a tree, and [Permissions and isolation](#permissions-and-isolation) says how to audit a copy without it.
+[solana-ai-kit](https://github.com/solanabr/ai-kit) vendors auditor-skill as a skill pack at a pinned commit and never runs `install.sh`, so a release reaches kit users when the kit moves its pin ([CONTRIBUTING.md §5](CONTRIBUTING.md#bumping-vendortrailofbits)). A kit project ships its own `.claude/` and `.mcp.json`: default mode notes them, and strict mode refuses the tree.
 
 ### Other agents
 
-An agent without the plugin's commands (VS Code with GitHub Copilot, Cursor, Windsurf, Codex) reads the skill and follows it. Copy the folder anywhere the agent reads, outside the repository you audit, point it at its `SKILL.md`, and ask in plain words:
+An agent without the plugin's commands reads the skill. Copy the folder outside the repository you audit, point the agent at its `SKILL.md`, and ask in plain words; [docs/other-agents.md](docs/other-agents.md) has the prompts for Copilot, Cursor, Windsurf, Codex and the API:
 
 ```text
-# VS Code / GitHub Copilot
-@workspace Audit the entire repository using the auditor-skill
-
-# Cursor / Windsurf: a full audit
 Read ~/.claude/skills/auditor-skill/SKILL.md then audit this repository following that installation's FULL-AUDIT.md execution plan
-
-# Cursor / Windsurf: a first pass on a branch
-Read ~/.claude/skills/auditor-skill/SKILL.md then review what this branch changes against main, as its differential mode describes
-
-# Claude Code, in plain words
 Read the auditor-skill files in ~/.claude/skills/auditor-skill/ and perform a full security audit of this repository
 ```
 
-For the API (programmatic), send `SKILL.md` + `OUTPUT-RULES.md` + `FULL-AUDIT.md` as the system prompt and the target files as user messages, chunked, then collect the structured output. More prompts, and what changes without the plugin: [docs/other-agents.md](docs/other-agents.md).
-
 ### Surfpool
 
-`/auditor:economic-sim` and `/auditor:poc --fork` reproduce an economic attack on a Surfpool mainnet fork when the `surfpool` CLI and its MCP server, which needs no key, are available. The fork fetches mainnet state from its RPC datasource, which receives the program ids and account addresses the simulation reads, so the report names that provider's domain. Without Surfpool, a PoC falls back to Mollusk or LiteSVM when the logic can be modeled, else to `[PoC-ATTEMPTED]` with the blocker named. The strict launch line's `--strict-mcp-config` drops your own MCP servers, the Surfpool server among them ([docs/power-tools.md](docs/power-tools.md#surfpool-economic-simulation)).
+`/auditor:economic-sim` and `/auditor:poc --fork` replay an economic attack on a Surfpool mainnet fork when the `surfpool` CLI and its MCP server are available ([power-tools.md](docs/power-tools.md#surfpool-economic-simulation)).
 
 ## Security model and limitations
 
-auditor-skill reads the code it audits, and in native mode it builds and tests it. What it does by itself is limited in both modes: git only reads, writes go only into its own run directories, the `audit-mem` store and scratch directories, none of your credentials is used, and every pre-approved tool checks its arguments ([docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#default-and-strict-mode)).
+- **In both modes** git only reads, the auditor writes only into its run directories, the `audit-mem` store and scratch directories, none of your credentials is used, and every pre-approved tool checks its arguments.
+- **Strict mode holds** only when Claude Code starts with the strict launch line, or with `AUDITOR_STRICT=1` in managed settings; otherwise the repository's own settings apply first and can switch it off.
+- **Outside services are disclosed, not gated:** the report lists each one, such as the public registries a lockfile review asks while `AUDITOR_PUBLISH_AGE` is on ([Rule 11b](OUTPUT-RULES.md#11b--outside-service-disclosure)).
+- **Output stays private:** run directories ignore themselves in git, and CI on a public repository publishes pass or fail only ([Rule 11d](OUTPUT-RULES.md#11d--output-hygiene)).
 
-- **Default mode notes; strict mode refuses.** A check that would stop the run in strict mode prints a note in default mode, and the report lists each distinct note once under Coverage & Limitations. Strict mode refuses those, and raises the execution mode to isolated at least.
-- **Strict mode is as strong as the way Claude Code starts.** Nothing in the repository can turn strict mode off when Claude Code starts with the strict launch line, or with `AUDITOR_STRICT=1` in managed settings. Started any other way, the repository's own settings (hooks, `env`, `CLAUDE_ENV_FILE`) apply first and can switch it off. `--strict` and intake's answer travel through the agent, so text the repository loads can talk the agent out of them.
-- **What default mode leaves open.** In native mode the project's builds and tests run on your machine without a prompt for each run. The isolated-mode self-check knows credentials only by their names and places. Preflight covers neither a session you start in such a tree for other work nor a command that a repository file has replaced; starting Claude Code with the strict launch line, which loads none of the repository's skills, commands or settings, rules both out.
-- **Outside services are disclosed, not gated.** The report lists each tool that contacts an outside service, and what it was set to send ([Rule 11b](OUTPUT-RULES.md#11b--outside-service-disclosure)). Trail of Bits' `second-opinion`, which asks before it runs, sends the selected code to an external LLM CLI, OpenAI Codex or Google Antigravity / Gemini.
-- **A lockfile review contacts the public registries.** With `AUDITOR_PUBLISH_AGE` on, the default, it sends the name of each package its set holds, new packages and new versions alike, to its public registry (npmjs.org, crates.io's index, pypi.org), and each crate the budget selects to crates.io's record as well. With it off, the review still fetches the published code of the versions its budget selects.
-- **Output stays private.** Run directories ignore themselves in git, and CI on a public repository publishes pass or fail only ([Rule 11d](OUTPUT-RULES.md#11d--output-hygiene)).
-
-Everything that remains a risk: [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#what-remains-a-risk). To report a vulnerability in auditor-skill itself, use private vulnerability reporting, as [SECURITY.md](SECURITY.md) explains.
+What remains a risk: [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#what-remains-a-risk). To report a vulnerability in auditor-skill itself, see [SECURITY.md](SECURITY.md).
 
 ## Upgrading
 
-Plugin users get each change when they update the plugin, a new Trail of Bits pin included. An `install.sh` install gets it on its next run.
-
-**After every update, rebuild the Rust tools:** `cargo build --release --locked` in `tools/auditor-tools`. An older build refuses the `--contract=1` the flows pass, and they go on as if the tools were absent; an `audit-logs` built before a change to the recipes it mirrors or to `confine.sh` exits 4, and the analysis falls back to the scripts until you rebuild.
+Plugin users get each change, a new Trail of Bits pin included, when they update the plugin, and an `install.sh` install on its next run. Rebuild the Rust tools after every update.
 
 ### Upgrading from 7.6.0 or earlier
 
-Through 7.6.0, `install.sh` without a path installed into the current directory's `.claude/skills/auditor-skill`; it now installs to `~/.claude/skills/auditor-skill`, and a run started next to such a copy notes it and leaves it alone. If your copy sits inside a repository, delete it (`rm -rf .claude/skills/auditor-skill`) and install a fresh copy outside: the plugin (Option 1), or Option 2. Never move or update a copy you find inside a repository: its git config may have come with that repository. Plugin users get this change when they update the plugin.
+Through 7.6.0, `install.sh` without a path installed into the current directory's `.claude/skills/auditor-skill`; it now installs to `~/.claude/skills/auditor-skill`, and a run started next to such a copy notes it and leaves it alone. If your copy sits inside a repository, delete it (`rm -rf .claude/skills/auditor-skill`) and install a fresh one outside; never move or update a copy you find inside a repository ([getting-started.md](docs/getting-started.md), "Install").
 
 ### Upgrading from 7.6.x or 7.7.0
 
-7.7.2 made the security checks opt-in. By default a check that used to stop the run prints a note, and the report lists it; strict mode keeps the refusals.
+7.7.2 made the security checks opt-in: a check that used to stop the run prints a note, and strict mode keeps the refusals.
 
-- **If you set isolated mode on the old advice.** Before 7.7.2 the docs called isolated mode recommended. On a normal machine, where `~/.ssh` or `~/.config/solana` is readable, it now stops every build and PoC at the isolation self-check, since that machine is not an isolated runner. To build natively, unset `AUDITOR_EXEC_MODE` where Claude Code runs and write `native` to the run directory's `exec-mode`; the self-check's blocker line says so too.
-- **To keep the refusals,** turn strict mode on with `AUDITOR_STRICT=1`, `--strict` on a command, or intake's "Untrusted source" answer, and start Claude Code with the strict launch line ([Permissions and isolation](#permissions-and-isolation)).
-- **Anchor projects build in the runners.** In 7.7.0 an `anchor` installed through avm did not start in the build's own HOME, Anchor 1.x builds failed at the IDL step, Anchor 1.2 got the wrong platform tools, and anchor-cli 0.31.1 rejected the `--ignore-keys` the runner passed. 7.7.2 fixes all four, and an older `cargo build-sbf` builds natively, offline, in the runners' throwaway home folder.
-- **Rebuild the Rust tools,** as after every update: `scripts/lib/confine.sh` changed in 7.7.2, so an older `audit-logs` exits 4 until you rebuild it.
-- **"Yes, and don't ask again"** at a prompt no longer breaks the next run inside a git repository: preflight takes an untracked `.claude/settings.local.json` for your own.
-
-Details, in docs/permissions-and-isolation.md: [Default and strict mode](docs/permissions-and-isolation.md#default-and-strict-mode) and [Strict mode and isolated runs](docs/permissions-and-isolation.md#strict-mode-and-isolated-runs).
+- **If you set isolated mode on the old advice,** every build now stops at the isolation self-check on a normal machine: unset `AUDITOR_EXEC_MODE` and write `native` to the run directory's `exec-mode` ([Strict mode and isolated runs](docs/permissions-and-isolation.md#strict-mode-and-isolated-runs)).
+- **To keep the refusals,** turn on strict mode and start with the strict launch line.
+- **Anchor projects build in the runners:** avm's `anchor`, Anchor 1.x's IDL step, Anchor 1.2's platform tools and anchor-cli 0.31.1 all work since 7.7.2 ([changelog](docs/changelog.md#772-70-and-58-before-it)).
+- **Rebuild the Rust tools:** an `audit-logs` built before 7.7.2 exits 4.
 
 ## What's new
 
-The latest changes, newest first. Each entry in full, with the earlier releases: [docs/changelog.md](docs/changelog.md).
+Newest first; each entry in full, with the earlier releases: [docs/changelog.md](docs/changelog.md).
 
-- **7.7.3** — Three depths, Quick, Standard and Full, and a CI mode. `references/depth-scope.md` declares what quick-scan and diff-audit read; diff-audit reviews at most 5,000 changed lines and runs a lockfile budget; `templates/ci/auditor-pr.yml` reviews pull requests; each Quick command writes a named report; every report gets a Generated line from `rundir.sh stamp`, which says no person reviewed it unless `AUDITOR_REVIEW_STATEMENT` says otherwise; COSTS.md gives measured runs.
-- **7.7.2** — Strict mode is opt-in: by default the checks that used to stop a run print a note, and builds run natively unless intake, `AUDITOR_EXEC_MODE` or strict mode says otherwise. Anchor builds work in the runners, and an older `cargo build-sbf` builds offline. It also brings the host kernel and network attack surface of validators, RPC nodes, keepers, indexers and runners: a known vector (KV-141), six checklist items (DEP-097..102) and a playbook. Read [how to upgrade from 7.6.x or 7.7.0](#upgrading-from-76x-or-770).
-- **7.7.0** — Bundled steps run without asking, `audit-logs` and the incident-analysis fork, opt-in post-patch validation and rules for live probes, the GitHub Actions workflow pass, a per-project layout with a contract marker for the Rust tools, and checks for forensic readiness and from a comparison with Cloudflare's audit skill. It is the minor release that closes the 7.6.x patch series.
-- **7.6.1** — New CI checks (an advisory macOS job with bash 3.2 and BSD tools, frontmatter and pipefail checks, a weekly plugin validation), PoC verdicts bound to the assertions that ran, hardened incident collection and recipes, and `install.sh`'s new default path, outside any repository. The Trail of Bits pin moved to `1f68e03`.
-- **7.6.0** — Detection and response after an incident, threat models seeded from history, GitHub Actions trigger trust, the operating-safety rules (Rule 11), and a reviewed Trail of Bits pin.
+- **7.7.3** — Three depths and a CI mode: `references/depth-scope.md`, diff-audit's line and lockfile budgets, the `templates/ci/auditor-pr.yml` workflow, a named report from each Quick command, a Generated line in every report (`rundir.sh stamp`) that says no person reviewed it unless `AUDITOR_REVIEW_STATEMENT` says otherwise, and measured costs.
+- **7.7.2** — Strict mode is opt-in, builds run natively by default, and Anchor builds work in the runners. It also brings the host kernel and network attack surface: KV-141, DEP-097..102 and a playbook.
+- **7.7.0** — Bundled steps run without asking, `audit-logs` and the incident-analysis fork, post-patch validation, rules for live probes, the GitHub Actions workflow pass, a per-project layout, and checks for forensic readiness and from a comparison with Cloudflare's audit skill.
+- **7.6.1** — New CI checks, PoC verdicts bound to the assertions that ran, hardened incident recipes, `install.sh` outside any repository, and the Trail of Bits pin `1f68e03`.
+- **7.6.0** — Detection and response, history-seeded threat models, GitHub Actions trigger trust, the operating-safety rules, and a reviewed Trail of Bits pin.
 - **7.5.0** — A slot used as a clock after SIMD-0525 and Alpenglow: KV-138 and nine checks.
-- **7.4.0** — Vendored-program provenance after the Rain white-label card-contract exploit: KV-137, AC-051..055 and SC-053..058.
+- **7.4.0** — Vendored-program provenance after the Rain white-label exploit: KV-137, AC-051..055 and SC-053..058.
 
 ## Documentation
 
 | Page | Contents |
 |------|----------|
-| [docs/getting-started.md](docs/getting-started.md) | Install, submodule init, build the Rust tools, run your first audit |
-| [docs/audit-flows.md](docs/audit-flows.md) | The three depths and CI, and the pipeline each one follows (`/diff-audit`, `/audit`, `/audit-cycle`, `/audit-assist`, `/re-audit`) |
-| [docs/ci.md](docs/ci.md) | CI for pull requests: the workflow template, its two jobs, `--ci` and `--fail-on`, what the verdict means, and how to read the details of a public repository's run |
-| [docs/commands.md](docs/commands.md) | Reference for all 17 commands |
-| [docs/agents.md](docs/agents.md) | The 9-agent roster and how they chain |
-| [docs/power-tools.md](docs/power-tools.md) | `audit-scan`, `audit-mem`, Trail of Bits, Surfpool, PoC/patch harnesses and the bundled scripts |
-| [docs/poc-and-patches.md](docs/poc-and-patches.md) | Executable exploit + fix-patch delivery |
-| [docs/output-and-rigor.md](docs/output-and-rigor.md) | Severity, the Rule 5b gate, scope-gated loading, report format |
-| [docs/detection-response.md](docs/detection-response.md) | Post-incident hunting + incident workup (`/auditor:hunt`, `/auditor:respond`) |
-| [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md) | Default and strict mode, what runs without asking and why that is safe, what still asks, strict mode and isolated runs, `claude -p`, the risks that remain |
-| [docs/faq.md](docs/faq.md) | Questions people ask: a professional audit, the model, how long, CI, projects outside Solana |
-| [docs/other-agents.md](docs/other-agents.md) | auditor-skill with Copilot, Cursor, Windsurf, Codex or an LLM API: install, prompts, what changes without the plugin |
-| [docs/changelog.md](docs/changelog.md) | What each release added |
-| [docs/repository-layout.md](docs/repository-layout.md) | Every folder and file of this repository |
-| [docs/README.md](docs/README.md) | The docs index, with a goal-to-command table |
+| [docs/README.md](docs/README.md) | the docs index, with a goal-to-command table |
+| [docs/getting-started.md](docs/getting-started.md) | install, the submodule, the Rust tools, a first audit |
+| [docs/audit-flows.md](docs/audit-flows.md) | the depths and CI, and the pipeline each follows |
+| [docs/commands.md](docs/commands.md), [docs/agents.md](docs/agents.md) | the 17 commands and the 9 agents |
+| [docs/ci.md](docs/ci.md) | the pull-request workflow and what its verdict means |
+| [docs/output-and-rigor.md](docs/output-and-rigor.md) | severity, the validation gate, the report formats |
+| [docs/poc-and-patches.md](docs/poc-and-patches.md) | executable exploits and verified fixes |
+| [docs/detection-response.md](docs/detection-response.md) | the post-incident track |
+| [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md) | default and strict mode, isolated runs, `claude -p`, what remains a risk |
+| [docs/power-tools.md](docs/power-tools.md) | `audit-scan`, `audit-mem`, Trail of Bits, Surfpool, the PoC/patch harnesses, and the index of the bundled scripts, whose reference is on four pages |
+| [docs/faq.md](docs/faq.md), [docs/other-agents.md](docs/other-agents.md) | questions people ask; auditor-skill without the plugin |
+| [docs/changelog.md](docs/changelog.md), [docs/repository-layout.md](docs/repository-layout.md) | what each release added; every folder and file |
 
-The root files the agent reads: [SKILL.md](SKILL.md) (the orchestrator, read first), [OUTPUT-RULES.md](OUTPUT-RULES.md) (the output format, the severity scale and the operating-safety rules), [FULL-AUDIT.md](FULL-AUDIT.md) (the step-by-step plan of a complete audit), [QUESTIONS.md](QUESTIONS.md) (the 47-question intake) and [AGENTS.md](AGENTS.md) (agent orchestration). For people: [COSTS.md](COSTS.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [ATTRIBUTION.md](ATTRIBUTION.md).
+The agent reads [SKILL.md](SKILL.md), [OUTPUT-RULES.md](OUTPUT-RULES.md), [FULL-AUDIT.md](FULL-AUDIT.md), [QUESTIONS.md](QUESTIONS.md) and [AGENTS.md](AGENTS.md). For people: [COSTS.md](COSTS.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [ATTRIBUTION.md](ATTRIBUTION.md).
 
 ## Folder structure
 
-| Path | What it holds |
-|------|---------------|
-| `SKILL.md`, `OUTPUT-RULES.md`, `FULL-AUDIT.md`, `QUESTIONS.md`, `AGENTS.md` | the skill the agent reads, its output rules, the full-audit plan, the intake questionnaire and the agent overview |
-| `checklists/` | the 20 checklists |
-| `known-vectors/` | the 141 known vectors, and `INDEX.md` |
-| `references/` | methodologies, framework idioms, vulnerability classes, the invariant catalog, false-positive rules, the audit lifecycle, detection & response, orchestration, `depth-scope.md` |
-| `discovery/` | the file map and the grep commands by category |
-| `commands/`, `agents/`, `skills/` | the 17 commands, the 9 agents and the `dnr-analyze` skill |
-| `templates/` | report templates, worksheets, the PoC and patch templates, `strict-settings.json` and the CI workflow |
-| `tools/auditor-tools/` | the Rust tools `audit-scan`, `audit-mem` and `audit-logs` |
-| `scripts/` | preflight, run directories, read-only git, the runners, recipes, collectors, the CI checks and their tests |
-| `vendor/trailofbits/` | the Trail of Bits plugins, a pinned git submodule |
-| `docs/` | the usage guides |
-
-The full tree, with what each file is for: [docs/repository-layout.md](docs/repository-layout.md).
+The skill's files sit at the top (`SKILL.md`, `OUTPUT-RULES.md`, `FULL-AUDIT.md`, `QUESTIONS.md`, `AGENTS.md`), beside `checklists/`, `known-vectors/`, `references/` and `discovery/`, the plugin's `commands/`, `agents/` and `skills/`, the `templates/`, the Rust tools in `tools/auditor-tools/`, the bundled `scripts/`, the Trail of Bits submodule in `vendor/trailofbits/`, and `docs/`. The full tree: [docs/repository-layout.md](docs/repository-layout.md).
 
 ## Contributing
 
@@ -480,20 +391,20 @@ This auditor was designed by comparing methodology from:
 | **COBIT 2019** | IT governance | Process maturity model |
 | **GDPR / MiCA / DORA** | EU regulation | Compliance checklist items |
 
-The Full lifecycle is modelled on how audit firms work: Neodyme's two independent reviews of the same scope, reconciled; Trail of Bits' reasoning from invariants and attacker goals, with a checklist as the floor; Zellic's reports ordered by importance; and Zenith's review across code revisions ([references/audit-lifecycle/firm-coverage.md](references/audit-lifecycle/firm-coverage.md)).
+The Full lifecycle is modelled on how audit firms work ([firm-coverage.md](references/audit-lifecycle/firm-coverage.md)).
 
 ### Acknowledgments
 
-auditor-skill builds on these open-source security projects, credited in full in [ATTRIBUTION.md](ATTRIBUTION.md):
+auditor-skill builds on these projects, credited in full, with what was taken from each, in [ATTRIBUTION.md](ATTRIBUTION.md):
 
-- **[Frank Castle](https://github.com/Frankcastleauditor) — [safe-solana-builder](https://github.com/Frankcastleauditor/safe-solana-builder)** (MIT): Solana security depth — reward/staking accounting, Token-2022 extension abuse, framework validation idioms, zero-copy footguns — adapted natively and re-authored audit-side.
-- **[Trail of Bits](https://github.com/trailofbits) — [skills](https://github.com/trailofbits/skills)** (CC-BY-SA 4.0): tool-execution methodology (SAST, fuzzing, coverage, mutation, IR analysis, post-patch validation), vendored as a git submodule at `vendor/trailofbits` and orchestrated for real execution; methodology patterns re-implemented natively are credited by reference.
-- **[Anthropic](https://github.com/anthropics) — [defending-code-reference-harness](https://github.com/anthropics/defending-code-reference-harness)** (Apache-2.0): the detection & response method (a written hypothesis ledger, a three-leg verdict ladder, response plans that people carry out), re-expressed Solana-native in `/auditor:hunt` and `/auditor:respond`; the threat-model bootstrap / bootstrap-then-interview pattern, re-expressed for Solana in `/auditor:threat-model --bootstrap`.
-- **[Sentry](https://github.com/getsentry) — [gha-security-review](https://github.com/getsentry/skills/tree/main/skills/gha-security-review)** (Apache-2.0, in [getsentry/skills](https://github.com/getsentry/skills)): the GitHub Actions vector inventory behind `references/vuln-classes/github-actions.md`, re-written natively (no text copied).
-- **[Cloudflare](https://github.com/cloudflare) — [security-audit-skill](https://github.com/cloudflare/security-audit-skill)** (MIT): the execution-isolation, output-hygiene and CI-trust principles, paraphrased and adapted natively in `OUTPUT-RULES.md` Rule 11a's isolated mode (opt-in; native is the default) and Rule 11d and in `references/vuln-classes/github-actions.md`; and the ideas behind checklist items SC-063..065, BE-133, RS-022..023 and AI-036..039; see [ATTRIBUTION.md](ATTRIBUTION.md).
+- **[Frank Castle](https://github.com/Frankcastleauditor) — [safe-solana-builder](https://github.com/Frankcastleauditor/safe-solana-builder)** (MIT): Solana security depth (reward and staking accounting, Token-2022 extension abuse, framework validation idioms, zero-copy footguns), re-authored audit-side.
+- **[Trail of Bits](https://github.com/trailofbits) — [skills](https://github.com/trailofbits/skills)** (CC-BY-SA 4.0): tool execution, vendored at `vendor/trailofbits`.
+- **[Anthropic](https://github.com/anthropics) — [defending-code-reference-harness](https://github.com/anthropics/defending-code-reference-harness)** (Apache-2.0): the detection & response method and the threat-model bootstrap, re-expressed for Solana.
+- **[Sentry](https://github.com/getsentry) — [gha-security-review](https://github.com/getsentry/skills/tree/main/skills/gha-security-review)** (Apache-2.0): the GitHub Actions vector inventory, re-written natively.
+- **[Cloudflare](https://github.com/cloudflare) — [security-audit-skill](https://github.com/cloudflare/security-audit-skill)** (MIT): the isolation, output-hygiene and CI-trust principles, and the ideas behind SC-063..065, BE-133, RS-022..023 and AI-036..039.
 
-ATTRIBUTION.md also lists the skill packs that were assessed and not vendored, with what was taken from each. All third-party methodology is used by *reference* — no third-party text is copied into this repository.
+All third-party methodology is used by *reference* — no third-party text is copied into this repository.
 
 ## License
 
-MIT ([LICENSE](LICENSE)) — use it, fork it, improve it, sell services built on it. Attribution appreciated but not required. The Trail of Bits plugins in `vendor/trailofbits` stay under their own CC-BY-SA 4.0 licence: a submodule is a reference, not a copy.
+MIT ([LICENSE](LICENSE)) — use it, fork it, improve it, sell services built on it. Attribution appreciated but not required. The Trail of Bits plugins in `vendor/trailofbits` keep their CC-BY-SA 4.0 licence: a submodule is a reference, not a copy.
