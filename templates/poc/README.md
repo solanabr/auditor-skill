@@ -145,7 +145,7 @@ Exit `0` means the exploit reproduced on `vulnerable` **and**, when the fixed ar
 runs, was blocked on `fixed`; `1` / `2` mean a contract assertion of that arm ran and
 did not hold — see its message, and for `2` the final line, which says whether the
 fixed arm accepted the attack, rejected it with another error than the pinned one, or
-failed it while the account still changed; `3` is a named blocker (no execution mode,
+failed it while the account still changed; `3` is a named blocker (the execution mode `none`,
 no SBF toolchain, bad inputs, a build that failed, build-time code in the crate) or an
 inconclusive arm (no contract assertion ran, the test failed outside them, the
 harness could not decide — a harness error such as a wrong program id or a short

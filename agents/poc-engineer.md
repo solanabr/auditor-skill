@@ -87,7 +87,7 @@ Every `run.sh` exit 3 decides nothing. Never file it silently: return `[PoC-ATTE
 3. Keep the first-run copies of the files you change, and record the repair as `diff -u` of each in `harness-repair.diff` next to the PoC.
 4. Re-run through `run.sh`.
 
-Any other exit 3 (no execution mode, no toolchain, a bad input, a refused crate, the build lock) gets no repair pass: the PoC is re-run once what its line names is fixed. If the repaired re-run is still inconclusive, the finding stays `[PoC-ATTEMPTED]` with the error and the "PoC re-run needed" flag.
+Any other exit 3 (the execution mode `none`, no toolchain, a bad input, a refused crate, the build lock) gets no repair pass: the PoC is re-run once what its line names is fixed. If the repaired re-run is still inconclusive, the finding stays `[PoC-ATTEMPTED]` with the error and the "PoC re-run needed" flag.
 
 ## Incident mode (detection & response)
 
