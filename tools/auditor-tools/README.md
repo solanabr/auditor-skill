@@ -91,9 +91,8 @@ mode is on when either says so:
 
 In default mode git reads the safe-directory file of the installation the tools were
 built in, `scripts/lib/safe-directory.gitconfig`, as its global config, so it reads a
-checkout another user owns; in strict mode it reads none, and cannot tell for such a
-checkout, as before. What else default mode changes is given with each check below;
-in strict mode each refusal keeps its words.
+checkout another user owns; in strict mode it reads none, so it cannot tell for such a
+checkout. What else default mode changes is given with each check below.
 
 ## `audit-scan`
 
