@@ -1401,7 +1401,9 @@ def age_check(rows, fetcher, now, log):
     start = time.time()
 
     def ask(eco, name):
-        # one registry record, with one retry: (history, records, why not checked)
+        # one registry record, with one retry: (history, records, why not checked). No redirect is followed: a
+        # PyPI name comes from lock-delta.sh normalized as PEP 503 has it, the spelling the JSON API of PyPI
+        # answers itself, since it redirects only another spelling (warehouse legacy/api/json.py)
         url = {"npm": "https://registry.npmjs.org/" + npm_url_path(name), "crates": "https://index.crates.io/" + index_path(name),
                "pypi": "https://pypi.org/pypi/%s/json" % name}[eco]
         why = ""
