@@ -35,7 +35,7 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **DEP-020**: Timelock period observed before upgrade execution
 - [ ] **DEP-021**: Users notified of upcoming upgrade (changelog, Discord, frontend banner)
 - [ ] **DEP-078**: `solana program close` / `--bypass-warning` is NOT used without a documented recovery path — closing a program account permanently locks its funds and bricks it (OptiFi $661K, Aug 2022, permanently frozen)
-- [ ] **DEP-079**: Program upgrades preserve state compatibility and provide a migration/forwarding path; upgrade authority is NOT revoked mid-migration (leaving accounts undeserializable by the live program). (KB VC-36)
+- [ ] **DEP-079**: Program upgrades preserve state compatibility and provide a migration/forwarding path; upgrade authority is NOT revoked mid-migration (leaving accounts undeserializable by the live program).
 
 ## 13.3 — Backend Deployment
 

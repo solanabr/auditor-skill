@@ -1,7 +1,7 @@
 name: vendor-delta
 
 # On every pull request that moves the vendor/trailofbits gitlink, scripts/tob-delta-pr.sh writes the upstream
-# delta to the job summary (CONTRIBUTING.md §5, "Bumping vendor/trailofbits"). Advisory: not a required check,
+# delta to the job summary (docs/CONTRIBUTING.md §5, "Bumping vendor/trailofbits"). Advisory: not a required check,
 # and it never approves or merges. It needs no secret, reads contents only and keeps no credential; its one
 # outside contact is a fetch of https://github.com/trailofbits/skills by the names of its default branch,
 # branches and tags.
@@ -35,5 +35,5 @@ jobs:
           elif bash scripts/tob-delta-pr.sh 'HEAD^1' HEAD >> "$GITHUB_STEP_SUMMARY"; then
             exit 0
           fi
-          echo "The upstream delta could not be summarised; this job's log says why. Run the delta review locally (CONTRIBUTING.md §5)." >> "$GITHUB_STEP_SUMMARY"
+          echo "The upstream delta could not be summarised; this job's log says why. Run the delta review locally (docs/CONTRIBUTING.md §5)." >> "$GITHUB_STEP_SUMMARY"
           exit 1

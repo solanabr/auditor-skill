@@ -1,10 +1,10 @@
 # Pre-Audit Questionnaire
 
-> These questions must be answered before running a full audit.
+> A Full run answers these at intake (`/auditor:intake`): `/auditor:audit-assist` asks them, and `/auditor:audit-cycle` applies the defaults where no human answers.
 > The auditor agent uses these answers to contextualize findings, skip N/A sections, and calibrate severity.
 > Most are multiple-choice or yes/no. Some require short text answers.
 >
-> **For automated pipelines:** parse this as YAML or collect via form UI.
+> **For automated pipelines:** parse the `### Qn` headings and their checkbox lists, or collect the answers in a form.
 > **For manual use:** copy this file, fill in your answers, and include it when invoking the audit.
 
 ---
@@ -350,18 +350,19 @@ Select all that apply, or choose "Full":
 > **Where your code lives.** If your code, tests or build files are not where `discovery/file-map.md` expects them (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`), name them here. Intake records them, with your exclusions (Q44), in the Layout table of `audit_<n>/intake.md` §1, each with its source. The next interactive intake in the same checkout shows you that table and reuses it only on your yes; `/auditor:intake --auto` never reuses it, and audits with the defaults.
 
 ### Q40. What are your top security concerns?
-Rank your top 3:
-- [1 ] Fund theft / drain
+Rank your top 3, writing 1, 2 and 3 in their boxes:
+- [ ] Fund theft / drain
 - [ ] Private key compromise
-- [2 ] API abuse / DDoS
+- [ ] API abuse / DDoS
 - [ ] Data breach / PII leak
 - [ ] Regulatory non-compliance
-- [3 ] Supply chain attack
+- [ ] Supply chain attack
 - [ ] Insider threat
 - [ ] Operational security
 - [ ] Other: _______________
 
-### Q41. Desired audit depth (for an agent that follows this file by hand; in the plugin each depth is its own command, and intake, which runs inside Full, only records the answer)
+### Q41. Desired audit depth
+This question is for an agent that follows this file by hand. In the plugin each depth is its own command, and intake, which runs inside Full, only records the answer.
 - [ ] **Quick** — what a branch changes, a first look, or one function, with no full checklist walk: `/auditor:diff-audit`, `/auditor:quick-scan`, `/auditor:deep-review`
 - [ ] **Standard** — every in-scope checklist item and phase-triggered vector for one module or program, file by file: `/auditor:audit <path> --scope …`
 - [ ] **Full** — Standard's walk plus a threat model, triage, peer review and a client report: `/auditor:audit-cycle` or `/auditor:audit-assist`
@@ -443,12 +444,11 @@ DEP-072 (public cloud storage buckets) and DEP-073 (a `.git/` directory a web se
 | Q1 = DeFi | Enables economic attack scenarios (checklists 06, known vectors 1-30) |
 | Q2 = Solana | Enables Solana-specific checklists (01-07) |
 | Q8 = Mainnet live | Increases all severity scores by 1 for fund-related findings |
-| Q10 > $1M | Doubles the weight of critical findings in risk score |
 | Q11 = Single wallet | Auto-flags as Severity 8+ finding |
 | Q17 = Yes | Requires full economic review (checklist 06) |
 | Q18 / Q22 = token registry or risk API | Loads `references/methodologies/token-registry-risk.md` + KV-132 / KV-133 (identity spoofing, score farming) |
 | Q22 = Geyser stream / indexer or fee sponsorship | Loads `references/vuln-classes/transaction-v1.md` + KV-135 / KV-136 (transaction v1: sponsor cap bypass, reader wedge, zero-budget indexing) + checklist 20 §20.6, 09 §9.18 |
-| Q25 = First audit | Triggers more thorough analysis, no assumptions about prior fixes |
+| Q25 = First audit | No assumptions about prior fixes |
 | Q31 = GitHub Actions | Loads `references/vuln-classes/github-actions.md` + KV-139 / KV-140 + checklist 13 §13.13 (DEP-090..096); add KV-116 and AI-034..035 when an AI agent runs in CI |
 | Q32 = No tests | Auto-flags testing gaps, enables checklist 16 recommendations |
 | Q35 = MiCA/GDPR | Enables compliance checklist (18) |

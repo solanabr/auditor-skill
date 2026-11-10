@@ -1,6 +1,6 @@
 # Detection & Response — the contract
 
-*Method credited to anthropics/defending-code-reference-harness (dnr-hunt, dnr-respond); see ATTRIBUTION.md.*
+*Method credited to anthropics/defending-code-reference-harness (dnr-hunt, dnr-respond); see docs/attribution.md.*
 
 > **Load when:** running `/auditor:hunt` or `/auditor:respond`, or any request that
 > starts from transaction history, program logs, an alert, an IOC, or "we think we

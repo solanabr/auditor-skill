@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-preflight.sh — self-test for scripts/preflight.sh, in both modes (OUTPUT-RULES.md Rule 11f): every refusal runs
-# under AUDITOR_STRICT=1 as 7.7.0 refused it, and again in default mode, where the same tree passes with a note. It covers
+# under AUDITOR_STRICT=1, where it is refused, and again in default mode, where the same tree passes with a note. It covers
 # the case file fixtures/preflight/cases.txt (every refused shape, links, letter cases, depths, the settings allowlist,
 # the .git directories it skips, the guard), the mode line and its strict markers, the arguments and the entry limit,
 # the notes, the parents up to the repository root (a core.worktree in the repository's own config, a .git git passes
@@ -360,8 +360,8 @@ check "... the 20th" test "$(sed -n 21p "$T/out")" = "$(n_imay "dir-019-$PAD/CLA
 check "... then the count of the rest" \
   test "$(sed -n 22p "$T/out")" = "preflight: note: and 380 more that Claude Code reads, or may read, as project instructions, $LAUNCH"
 check "... and the ok line" clean
-# The note list grows linearly (#65): 20,000 notes, which 7.7.0's string of notes took over 20 s of CPU to gather on a
-# Mac, finish within a limit of 12 s of CPU for each process.
+# The note list grows linearly (#65): 20,000 notes finish within a limit of 12 s of CPU for each process. Gathered
+# into one growing string, they take over 20 s of CPU on a Mac.
 L2=$(newdir)
 dirs=()
 i=0
@@ -501,7 +501,7 @@ for mode in strict default; do
   done
 done
 # One walk of the tree (#65): a find that logs each call, then runs the real find, sees the tree walked once, however
-# much config, how many notes and links it holds. 7.7.0 walked it three times. In strict mode each target of a link out
+# much config, how many notes and links it holds. In strict mode each target of a link out
 # of the tree is walked once more. The calls on one parent or one directory (-maxdepth 1, -prune) are no walks.
 mkdir -p "$T/logfind"
 cat > "$T/logfind/find" <<EOF
@@ -884,7 +884,7 @@ SO=$(newdir)
 build "$SO" j:.claude/settings.local.json="$LOCAL"
 both "outside a repository, a settings.local.json is the repository's in strict mode" "$SO" ships .claude/settings.local.json \
   "$(n_loc0 .claude/settings.local.json)"
-check "... default: and the user's own, noted, with today's ok line" last_is "$OK_LINE"
+check "... default: and the user's own, noted, with the ok line" last_is "$OK_LINE"
 # git cannot tell (a git whose ls-files fails): the repository's.
 mkdir -p "$T/nolsfiles"
 printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = ls-files ] && exit 1; done\nexec %s "$@"\n' "$(command -v git)" > "$T/nolsfiles/git"

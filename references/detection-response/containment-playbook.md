@@ -1,6 +1,6 @@
 # Containment playbook — proposed, never executed
 
-*Method credited to anthropics/defending-code-reference-harness (dnr-respond); see ATTRIBUTION.md.*
+*Method credited to anthropics/defending-code-reference-harness (dnr-respond); see docs/attribution.md.*
 
 > **Load when:** writing the containment / recovery / detection sections of a
 > `/auditor:respond` plan (`templates/response-plan.md`). Read
@@ -57,7 +57,7 @@ mistaken — and then it stops. Carrying it out is never the track's job.
 | **Rotate the upgrade / mint / config authority** to a fresh multisig | authority may be compromised (`key_compromise`) | current authority | partially | if the current key is already the attacker's, rotation may fail or tip them off; sequence with the pause |
 | Propose **market / oracle circuit-breaker or deposit cap** changes | economic / oracle root cause | protocol governance | yes | over-tight limits can cascade liquidations; state the bound |
 | Pause the **keeper / relayer / indexer** that acts on program output | off-chain actor is acting on forged events (KV-122) | ops owner | yes | stops legitimate automation; pair with the code fix |
-| Rotate a leaked **deploy key / CI secret**, revoke the CI token | `supply_chain_or_ci` / `off_chain` (link #16's `references/vuln-classes/github-actions.md`) | ops / platform owner | partially | breaks running deploys; necessary when a key may be out |
+| Rotate a leaked **deploy key / CI secret**, revoke the CI token | `supply_chain_or_ci` / `off_chain` (see `references/vuln-classes/github-actions.md`) | ops / platform owner | partially | breaks running deploys; necessary when a key may be out |
 
 ### Do not
 

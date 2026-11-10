@@ -1,6 +1,6 @@
 ---
 name: auditor:intake
-description: Interactive engagement intake. Walks QUESTIONS.md and persists the answers to audit_<n>/intake.md — the durable intake artifact both audit-cycle and audit-assist read, instead of answers living only in conversation state. Captures scope + commit pin, languages/frameworks, protocol class, compliance, severity calibration, the trust-model inputs that feed the report's Trust Model and Assumptions sections, and the execution mode for target-controlled code (OUTPUT-RULES Rule 11a). Interactive mode asks; automated mode records the applied default.
+description: Interactive engagement intake. Walks QUESTIONS.md and persists the answers to audit_<n>/intake.md — the durable intake artifact both audit-cycle and audit-assist read. Captures scope + commit pin, languages/frameworks, protocol class, compliance, severity calibration, the trust-model inputs that feed the report's Trust Model and Assumptions sections, and the execution mode for target-controlled code (OUTPUT-RULES Rule 11a). Interactive mode asks; automated mode records the applied default.
 argument-hint: "[path] [--auto] [--strict]"
 allowed-tools:
   - Read
@@ -19,7 +19,7 @@ allowed-tools:
 
 **Arguments:** $ARGUMENTS
 
-Turn the passive `QUESTIONS.md` questionnaire into a **persisted** `audit_<n>/intake.md`. Read `QUESTIONS.md` first (the source questions + the "How Answers Affect the Audit" table) and `templates/intake.md` (the artifact you fill). This fixes the gap where intake answers lived only in conversation state — both `/auditor:audit-cycle` and `/auditor:audit-assist` read the file you write here.
+Turn the passive `QUESTIONS.md` questionnaire into a **persisted** `audit_<n>/intake.md`. Read `QUESTIONS.md` first (the source questions + the "How Answers Affect the Audit" table) and `templates/intake.md` (the artifact you fill). Both `/auditor:audit-cycle` and `/auditor:audit-assist` read the file you write here.
 
 ## Mode
 
@@ -28,7 +28,7 @@ Turn the passive `QUESTIONS.md` questionnaire into a **persisted** `audit_<n>/in
 
 Run each bundled tool as a Bash call of its own, from the working directory, exactly in the form given here: its quoted absolute path first, with nothing in front (no `bash`, no `cd`, no `VAR=value`), then its arguments, every value you fill in written out literally. Join no other command to it with `;` or `&&`, pipe it only into `grep`, `head`, `tail` or `wc`, and put no `$` or backtick anywhere in the line, inside quotes too: Claude Code asks about any command that holds one, whatever its allow rules say. Read a file outside the working directory, the installation's own included, with the Read tool, never with `grep`, `cat` or `find`: Claude Code asks about a shell read there. The `allowed-tools` above pre-approve exactly these forms and writes under `audit_*/`; anything else asks, and in a non-interactive run (`claude -p`) it is denied: record the step as not run, and why, in `intake.md`, and go on.
 
-This command's pre-approvals last for the turn that invoked it: Claude Code clears them at the user's next message. When the intake goes on after the human answers (a question, the run directory to reuse), first invoke this command again through the Skill tool as `auditor:intake --resume <step> audit_<n>` (and `--strict` when the user's arguments held it), with the answers so far, `<step>` being the step you go on with, and only then run a tool or write a file in that turn. A resumed invocation runs step 0 again, and never repeats another finished step. That invocation asks unless the user-level rules in `docs/permissions-and-isolation.md` (Turns and resuming) are set: the human may answer "Yes", or "Yes, and don't ask again", whose rule goes into this repository's `.claude/settings.local.json`, which step 0 no longer refuses while git does not track it (outside a git repository strict mode still refuses it, so answer "Yes" there).
+This command's pre-approvals last for the turn that invoked it: Claude Code clears them at the user's next message. When the intake goes on after the human answers (a question, the run directory to reuse), first invoke this command again through the Skill tool as `auditor:intake --resume <step> audit_<n>` (and `--strict` when the user's arguments held it), with the answers so far, `<step>` being the step you go on with, and only then run a tool or write a file in that turn. A resumed invocation runs step 0 again, and never repeats another finished step. That invocation asks unless the user-level rules in `docs/permissions-and-isolation.md` (Turns and resuming) are set: the human may answer "Yes", or "Yes, and don't ask again", whose rule goes into this repository's `.claude/settings.local.json`, which step 0 does not refuse while git does not track it (outside a git repository strict mode still refuses it, so answer "Yes" there).
 
 ## Steps
 
@@ -49,7 +49,7 @@ This command's pre-approvals last for the turn that invoked it: Claude Code clea
    - **Languages & frameworks** (`Q3`–`Q7`) — drives the scope-gated checklist set (`SKILL.md` → SCOPE-GATED LOADING).
    - **Protocol class** (`Q1`, `Q17`–`Q24`) — gates checklist 06 + economic known-vectors when funds are handled.
    - **Compliance** (`Q35`–`Q38`) — gates checklist 18.
-   - **Severity calibration** (`Q8`, `Q10`, `Q11`, `Q40`–`Q41`) — record the concrete lever applied (mainnet → +1 on fund findings; TVL > $1M → double-weight criticals; single-wallet upgrade authority → auto Severity 8+), per the QUESTIONS.md effects table. Feeds report §5.
+   - **Severity calibration** (`Q8`, `Q10`, `Q11`, `Q40`–`Q41`) — record the concrete lever applied (mainnet → +1 on fund findings; single-wallet upgrade authority → auto Severity 8+), per the QUESTIONS.md effects table. Feeds report §5.
    - **Trust-model inputs (critical)** (`Q11`, `Q14`–`Q16`, `Q23`) — for each of admin / upgrade authority / oracle / keeper / LP / permissionless user, record who holds it, what they can do, and what the review trusts them **NOT** to do. "Untrusted / permissionless" is a valid, important answer. This seeds report §4.4 and §4.6, and is the actor list `/auditor:threat-model` expands.
    - **Security history** (`Q25`–`Q28`).
 

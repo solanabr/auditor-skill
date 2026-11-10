@@ -2,7 +2,7 @@
 
 auditor-skill is a markdown security-audit corpus plus a small amount of tooling. Contributions are
 welcome — new known vectors, checklist items, protocol methodologies, fixes to wording, and tooling
-improvements. This document is the short version of "how a change gets in".
+improvements.
 
 ---
 
@@ -21,7 +21,7 @@ improvements. This document is the short version of "how a change gets in".
   tooling to help write a contribution is fine; the author of record is the human who opens the PR and takes
   responsibility for the content.
 - **Security issues in this repository** (install script, Rust tools, workflows, or corpus content that
-  could mislead an auditor into a dangerous action) go through [SECURITY.md](SECURITY.md), not a public
+  could mislead an auditor into a dangerous action) go through [docs/SECURITY.md](SECURITY.md), not a public
   issue.
 
 ---
@@ -36,8 +36,8 @@ bash scripts/check-corpus.sh                 # should print "ok" lines and exit 
 ```
 
 Optional: `git submodule update --init --depth 1 -- vendor/trailofbits` for the vendored Trail of Bits
-tooling and `cd tools/auditor-tools && cargo build --release` for the Rust CLIs. Neither is needed for
-corpus PRs.
+tooling and `cd tools/auditor-tools && cargo build --release --locked` for the Rust CLIs (Rust 1.89 or
+newer). Neither is needed for corpus PRs.
 
 The checks run with the stock tools of macOS (`/bin/bash` 3.2, BSD sed, grep and awk) as well as with bash 5
 and GNU tools on Linux. Beyond git they need python3 and jq, plus cargo and rustup for the PoC runner's
@@ -49,6 +49,7 @@ local cargo cache or crates.io) and is skipped, loudly, without it. This is what
 bash scripts/check-corpus.sh
 bash scripts/check-frontmatter.sh
 bash scripts/check-pipefail.sh
+bash scripts/check-entrypoints.sh
 for t in scripts/tests/*.sh; do bash "$t" || echo "FAILED: $t"; done
 bash scripts/check-hygiene.sh
 bash scripts/check-attribution.sh origin/main..HEAD
@@ -106,7 +107,7 @@ There are two kinds of bump:
 - **Minor or major (X.Y+1.0).** Every version reference moves together, the release is tagged with a GitHub
   Release, and the release-only steps below run.
 
-A minor or major release PR also re-checks every row of ATTRIBUTION.md's "Assessed, not vendored" table against its
+A minor or major release PR also re-checks every row of docs/attribution.md's "Assessed, not vendored" table against its
 re-check trigger and updates the assessed commit.
 
 A minor or major release PR also regenerates `templates/poc/Cargo.lock`, the pins every PoC crate starts from. The
@@ -134,15 +135,17 @@ release author owns this step; nothing is built, and the only hosts contacted ar
 
 1. Create `known-vectors/NNN-short-name.md` with the next free number. Never renumber existing vectors —
    ranges like `KV-001..NNN` are quoted across the corpus and third-party reports reference the ids.
-2. Follow the existing format exactly (see any recent file, e.g. `131-…` or `134-…`):
+2. Follow the existing format exactly (see any recent file, e.g. `139-…` or `141-…`):
    YAML frontmatter (`id`, `title`, `severity`, `category`) → `### NNN — Title` → `**Severity: N** | **Real: …**`
    → description → cross-ref block → `#### Verification Procedure` with numbered steps, each with a grep /
    check and ✅ PASS / ❌ FAIL lines → `**Overall verdict:**` with ✅ / ⚠️ / ❌ / N/A.
+   A procedure has 3 to 12 steps, and `category` is one of `crypto`, `backend`, `frontend`, `devops`,
+   `ai-agent` and `dos`, the categories `known-vectors/INDEX.md` counts.
 3. Add a row to `known-vectors/INDEX.md` in the right section with a **Load when (markers)** cell
    (default to `always (<phase>)` unless the vector is provably feature-specific), and update the totals at
    the bottom of the index (`Total vector files`, `Distinct concepts`, the per-version tally).
 4. Bump the vector count in every file that quotes it: `SKILL.md` (description + header + "up to N"),
-   `README.md`, `FULL-AUDIT.md`, `COSTS.md`, `OUTPUT-RULES.md`, `templates/report-template.md`,
+   `README.md`, `FULL-AUDIT.md`, `docs/costs.md`, `OUTPUT-RULES.md`, `templates/report-template.md`,
    `docs/README.md`, `docs/getting-started.md`, `.claude-plugin/plugin.json`. `scripts/check-corpus.sh`
    tells you which ones you missed.
 5. If the vector is feature-gated, add a row to the advisory table in
@@ -152,9 +155,9 @@ release author owns this step; nothing is built, and the only hosts contacted ar
 
 1. Append to the relevant `checklists/NN-*.md` using the file's id prefix and the **next sequential number**
    (ids are never reused, even if an item is removed). New sections get the next `NN.x` heading.
-2. Update the per-checklist counts in `SKILL.md` (Checklists Reference table) and `README.md` (Supported
-   Languages table and the folder-structure listing), the totals everywhere the item total is quoted
-   (`SKILL.md`, `README.md`, `COSTS.md`, `docs/README.md`, `templates/audit-report.md`,
+2. Update the per-checklist counts in `SKILL.md` (Checklists Reference table) and `README.md` (the Supported
+   languages table and the checklist list under The corpus), the totals everywhere the item total is quoted
+   (`SKILL.md`, `README.md`, `docs/costs.md`, `docs/README.md`, `templates/audit-report.md`,
    `templates/report-template.md`, `.claude-plugin/plugin.json`), and the `...through XX-NNN` line for that
    checklist in `templates/report-template.md`.
 
@@ -182,7 +185,9 @@ release author owns this step; nothing is built, and the only hosts contacted ar
 
 `tools/auditor-tools` (Rust) and `scripts/` have their own conventions: keep `cargo build --release`
 warning-free, add or extend a fixture under the tool's test directory for any parser change, and document
-new flags in `docs/power-tools.md`. Workflow files pin third-party actions to a full commit SHA with the
+a script's new flags on its page (`docs/scripts-core.md`, `docs/scripts-audit.md`, `docs/scripts-runners.md`
+or `docs/scripts-incident.md`; the Bundled scripts section of `docs/power-tools.md` says which) and a Rust
+tool's in `docs/power-tools.md`. Workflow files pin third-party actions to a full commit SHA with the
 version in a trailing comment.
 
 ### Shell scripts
@@ -200,7 +205,7 @@ version in a trailing comment.
 
 A command's allow rule names a bundled entry point with any words after it, as in
 `Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" *)`, so such a tool must be safe whatever arguments follow
-([docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#why-that-is-safe)). A new one, or a change to
+([docs/permissions-and-isolation.md](permissions-and-isolation.md#why-that-is-safe)). A new one, or a change to
 one:
 
 - runs directly by its quoted path: a `#!/bin/bash` first line and mode `100755`. A Python one opens with the

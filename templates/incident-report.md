@@ -1,6 +1,6 @@
 # Incident report — {TARGET}
 
-<!-- credited to anthropics/defending-code-reference-harness; see ATTRIBUTION.md.
+<!-- credited to anthropics/defending-code-reference-harness; see docs/attribution.md.
      templates/incident-report.md → incident_<n>/INCIDENT_REPORT.md, written by
      /auditor:hunt. The human-readable companion to INCIDENTS.json. Verdict rules:
      references/detection-response/README.md. Nothing here is an action — the

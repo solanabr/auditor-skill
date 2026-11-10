@@ -10,7 +10,7 @@ it, and once to the machines that run it.
   could execute unintended code, read or exfiltrate secrets, or write outside the expected paths.
 - **The steps the commands run without asking**: the bundled entry points their `allowed-tools` pre-approve
   (`scripts/preflight.sh`, `rundir.sh`, `git-ro.sh`, the runners in `scripts/runner/`, the collectors,
-  `audit-scan`, `audit-mem` and the rest [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md)
+  `audit-scan`, `audit-mem` and the rest [docs/permissions-and-isolation.md](permissions-and-isolation.md)
   lists). Each is meant to be safe whatever arguments it gets. A way to make one write outside the places its
   documentation names (run directories, the `audit-mem` store, its own scratch), run a program its arguments or
   the audited repository name, take a path outside the working directory that its grammar does not allow, reach

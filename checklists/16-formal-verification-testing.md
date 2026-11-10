@@ -1,6 +1,6 @@
 # Checklist 16 — Formal Verification & Testing Quality
 
-> **Items:** 72  |  **IDs:** FV-001 → FV-072  
+> **Items:** 73  |  **IDs:** FV-001 → FV-073  
 > **Applies to:** All languages, all repository types  
 > **Sources:** CertiK formal verification methodology, EY QA/processing integrity, OWASP A06 (Insecure Design), OWASP A10 (Mishandling of Exceptional Conditions)
 

@@ -6,7 +6,7 @@
 
 ---
 
-# 🔒 Security Audit Report
+# Security Audit Report
 
 ## 1. Executive Summary
 

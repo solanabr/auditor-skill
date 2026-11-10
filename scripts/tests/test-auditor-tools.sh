@@ -26,7 +26,7 @@
 #   4. The documented forms work, each with the contract marker --contract=1 where a rule names it: audit-scan to
 #      stdout and into a run directory (an output of more than 64 KiB, the same both ways), and audit-mem's lifecycle
 #      from init to warm, with the profile, an invariant and an anchored ruling, a ruling going stale, and init's
-#      .gitignore. A call without the marker works as it did.
+#      .gitignore. A call without the marker gives the same output.
 #   5. An installation inside the working directory, or under a path a quoted rule cannot match, is refused.
 #   6. With AUDITOR_TOOLS_OLD_BIN=<dir> naming a build made before the contract (82edf43's target/release), that
 #      build refuses --contract=1 in every form a rule pre-approves, before any effect; without it, a loud SKIP.
@@ -599,7 +599,7 @@ else bad "audit-scan: --out differs from stdout"; fi
 ( cd "$W" && "$SCAN" --contract=1 ./src | cat ) > "$T/scan.piped" 2>&1
 if cmp -s "$T/scan.stdout" "$T/scan.piped"; then ok "audit-scan: the whole report goes through a pipe"; else bad "audit-scan: the piped report differs"; fi
 ( cd "$W" && "$SCAN" ./src ) > "$T/scan.bare" 2>&1
-if cmp -s "$T/scan.stdout" "$T/scan.bare"; then ok "audit-scan: without --contract=1 it works as it did"; else bad "audit-scan: without --contract=1 the report differs"; fi
+if cmp -s "$T/scan.stdout" "$T/scan.bare"; then ok "audit-scan: without --contract=1 the report is the same"; else bad "audit-scan: without --contract=1 the report differs"; fi
 snapshot "$D" > "$T/child.before"
 ( cd "$W" && "$SCAN" --internal-parse-stdin ) < /dev/null > "$T/child.out" 2>&1
 eq "audit-scan: the child it parses with, given no file, ends at once and says nothing" "$?:$(wc -c < "$T/child.out" | tr -d ' ')" "0:0"

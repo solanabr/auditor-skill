@@ -7,7 +7,7 @@ model: opus
 
 # Incident Responder
 
-*Method credited to anthropics/defending-code-reference-harness (dnr-hunt, dnr-respond); see ATTRIBUTION.md.*
+*Method credited to anthropics/defending-code-reference-harness (dnr-hunt, dnr-respond); see docs/attribution.md.*
 
 `/auditor:hunt` and `/auditor:respond` hand you all reading and analysis of the
 incident corpus, one phase at a time, through the `auditor:dnr-analyze` skill: it

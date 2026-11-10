@@ -203,7 +203,7 @@ R=$CONFINE_RUN
 
 # src_enclosing: for --src . outside strict mode, in a session started below the top level of a repository,
 # that repository (SRC_KIND repo), when confine_repo . takes it and sets CONFINE_PREFIX; status 1 otherwise,
-# and the tree is copied file by file as before. Tried in a subshell first, since confine_repo refuses.
+# and the tree is then copied file by file. Tried in a subshell first, since confine_repo refuses.
 src_enclosing() {
   [ "$CONFINE_REL" = . ] && [ "$CONFINE_STRICT" = 0 ] || return 1
   ( confine_repo . "--src" ) >/dev/null 2>&1 || return 1

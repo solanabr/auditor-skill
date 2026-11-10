@@ -1,31 +1,54 @@
-
-# External Claude skill submodules (re-fetched via: git submodule update --init)
-.claude/skills/ext/
-
-# >>> solana-ai-kit config — gitignored by default; run /commit-claude-config to version it >>>
+# Assistant instructions, memory, plans and tool state from a contributor's own setup
 .claude/
 CLAUDE.md
-.mcp.json
-# <<< solana-ai-kit config <<<
-
-# solana-ai-kit local-only (never committed)
 CLAUDE.local.md
-.claude/context/
-.env
-.env.local
+.mcp.json
+.memsearch/
+.cursor/
+.agents/
+.playwright-mcp/
+/docs/superpowers/
+/docs/plans/
 
-# Proprietary SotaSec KB — dev-time SOURCE only, separate nested repo, never shipped
+# A maintainer's local knowledge-base checkout; never part of a release
 solana-security-kb/
 
-# Audit run outputs
+# Environment files: they hold secrets, and the release ships none
+.env
+.env.*
+
+# Local worktrees
+.wt/
+.worktrees/
+
+# What the auditor writes when it runs: run folders and the findings store (each also ignores itself)
 audit_*/
-
-# Incident-response run outputs (raw transaction corpora + off-chain logs may carry PII;
-# each incident_<n>/ also self-ignores with its own .gitignore of "*")
 incident_*/
-
-# Cross-audit memory store (per-project state, never committed by default)
 .audit-memory/
 
-# Rust tool build artifacts
-tools/auditor-tools/target/
+# Build outputs, anchored because scripts/tests/fixtures/target/ is a tracked folder
+/tools/**/target/
+/templates/**/target/
+
+# Python and Node caches
+__pycache__/
+*.py[cod]
+.venv/
+node_modules/
+
+# Temporary files: here-documents an older bash leaves in the working directory, patch leftovers
+sh-thd-*
+*.orig
+*.rej
+*.tmp
+
+# OS and editor files
+.DS_Store
+._*
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

@@ -1,6 +1,6 @@
 # INCIDENTS.json — the `auditor-incidents/1` shape
 
-*Field vocabulary credited in part to anthropics/defending-code-reference-harness; see ATTRIBUTION.md.*
+*Field vocabulary credited in part to anthropics/defending-code-reference-harness; see docs/attribution.md.*
 
 > **Load when:** writing or reading `incident_<n>/INCIDENTS.json`. The verdict
 > ladder, the legs, and `outcome` / `root_cause_class` / `urgency` are defined in

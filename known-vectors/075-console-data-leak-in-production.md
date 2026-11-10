@@ -43,7 +43,3 @@ grep -rn --include="*.tsx" "console.error\|componentDidCatch\|ErrorBoundary" app
 - ✅: Console stripped in build, or no sensitive data logged, monitoring service used
 - ⚠️: Some console.log but no sensitive data
 - ❌: Sensitive data in console statements in production
-
----
-
-## DevOps / Supply Chain Hacks (76-100)

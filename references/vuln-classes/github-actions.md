@@ -19,7 +19,7 @@
 > trigger in the repository; then the section for each class present; §8 grounds severity in real incidents;
 > §10 is the fast pass.
 >
-> *Credited to getsentry/skills gha-security-review (and cloudflare/security-audit-skill for the persisted-channel map, the hosted-settings rule and resource-selecting inputs); see ATTRIBUTION.md.*
+> *Credited to getsentry/skills gha-security-review (and cloudflare/security-audit-skill for the persisted-channel map, the hosted-settings rule and resource-selecting inputs); see docs/attribution.md.*
 
 ---
 

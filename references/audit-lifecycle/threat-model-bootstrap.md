@@ -16,7 +16,7 @@
 > §5 merge a seed and interview. The threat-modeler agent never runs git; it reads what the collector wrote.
 >
 > *(The bootstrap and bootstrap-then-interview pattern is credited to the threat-model skill of Anthropic's
-> defending-code-reference-harness; re-expressed here for Solana programs. See ATTRIBUTION.md.)*
+> defending-code-reference-harness; re-expressed here for Solana programs. See docs/attribution.md.)*
 
 ---
 

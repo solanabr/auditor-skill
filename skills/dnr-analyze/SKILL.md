@@ -20,7 +20,7 @@ allowed-tools:
 
 # auditor-skill — D&R analysis phase
 
-*Method credited to anthropics/defending-code-reference-harness (dnr-hunt, dnr-respond); see ATTRIBUTION.md.*
+*Method credited to anthropics/defending-code-reference-harness (dnr-hunt, dnr-respond); see docs/attribution.md.*
 
 **Phase brief:** $ARGUMENTS
 

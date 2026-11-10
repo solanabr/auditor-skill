@@ -10,8 +10,8 @@
 #
 # Two modes (Rule 11f). Strict mode is on when AUDITOR_STRICT reads as on, with --strict, or while a run directory of the
 # working directory holds a strict marker (scripts/lib/confine.sh decides); default mode otherwise.
-#   - Strict mode refuses each finding below with one stderr line, as 7.7.0 did, but for two changes: a link to a
-#     directory outside the tree is scanned as the tree is (#69), and an untracked .claude/settings.local.json in a
+#   - Strict mode refuses each finding below with one stderr line, with two exceptions: a link to a directory
+#     outside the tree is scanned as the tree is (#69), and an untracked .claude/settings.local.json in a
 #     repository is the user's own and is not read (see below).
 #   - Default mode refuses none of them. Each is a "preflight: note:" line, and the run goes on. Only the guard refuses
 #     there, and only when GUARD below is refuse.

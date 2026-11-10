@@ -517,4 +517,4 @@ When auditing a different repository:
 5. Checklist 14 works for any Python project
 6. Checklist 15 works for Go, Java, Ruby, PHP, or any other language
 7. Checklists 16-18 are **universal** — apply to every project regardless of stack
-8. Add new checklists for frameworks not covered (e.g., if target uses Actix instead of Express) to auditor-skill itself ([CONTRIBUTING.md §4](../CONTRIBUTING.md#4-adding-corpus-content)), not to an install
+8. Add new checklists for frameworks not covered (e.g., if target uses Actix instead of Express) to auditor-skill itself ([docs/CONTRIBUTING.md §4](../docs/CONTRIBUTING.md#4-adding-corpus-content)), not to an install

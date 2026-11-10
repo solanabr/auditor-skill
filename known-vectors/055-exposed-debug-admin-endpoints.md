@@ -43,7 +43,3 @@ grep -rn --include="*.ts" "morgan\|debugger\|errorHandler\|stackTrace" apps/back
 - ✅: No debug endpoints in production, health is clean, verbose logging dev-only
 - ⚠️: Debug endpoints exist but behind auth
 - ❌: Debug/admin endpoints accessible in production without auth
-
----
-
-## Frontend / Client-Side Hacks (56-75)

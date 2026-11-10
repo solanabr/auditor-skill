@@ -100,7 +100,7 @@ exploit earns `[FIX-VERIFIED]`. If there is no executable PoC to run, stop at
   Interface as documented by the vendored `mutation-testing` skill (mewt 4.x); `mewt --help`
   is authoritative. A mutation run executes the target's tests, so it follows Rule 11a too.
   No bundled runner wraps mewt, so each call asks for approval. It needs a tree with the patch applied, which §1
-  no longer leaves: make one by hand outside the working directory, in the recorded mode, or record the mutation
+  does not leave: make one by hand outside the working directory, in the recorded mode, or record the mutation
   step as not run. Never run it in the client checkout: `mewt init` writes `mewt.toml` and `mewt.sqlite` where it
   runs.
   - [ ] No surviving mutant on the patched line(s) — or the survivor is recorded and
@@ -136,7 +136,7 @@ The placeholders here are this section's own. `{R}` is the run directory, `audit
 relative to the working directory; `{MODE}` is the word `{R}/exec-mode` holds or, when there is no such file,
 the mode `{R}/intake.md` §8 records (for an incident, the mode in its ledger header); `{FINDING_ID}` is the
 finding or incident id; `{COMMIT}` is the commit the patch targets; `{LEVEL}` is the highest evidence level the
-checks will honestly reach (`source`, `build` or `runtime`, as the skill defines them). Before the first block,
+checks will reach (`source`, `build` or `runtime`, as the skill defines them). Before the first block,
 write the finding's root cause and impact, in one sentence, to `{R}/patches/{FINDING_ID}.summary` with the Write
 tool: the block hands that file's text to the runner as one argument, so the shell never reads it as code,
 whatever quotes or `$` it holds.

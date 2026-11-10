@@ -115,9 +115,9 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 
 ## 7.10 — Authority Rotation, Treasury & Config Hardening
 
-- [ ] **OPS-078**: Admin authority is rotatable via a two-step `propose_admin`/`accept_admin` handshake backed by a `pending_admin: Option<Pubkey>` field (a single immutable admin is a SPOF), and Critical rotation/action paths are gated by a timelock (SSB §24.2)
-- [ ] **OPS-079**: Fee/treasury account is validated at config-time for token-receiving capability (ATA compatibility) AND has a valid access-controlled sweep path — funds are recoverable via an authorized route, not merely pinned to an immutable address with no way out (SSB §31.4)
-- [ ] **OPS-080**: Config-update APIs use a tri-state `Patch<T> { Unchanged, Set, Clear }` rather than an `Option<T>` that conflates "not provided" with "clear to zero"; every config write-path validates new values against each other atomically; permissionless init decouples the creator identity from privileged authority and requires explicit authority acceptance (namespace-capture, SSB §29)
+- [ ] **OPS-078**: Admin authority is rotatable via a two-step `propose_admin`/`accept_admin` handshake backed by a `pending_admin: Option<Pubkey>` field (a single immutable admin is a SPOF), and Critical rotation/action paths are gated by a timelock (safe-solana-builder §24.2)
+- [ ] **OPS-079**: Fee/treasury account is validated at config-time for token-receiving capability (ATA compatibility) AND has a valid access-controlled sweep path — funds are recoverable via an authorized route, not merely pinned to an immutable address with no way out (safe-solana-builder §31.4)
+- [ ] **OPS-080**: Config-update APIs use a tri-state `Patch<T> { Unchanged, Set, Clear }` rather than an `Option<T>` that conflates "not provided" with "clear to zero"; every config write-path validates new values against each other atomically; permissionless init decouples the creator identity from privileged authority and requires explicit authority acceptance (namespace-capture, safe-solana-builder §29)
 - [ ] **OPS-081**: Verify the LIVE on-chain multisig threshold by fetching the account — confirm the actual configured threshold is ≥ ceil(N/2)+1, not just that a threshold field exists in the schema (Saga DAO 1-of-12 misconfig, $60K)
 
 ## 7.11 — Admin / Config Parameter Bounds & Interdependencies

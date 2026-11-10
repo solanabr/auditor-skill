@@ -26,7 +26,7 @@ grep -rn --include="*.rs" -iE "commit|reveal|hash|preimage|nonce" programs/
 - ⚠️ PARTIAL: No commit-reveal but slippage protection mitigates the impact
 - N/A: Operations are not price-sensitive
 
-**Step 3: Verify slippage protection on swaps (see Hack #7)**
+**Step 3: Verify slippage protection on swaps (see KV-007)**
 - ✅ PASS: Slippage protection prevents profitable front-running
 - ❌ FAIL: No slippage tolerance on price-sensitive operations
 

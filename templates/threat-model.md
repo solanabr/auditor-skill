@@ -2,7 +2,7 @@
 ================================================================================
 PRE-REVIEW THREAT MODEL ARTIFACT
 ================================================================================
-Written by /threat-model to audit_<n>/threat-model.md. Built BEFORE the manual
+Written by /auditor:threat-model to audit_<n>/threat-model.md. Built BEFORE the manual
 review (analogous to how context-worksheet.md is built in Phase 0.5). In the auto
 flow the `threat-modeler` agent fills it from code + context worksheets; in the
 human-in-loop flow the human answers.
@@ -64,7 +64,7 @@ identifies the targets §4 attacker goals aim at.
 ## 2. Actor × Capability Table
 
 <!--
-Every actor, what they CAN do, and — critically — what they must NOT be able to do.
+Every actor, what they CAN do, and what they must NOT be able to do.
 The "Must NOT be able to" column is the security property; each entry is a goal
 §4 hands to vuln-hunter / economic-analyst to try to violate. Column headers align
 with report §4.4 (Actor | Privileges | Trust Assumption): here "Can do" = Privileges,

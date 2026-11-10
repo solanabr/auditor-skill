@@ -66,7 +66,8 @@ put()    { mkdir -p "$(dirname "$1/$2")" && printf '%s\n' "$3" > "$1/$2" && git 
 commit() { git -C "$1" commit -q "${@:2}"; }
 
 # bounded gives a run 10 s (or BOUND tenths of a second), then reads 142 and opens the named pipe it was
-# given for writing, so a git still waiting there (as before the checks below existed) goes on and ends.
+# given for writing, so a git still waiting there, as it would be without the checks below, goes on and
+# ends.
 # script runs one of the entry points that start git, from a directory, under the first shell.
 script() { # script <dir> <script> <arg>...: scripts/<script>, with its output in $T/out and $T/err and its status in RC
   local dir=$1 s=$2
@@ -453,8 +454,8 @@ lib "$WT" 'confine_rundir audit_3 R'
 check "a run directory holding a symbolic link out of it is refused" refused 'R holds a symbolic link: audit_3'
 AUDITOR_STRICT=1 lib "$WT" 'confine_rundir audit_3 R'
 check "... in strict mode too" refused 'R holds a symbolic link: audit_3'
-# In default mode a link that resolves inside the run directory, every link on the way followed, passes
-# (CONF-15); strict mode refuses any link. One that leads nowhere, in a loop, or out through another
+# In default mode a link that resolves inside the run directory, every link on the way followed, passes;
+# strict mode refuses any link. One that leads nowhere, in a loop, or out through another
 # link inside still counts as out.
 mkdir -p "$WT/audit_8/poc/a/b"
 printf '*\n' > "$WT/audit_8/.gitignore"
@@ -473,7 +474,7 @@ for bad in dangling:nowhere loop:loop out-through:up/.. out-abs:"$T/outside"; do
   rm "$WT/audit_8/poc/${bad%%:*}"
 done
 # When git cannot tell whether the run directory is tracked, its .gitignore of * is enough in default
-# mode (CONF-16); strict mode refuses. A git that fails with no answer stands for that.
+# mode; strict mode refuses. A git that fails with no answer stands for that.
 mkdir -p "$T/cantell"
 printf '#!/bin/sh\necho "fatal: something else" >&2\nexit 1\n' > "$T/cantell/git"
 chmod +x "$T/cantell/git"
@@ -641,7 +642,7 @@ AUDITOR_STRICT=1 lib "$RW" 'confine_repo alt R'
 check "in strict mode a repository with alternates is refused" \
   refused 'R borrows objects from another repository (objects/info/alternates); audit a full copy: alt'
 lib "$RW" 'confine_repo alt R; printf "%s" "$CONFINE_BARE"'
-check "... and in default mode read, with one note (CONF-08)" \
+check "... and in default mode read, with one note" \
   test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|false|test: note: R borrows objects from another repository (objects/info/alternates), so its history is read from there too; strict mode refuses this (Rule 11f)"
 lib "$RW" 'confine_repo wtree R'
 check "a repository whose work tree is elsewhere is refused" refused 'R is not the top level of its repository: wtree'
@@ -649,7 +650,7 @@ AUDITOR_STRICT=1 lib "$RW" 'confine_repo grafted R'
 check "in strict mode a repository that rewrites commit parents with info/grafts is refused" \
   refused 'R rewrites commit parents (info/grafts), so git would show another history; review that file: grafted'
 lib "$RW" 'confine_repo grafted R; printf "%s" "$CONFINE_BARE"'
-check "... and in default mode read, with one note (CONF-09)" \
+check "... and in default mode read, with one note" \
   test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|false|test: note: R rewrites commit parents (info/grafts), so git shows the history that file sets; strict mode refuses this (Rule 11f)"
 NOTHING="the working directory lies below the top level of its repository (..), which tracks nothing under it, so it is not taken for the tree under audit: start Claude Code at that top level, or in a folder the repository tracks (Rule 11c)"
 lib "$RW/plain" 'confine_repo . R'
@@ -658,14 +659,15 @@ AUDITOR_STRICT=1 lib "$RW/plain" 'confine_repo . R'
 check "... in strict mode too" refused "$NOTHING"
 mkdir -p "$T/norepo/e"
 lib "$T/norepo/e" 'confine_repo . R'
-check "... while one with no repository above it gets the reason it has today" \
+check "... while one with no repository above it gets the not-a-repository reason" \
   refused 'R is not a git repository that git can read (none there, or another user owns it: audit a copy): .'
 lib "$RW" 'confine_repo_top "$CONFINE_WT" && printf top; confine_repo_top "$CONFINE_WT/programs" || printf " not-top"; confine_repo_top "$CONFINE_WT/copy.git" && printf " bare-top"'
 check "confine_repo_top: a top level, a subdirectory, a bare repository" out_is 'top not-top bare-top'
-# A session started in a subdirectory of a repository that tracks something there (spec §4.2): in default
-# mode confine_repo . takes the repository at its top level, with the working directory's path in it as
-# the prefix, and hgit_tree reads from <empty>/<prefix>, so paths mean what they mean in the subdirectory.
-# Strict mode refuses it by name. An explicit --repo below a top level stays refused (above).
+# A session started in a subdirectory of a repository that tracks something there (Rule 11c, a session
+# below the top level): in default mode confine_repo . takes the repository at its top level, with the
+# working directory's path in it as the prefix, and hgit_tree reads from <empty>/<prefix>, so paths mean
+# what they mean in the subdirectory. Strict mode refuses it by name. An explicit --repo below a top level
+# stays refused (above).
 lib "$RW/programs" 'confine_repo . R; printf "%s|%s|%s|%s" "$CONFINE_REPO" "$CONFINE_PREFIX" "$CONFINE_GIT_DIR" "$CONFINE_BARE"'
 check "in default mode confine_repo . from a subdirectory takes the repository at its top level, with the prefix" \
   out_is "$RW|programs/|$RW/.git|false"
@@ -679,7 +681,7 @@ check "... where hgit_tree and hgit_text_tree read from the subdirectory, as git
 check "... and leave nothing under TMPDIR" test -z "$(ls -A "$T/tmps")"
 TMPDIR="$T/tmps" lib "$RW/programs" 'confine_repo_top "$CONFINE_WT/.." && confine_repo . R && hgit_tree "$CONFINE_REPO" ls-tree --name-only HEAD'
 check "... also when confine_repo_top took that top level first" out_is x.rs
-# A symbolic link in a hooks directory (CONF-07): git opens no hook with core.hooksPath pinned to
+# A symbolic link in a hooks directory: git opens no hook with core.hooksPath pinned to
 # /dev/null, so default mode accepts it; any other link stays refused (above), since git reads through it.
 mkrepo "$RW/hooklink"; put "$RW/hooklink" f x; commit "$RW/hooklink" -m x
 mkdir -p "$T/hooks-src"; printf '#!/bin/sh\n' > "$T/hooks-src/pre-commit"
@@ -714,7 +716,7 @@ printf '"%s/objects"\n' "$T/alt-store.git" > "$RW/alt2/.git/objects/info/alterna
 lib "$RW" 'confine_repo alt2 R'
 check "... nor a quoted path" \
   refused 'R borrows objects through a quoted path in objects/info/alternates, which these checks do not read: alt2'
-# Git's own layouts with a git directory outside (addendum I). In default mode a linked worktree whose main
+# Git's own layouts with a git directory outside (Rule 11c). In default mode a linked worktree whose main
 # checkout lies elsewhere, a submodule opened from inside, and a separate git directory whose
 # core.worktree names the working tree are read; strict mode refuses each. A gitdir file naming another
 # tree, a separate git directory with no core.worktree (git init writes none), and a submodule its
@@ -845,8 +847,8 @@ fi
 # =================================================================================================
 # shown <s>: <s> as a refusal line shows it, cut after 200 bytes
 shown() { if [ "${#1}" -gt 200 ]; then printf '%s...' "${1:0:200}"; else printf '%s' "$1"; fi; }
-# A core.worktree holding a line end: git prints the top level across two lines, and the old split read
-# the alternates and grafts of a directory the repository chose instead of its own.
+# A core.worktree holding a line end: git prints the top level across two lines, and a split at the first
+# line end would read the alternates and grafts of a directory the repository chose instead of its own.
 mkrepo "$RW/wtnl"; put "$RW/wtnl" f wtnl; commit "$RW/wtnl" -m wtnl
 printf '%s/.git/objects\n' "$O" > "$RW/wtnl/.git/objects/info/alternates"
 if mkdir -p "$RW/wtnl/z"$'\n'"$RW/wtnl" "$RW/wtnl/.git"$'\n'"$RW/wtnl/z" 2>/dev/null; then
@@ -992,7 +994,7 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
   # link to one, is refused; a link to a regular file passes.
   mkrepo "$RW/wtpipe"; put "$RW/wtpipe" src/f x; put "$RW/wtpipe" src/g y; commit "$RW/wtpipe" -m x
   printf 'z\n' >> "$RW/wtpipe/src/f"; git -C "$RW/wtpipe" commit -q -am y
-  # Strict mode searches the work tree for them (CONF-11); default mode does not, since hgit_tree's reads
+  # Strict mode searches the work tree for them; default mode does not, since hgit_tree's reads
   # open no file of it and its questions have a time limit, and the same fixtures read at once.
   wtmsg='a named pipe or device is where git reads its own files in the work tree, and git would wait on it for good'
   mkfifo "$RW/wtpipe/.mailmap"

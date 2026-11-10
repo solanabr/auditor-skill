@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tob-delta-pr.sh — the upstream delta of a pull request that moves the vendor/trailofbits gitlink, as Markdown
 # for the PR's job summary (.github/workflows/vendor-delta.yml). Prints it to stdout. The summary counts only for
-# a PR that changes nothing but the gitlink and the README pin line (CONTRIBUTING.md §5, "Bumping
+# a PR that changes nothing but the gitlink and the README pin line (docs/CONTRIBUTING.md §5, "Bumping
 # vendor/trailofbits"): its first line says so, and its second whether this PR changes other files.
 #
 # Usage: bash scripts/tob-delta-pr.sh <base> <head>
@@ -134,7 +134,7 @@ bash "$here/tob-delta-review.sh" "$clone" "$old" "$new" > "$tmp/review" || die "
   cat "$tmp/review"
 } > "$tmp/body"
 
-first="**\`$PIN\` upstream delta.** This summary counts only when the PR's file list shows nothing but the gitlink and the README pin line; for any other change, this workflow and its scripts included, run the delta review locally instead (CONTRIBUTING.md §5)."
+first="**\`$PIN\` upstream delta.** This summary counts only when the PR's file list shows nothing but the gitlink and the README pin line; for any other change, this workflow and its scripts included, run the delta review locally instead (docs/CONTRIBUTING.md §5)."
 if [ -s "$tmp/other" ]; then
   second="**This PR changes other files too, so this summary does not count.** The block below lists them first."
 elif [ "$readme" = pin ]; then
@@ -168,7 +168,7 @@ while [ "${#fence}" -le "$run" ]; do fence="$fence\`"; done
   cat "$tmp/kept"
   printf '%s\n' "$fence"
   if [ "$left" -gt 0 ] || [ "$cut" -gt 0 ]; then
-    printf '\nThe block is cut: %d bytes of the review are left out, and %d lines are cut at %d bytes. Run the review locally to read it whole (CONTRIBUTING.md §5).\n' \
+    printf '\nThe block is cut: %d bytes of the review are left out, and %d lines are cut at %d bytes. Run the review locally to read it whole (docs/CONTRIBUTING.md §5).\n' \
       "$left" "$cut" "$WIDTH"
   fi
 } > "$tmp/out" || die "writing the summary failed"

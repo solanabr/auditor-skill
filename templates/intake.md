@@ -5,7 +5,6 @@ PERSISTED INTAKE ARTIFACT
 Written by /auditor:intake to audit_<n>/intake.md. This is the persisted
 form of QUESTIONS.md — the passive questionnaire turned into a durable file that
 BOTH flows read (audit-cycle applies defaults; audit-assist asks the human).
-Fixes "answers live only in conversation state."
 
 FEEDS THE REPORT:
   - Scope / commit / languages / effort   -> §2 Scope & Engagement (2.1-2.4)
@@ -17,7 +16,7 @@ FEEDS THE REPORT:
 HOW TO USE:
   1. Copy to audit_<n>/intake.md (create audit_<n>/ with a .gitignore containing
      "*" as its first file — OUTPUT-RULES Rule 11d). Fill every {placeholder}.
-  2. Interactive flow (/intake): ASK each unanswered question, record the answer.
+  2. Interactive flow (/auditor:intake): ASK each unanswered question, record the answer.
   3. Auto flow (audit-cycle): apply the QUESTIONS.md default, and record it under
      "Assumed Defaults (Unanswered)" with the exact default applied — never leave
      a field blank and never silently assume.
@@ -60,13 +59,13 @@ FULL-AUDIT 0.2 maps the codebase from this table, this run's only; report §2.4 
 every exclusion with its source. Each row's source is one of:
   Q39 / Q44                                 the human's answer at this intake
   reused from audit_<k> on the human's yes  an earlier run's row, applied unchanged
-  discovered                                what /intake step 1 found in the tree
+  discovered                                what /auditor:intake step 1 found in the tree
   default                                   discovery/file-map.md
 Every path is relative to the working directory, with no leading / or ~, no ..
 component, and nothing inside a run directory. A path is taken literally unless its
 Note says glob. Keep every cell to printable ASCII, with no |. The next interactive
-/intake in this checkout offers this table again and applies it only on the human's
-yes; --auto never applies it (/intake step 4).
+/auditor:intake in this checkout offers this table again and applies it only on
+the human's yes; --auto never applies it (/auditor:intake step 4).
 -->
 
 | Kind | Path or glob | Note | Source |
@@ -145,7 +144,6 @@ Record the concrete calibration rule applied, not just the answer.
      "How Answers Affect the Audit"). Each is a lever the report's §5 will cite. -->
 
 - {Q8 = mainnet-live → +1 severity on all fund-related findings.}
-- {Q10 > $1M → critical findings double-weighted in risk score.}
 - {Q11 = single wallet → upgrade authority auto-flagged Severity 8+.}
 - {Q41 = quick → recorded only: a Full run keeps its full walk; Quick is /auditor:diff-audit, /auditor:quick-scan or /auditor:deep-review.}
 
@@ -154,11 +152,11 @@ Record the concrete calibration rule applied, not just the answer.
 ## 6. Trust-Model Inputs (CRITICAL)
 
 <!--
-The load-bearing section. WHO is trusted — the inputs that seed report §4.4
-(Trust Model & Actors) and §4.6 (Assumptions & Simplifications), and that
-/threat-model expands into the actor x capability table. A finding gated by a
-trusted role is capped in severity BECAUSE of what is recorded here; if an entry
-is "untrusted", a bypass by that actor is a full-severity finding.
+The section the trust model rests on. WHO is trusted — the inputs that seed
+report §4.4 (Trust Model & Actors) and §4.6 (Assumptions & Simplifications), and
+that /auditor:threat-model expands into the actor x capability table. A finding
+gated by a trusted role is capped in severity BECAUSE of what is recorded here;
+if an entry is "untrusted", a bypass by that actor is a full-severity finding.
 
 For each: name who holds it, what they can do, and what the review TRUSTS them
 NOT to do. "Untrusted / permissionless" is a valid and important answer.
@@ -174,7 +172,7 @@ NOT to do. "Untrusted / permissionless" is a valid and important answer.
 | **Permissionless user** | {anyone} | {call open instructions} | — (untrusted — the attacker) |
 
 **Trust-model narrative** — {2-4 sentences: the security of the system depends on
-which of the above holding. State the load-bearing ones plainly. This is the seed
+which of the above hold. State the ones it rests on plainly. This is the seed
 text for report §4.6.}
 
 ---
@@ -182,7 +180,7 @@ text for report §4.6.}
 ## 7. Security History
 
 <!-- Q25-Q28. Feeds methodology / prior-fix assumptions. Q25 = first audit -> no
-     assumptions about prior fixes; enables deeper analysis. -->
+     assumptions about prior fixes. -->
 
 | | |
 | ----------------------- | --------------------------------------------- |

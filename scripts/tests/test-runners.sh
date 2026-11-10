@@ -369,8 +369,8 @@ printf 'key\n' > "$CREDHOME/.ssh/id_rsa"
 run "$TARGET" "$WT" HOME="$CREDHOME" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
 check "isolated mode with a readable SSH key: exit 3, nothing copied, the kinds named and no path" \
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: isolated mode, but these are readable here: SSH keys (1)' '$T/err' && grep -q 'this is not the isolated runner (Rule 11a)' '$T/err' && ! grep -q 'id_rsa' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
-# That blocker says what the human changes to build natively instead: what recorded isolated (Addendum L). In
-# strict mode isolated is the only way, and the blocker says so.
+# That blocker says what the human changes to build natively instead: what recorded isolated (Rule 11a, the
+# isolation self-check). In strict mode isolated is the only way, and the blocker says so.
 LISTS=', and scripts/runner/probe.sh --only isolation lists them'
 NATIVE='. To build natively instead, on this machine, the human'
 check "... and says how to build natively instead: the human unsets AUDITOR_EXEC_MODE" \
@@ -742,7 +742,7 @@ printf 'fund=false\n' > "$NK/app/.npmrc"
 run "$TARGET" "$NK" PATH="$T/npmfake:$FPATH" -- npm-ci --run audit_1 --src . --dir app
 check "npm-ci where .npmrc names https registries: npm ci finds only those lines, as key=value, and app/.npmrc is gone" \
   sh -c "[ '$RC' = 0 ] && grep -qxF 'npmrc: .npmrc: registry=https://registry.example.com/npm/|@acme:registry=https://npm.acme.dev/|' '$T/calls' && [ \"\$(grep -c '^npmrc: ' '$T/calls')\" = 1 ] && ! grep -q 'canary-npmrc-token' '$T/calls'"
-check "... a note names the lines kept, and today's note the .npmrc removed" \
+check "... a note names the lines kept, and the removal note names app/.npmrc" \
   sh -c "grep -qxF '>> note: npm ci takes only the https registry lines of .npmrc from the code under audit: target.sh kept registry=https://registry.example.com/npm/, @acme:registry=https://npm.acme.dev/, and removed every other line' '$T/out' && grep -qxF '$NOTE app/.npmrc' '$T/out'"
 if [ "$ISOLATED_OK" = 1 ]; then
   run "$TARGET" "$NK" PATH="$T/npmfake:$FPATH" AUDITOR_STRICT=1 -- npm-ci --run audit_1 --src . --dir app
@@ -981,7 +981,7 @@ tgit -C "$PC" config extensions.partialClone origin
 ( cd "$PC" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$PC/audit_1/exec-mode"
 # Outside strict mode, when the revision's tree and every object in it are there (git rev-list --objects
 # --missing=print, fetching nothing), the copy comes from git's read-only plumbing, with a note; strict mode
-# stops as today.
+# stops.
 settings FAKE_SHOW=programs/demo/src/lib.rs
 run "$TARGET" "$PC" -- cargo-test --run audit_1 --src .
 PCSHA=$(tgit -C "$PC" rev-parse HEAD)
@@ -990,7 +990,7 @@ check "a partial clone whose revision has every file: exit 0, the note, and the 
 settings
 if [ "$ISOLATED_OK" = 1 ]; then
   run "$TARGET" "$PC" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
-  check "... strict mode: exit 3 before anything is copied, as today" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: . is a partial clone: a copy would lack the objects it never fetched' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+  check "... strict mode: exit 3 before anything is copied" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: . is a partial clone: a copy would lack the objects it never fetched' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 fi
 # A blobless clone with nothing checked out lacks the files of its revision: a blocker in both modes.
 PB=$T/blobless
@@ -1064,7 +1064,7 @@ check "... while a source that is copied file by file needs no clone" sh -c "[ '
 # A source another user owns (git's own test knob stands for the other user): the clone keeps git's ownership
 # check on (no global config, in both modes), so in default mode target.sh copies such a source through the
 # plumbing instead, with a note, since a copy never runs the source repository's configured code, and strict
-# mode refuses it. A source this user owns is cloned as before. Each stand-in logs every git command it runs.
+# mode refuses it. A source this user owns is cloned. Each stand-in logs every git command it runs.
 REALGIT=$(command -v git)
 mkdir -p "$T/owngit" "$T/othergit"
 printf '#!/bin/sh\nprintf "%%s|%%s\\n" "${GIT_CONFIG_GLOBAL-unset}" "$*" >> "%s/owngit.log"\nexec "%s" "$@"\n' "$T" "$REALGIT" > "$T/owngit/git"
@@ -1074,7 +1074,7 @@ OWNNOTE=">> note: --src . belongs to another user, so git would not clone it wit
 : > "$T/owngit.log"
 settings FAKE_SHOW=programs/demo/src/lib.rs
 run "$TARGET" "$WT" PATH="$T/owngit:$FPATH" -- cargo-test --run audit_1 --src .
-check "a source this user owns: cloned as before, the clone with no global config, so git's ownership check stays on" \
+check "a source this user owns: cloned with no global config, so git's ownership check stays on" \
   sh -c "[ '$RC' = 0 ] && grep -qxF 'show: // v2' '$T/calls' && grep -q '^/dev/null|.* clone --no-local --no-checkout ' '$T/owngit.log' && ! grep -q 'another user' '$T/out'"
 check "... while target.sh's own reads in default mode take the safe-directory file" \
   grep -q '/scripts/lib/safe-directory[.]gitconfig|.* rev-parse ' "$T/owngit.log"
@@ -1087,7 +1087,7 @@ check "... git ran ls-tree and cat-file --batch, and never clone" \
 check "... and no program or hook the repository's config names ran" test -z "$(ls -A "$T/marks")"
 # A source that borrows objects (git clone --shared writes objects/info/alternates). Outside strict mode
 # confine_repo takes it with a note, which prints on stdout as target.sh's own notes do, and the clone reads
-# the borrowed objects; strict mode refuses it, as today.
+# the borrowed objects; strict mode refuses it.
 AL=$T/alwt
 tgit clone -q --shared "$WT" "$AL" 2>/dev/null
 ( cd "$AL" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$AL/audit_1/exec-mode"
@@ -1096,13 +1096,13 @@ run "$TARGET" "$AL" -- cargo-test --run audit_1 --src .
 check "a --src that borrows objects: exit 0, confine.sh's note on stdout and none on stderr, and the build sees HEAD (v2)" \
   sh -c "[ '$RC' = 0 ] && grep -qxF '>> note: --src borrows objects from another repository (objects/info/alternates), so its history is read from there too; strict mode refuses this (Rule 11f)' '$T/out' && [ ! -s '$T/err' ] && grep -qxF 'show: // v2' '$T/calls'"
 run "$TARGET" "$AL" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
-check "... strict mode refuses it, as today, before anything is copied" \
+check "... strict mode refuses it before anything is copied" \
   sh -c "[ '$RC' = 64 ] && [ \"\$(cat '$T/err')\" = 'target: refused: --src borrows objects from another repository (objects/info/alternates); audit a full copy: .' ] && [ -z \"\$(ls -A '$NT')\" ]"
 settings
-# Strict mode reads nothing of a checkout another user owns, so today's refusal comes at its first read, the
+# Strict mode reads nothing of a checkout another user owns, so the refusal comes at its first read, the
 # check that git tracks nothing under the run directory.
 run "$TARGET" "$WT" PATH="$T/othergit:$FPATH" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
-check "strict mode, a source another user owns: refused, as today, before anything is copied" \
+check "strict mode, a source another user owns: refused before anything is copied" \
   sh -c "[ '$RC' = 64 ] && [ \"\$(cat '$T/err')\" = 'target: refused: git cannot tell whether --run is tracked: audit_1' ] && [ -z \"\$(ls -A '$NT')\" ] && ! grep -qw clone '$T/othergit.log'"
 settings
 # Tools.
@@ -1182,7 +1182,7 @@ rm -rf "$WT/.bin"
 check "no target.sh run ran a program or hook the source repository's config names" test -z "$(ls -A "$T/marks")"
 # A session started below the top level of a repository, in programs/demo: outside strict mode --src . clones
 # that repository, at its HEAD, as confine_repo . takes it, and --dir stays a path from its top; the log says
-# which directory of it the session is in. Strict mode copies the directory file by file, as before.
+# which directory of it the session is in. Strict mode copies the directory file by file.
 SUB=$WT/programs/demo
 ( cd "$SUB" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$SUB/audit_1/exec-mode"
 settings FAKE_SHOW=programs/demo/src/lib.rs
@@ -1198,7 +1198,7 @@ check "... --dir is a path from the copy's top" \
   calls_are "rustup default|cargo fetch --manifest-path $S/src/programs/demo/Cargo.toml|cargo test --offline --workspace|"
 if [ "$ISOLATED_OK" = 1 ]; then
   run "$TARGET" "$SUB" AUDITOR_STRICT=1 -- cargo-test --run audit_1 --src .
-  check "strict mode, the same session: the directory is copied file by file, as before" \
+  check "strict mode, the same session: the directory is copied file by file" \
     sh -c "[ '$RC' = 0 ] && grep -qxF 'show: ' '$T/calls'"
 fi
 rm -rf "$SUB/audit_1"

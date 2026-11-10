@@ -76,7 +76,7 @@
 #       not read. diff-audit and quick-scan keep their --ci and --fail-on, the findings file that starts as a
 #       failing record, the Rule 5b statuses that count, a reply without finding text, and the closing line;
 #       each of the three Quick commands names the report it writes from templates/pr-report.md, writes it in
-#       its own session (quick-scan and diff-audit start no agent at all, so their cost holds still, and
+#       its own session (quick-scan and diff-audit start no agent at all, so what they read follows their steps, and
 #       deep-review leaves an agent's model to its definition), runs no cd, after which the bundled tools would
 #       look for the run directory in the wrong folder, and reads the corpus from the root, each verdict naming
 #       what it rests on: quick-scan and diff-audit the selection of references/depth-scope.md, written to
@@ -1137,14 +1137,15 @@ for f in commands/*.md agents/*.md skills/*/SKILL.md SKILL.md; do [ -f "$f" ] &&
 [ $# -gt 0 ] || { bad "no command, agent or skill files in $TREE"; }
 nbodies=$#
 for f in FULL-AUDIT.md checklists/*.md known-vectors/*.md discovery/*.md; do [ -f "$f" ] && set -- "$@" "$f"; done
-find references templates docs -type f -name '*.md' 2>/dev/null | LC_ALL=C sort > "$T/corpus-files"
+# docs/CONTRIBUTING.md is for contributors working in this repository: its calls run from the repository
+# root, and its allowed-tools examples are written as a command's frontmatter writes them.
+find references templates docs -type f -name '*.md' ! -path docs/CONTRIBUTING.md 2>/dev/null | LC_ALL=C sort > "$T/corpus-files"
 while IFS= read -r f; do set -- "$@" "$f"; done < "$T/corpus-files"
 [ $# -gt $((nbodies + 100)) ] || bad "only $(($# - nbodies)) corpus files in $TREE"
 # Findings the tree has until the edits that fix them land, one to a line, each <check> <file> <the text it
 # shows>: the check fails on any other finding, and on a listed one it no longer makes, whose line is then to
 # be deleted here.
 KNOWN='
-C6	docs/output-and-rigor.md	not quoted as "<auditor-skill root>/scripts/rundir.sh": <auditor-skill root>/scripts/rundir.sh new
 '
 found=$(check "$TREE" "$@"); rc=$?
 if [ "$rc" -ne 0 ]; then bad "the checker failed on $TREE (status $rc)"
@@ -1263,7 +1264,7 @@ commands/deep-review.md	`audit_<n>/DEEP-REVIEW-<unit>.md`, from `${CLAUDE_PLUGIN
 commands/quick-scan.md	Read `${CLAUDE_PLUGIN_ROOT}/references/depth-scope.md` and `${CLAUDE_PLUGIN_ROOT}/known-vectors/INDEX.md` with the Read tool
 commands/quick-scan.md	select the checklist sections of its §2 and the vector rows of its §3, exactly as those tables say: none is chosen by judgment
 commands/quick-scan.md	The DevOps and supply-chain rows apply to every repository.
-docs/ci.md	That is at most 62 sections, about 104 KB, for a change that touches every kind of file, and at most 39 for a change to on-chain program source alone
+docs/ci.md	That is at most 62 sections, about 103 KB, for a change that touches every kind of file, and at most 39 for a change to on-chain program source alone
 commands/quick-scan.md	Write the selection to `audit_<n>/scope.md`, in the form of its §9, with the Write tool, before you read any checklist section or vector file.
 commands/quick-scan.md	each section with the Read tool from its `## ` heading to the next one: at its start line, with its line count as the limit, or, when that line is not the heading, from the line Grep finds the heading on to the next `## `; and each vector file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, whole, with no line limit
 commands/diff-audit.md	each section with the Read tool from its `## ` heading to the next one: at its start line, with its line count as the limit, or, when that line is not the heading, from the line Grep finds the heading on to the next `## `; and each vector file
@@ -1299,7 +1300,7 @@ commands/diff-audit.md	on the changed functions of the kept files and their dire
 commands/diff-audit.md	each vector file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, whole, with no line limit, several in each message
 commands/diff-audit.md	run §11.11 of `${CLAUDE_PLUGIN_ROOT}/checklists/11-supply-chain.md`
 commands/deep-review.md	reading each one's file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, before its verdict
-commands/quick-scan.md	Steps 2 to 4 run in this session: start no agent, so a scan costs the same from one run to the next.
+commands/quick-scan.md	Steps 2 to 4 run in this session: start no agent, so the scan reads what its steps name, not what an agent picks.
 commands/quick-scan.md	Write it yourself, in this session.
 commands/quick-scan.md	Run no `cd` in this session, not even before a plain `grep`
 commands/diff-audit.md	Run no `cd` in this session, not even before a plain `grep`
@@ -1318,8 +1319,8 @@ templates/pr-report.md	`Loaded … security advisories (from <folder>)`, names a
 commands/diff-audit.md	(`deps.sh` adds a row to `audit_<n>/disclosures.tsv` before its first request to each service)
 commands/quick-scan.md	Skip nothing scope.md lists and cut nothing short by choice, not even to save cost or time; Coverage & Limitations names only a file the Read tool could not open
 commands/diff-audit.md	Skip nothing scope.md lists and cut nothing short by choice, not even to save cost or time; name there only one the Read tool could not open.
-commands/quick-scan.md	Measured scans cost USD 2.84 to 7.14 in all; this selection cost USD 6.98 on a whole repository, reading 38 vector files and 49 sections.
-commands/diff-audit.md	Measured reviews cost USD 1.68 to 8.10 in all; this selection cost USD 3.99 on a 1,248-line change with no lockfile, and USD 8.10 on a range of 7,830 changed lines that adds a 787-package lockfile.
+commands/quick-scan.md	This selection cost USD 6.98 on a whole repository, reading 38 vector files and 49 sections.
+commands/diff-audit.md	This selection cost USD 3.99 on a 1,248-line change with no lockfile, and USD 8.10 on a range of 7,830 changed lines that adds a 787-package lockfile.
 docs/ci.md	On the shipped text, the selection of `references/depth-scope.md`, it cost $8.10 on the 3K-line repository, for a range of 7,830 changed lines that adds a 787-package lockfile, under a $15 cap, and $3.99 on the 12K-line program, for a 1,248-line change with no lockfile, under an $8 cap.
 docs/ci.md	Both read every file their selection lists and named no spending cap. The lower figures are earlier drafts, and the review job on the shipped text is not measured yet.
 docs/ci.md	On a fork's or Dependabot's pull request the review check shows Success with no review
@@ -1368,7 +1369,7 @@ commands/diff-audit.md	first, with the Read tool, before any verdict of this ste
 commands/diff-audit.md	Each verdict names the checklist item id or the vector step it rests on
 commands/deep-review.md	Each verdict names the checklist item id or the vector step it rests on
 commands/diff-audit.md	Write it yourself, in this session.
-commands/diff-audit.md	Steps 2 to 6 run in this session: start no agent, so a review of the same range costs the same from one run to the next.
+commands/diff-audit.md	Steps 2 to 6 run in this session: start no agent, so the review reads what its steps name, not what an agent picks.
 commands/deep-review.md	Write it yourself, in this session, from what any agent you started returned
 commands/quick-scan.md	but the job never fails only because none exists, and never falls back to printing findings in the log
 commands/re-audit.md	only into `grep`, `head`, `tail` or `wc`
@@ -1435,10 +1436,10 @@ done
 
 # Wording that must not come back, file <TAB> text: an agent never hands run.sh the file's mode as --mode, which
 # stops every run a stricter AUDITOR_EXEC_MODE holds to isolated mode, and the older wording that copied a mode
-# forward, wrote only native, or let a non-interactive run loosen a recorded mode stays gone. Since 7.7.2 nothing
-# asks Q46 after intake, for a run directory an earlier session made or mid-run (spec §4.7, CMD-03): the runners
-# take the stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode, so a native there loosens nothing, and
-# isolated is no longer the recommended answer.
+# forward, wrote only native, or let a non-interactive run loosen a recorded mode stays gone. Nothing asks Q46
+# after intake, for a run directory an earlier session made or mid-run (Rule 11a): the runners take the stricter
+# of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode, so a native there loosens nothing, and no wording
+# recommends isolated.
 while IFS='	' read -r f gone; do
   [ -n "$f" ] || continue
   if [ -f "$f" ] && ! grep -qF -- "$gone" "$f"; then ok "gone from $f: $gone"; else bad "P $f says: $gone"; fi
@@ -1551,14 +1552,14 @@ for fs in 'commands/respond.md|5' 'commands/hunt.md|6'; do
 done
 
 # Each command's resume text, and the root SKILL.md's, says what stops the prompt its re-invocation brings (the
-# user-level rules), and that "Yes, and don't ask again" no longer breaks the resumed invocation, whose step 0 runs
-# again: preflight takes an untracked .claude/settings.local.json for the user's own (spec §4.8, Rule 11e). The old
-# advice, which told the human to avoid that answer because step 0 refused the file, stays gone.
+# user-level rules), and that "Yes, and don't ask again" does not break the resumed invocation, whose step 0 runs
+# again: preflight takes an untracked .claude/settings.local.json for the user's own (Rule 11e). Advice to avoid
+# that answer stays gone.
 for f in commands/*.md SKILL.md; do
   if grep -qiF -- 'That invocation asks unless the user-level rules in' "$f"; then ok "$f: the resume text names the rules that stop its prompt"
   else bad "P $f: the resume text does not name the user-level rules that stop its prompt"; fi
-  if grep -qiF -- 'which step 0 no longer refuses while git does not track it' "$f"; then ok "$f: the saved rule's file no longer stops the resumed invocation"
-  else bad "P $f: the resume text does not say that step 0 no longer refuses the saved rule's untracked file"; fi
+  if grep -qiF -- 'which step 0 does not refuse while git does not track it' "$f"; then ok "$f: the saved rule's file does not stop the resumed invocation"
+  else bad "P $f: the resume text does not say that step 0 accepts the saved rule's untracked file"; fi
   for gone in 'tell the human to answer "Yes", not "don'"'"'t ask again"' 'a file step 0 refuses, from that resumed invocation on'; do
     if grep -qiF -- "$gone" "$f"; then bad "P $f says: $gone"; else ok "gone from $f: $gone"; fi
   done
@@ -1646,7 +1647,7 @@ else bad "the python3 -I check could not read the tree"; fi
 # the crate itself, with a stand-in installation whose probe.sh prints the isolation line FAKE_ISOLATION holds:
 # like run.sh --crate, they take the stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT,
 # read as Rule 11f reads it, with a note for a value that is no word for on or off, or a strict entry of any kind
-# in their own <R>, not in another run directory), native when none of them says anything (spec §4.7); they stop
+# in their own <R>, not in another run directory), native when none of them says anything (Rule 11a); they stop
 # on none, on an exec-mode that is not a regular file holding one word and at most one newline (run.sh's
 # mode_file reads it so), and on an AUDITOR_EXEC_MODE that names no mode, and in isolated mode unless the
 # self-check finds nothing readable. poc-harness.md §1 shows the same lines, with the corpus's name for the root.

@@ -25,14 +25,14 @@ while read -r sha; do
   # count the matches: grep -c reads the whole message, however long, so nothing ends the pipe early
   n=$(printf '%s\n' "$msg" | awk "$unfold" | grep -ciE "$pattern")
   if [[ "${n:-0}" -gt 0 ]]; then
-    echo "::error::commit $sha carries an AI-attribution trailer — remove it (see CONTRIBUTING.md §1)" >&2
+    echo "::error::commit $sha carries an AI-attribution trailer — remove it (see docs/CONTRIBUTING.md §1)" >&2
     bad=1
   fi
   who=$(git -c log.showSignature=false log -1 --format='%an <%ae>%n%cn <%ce>' "$sha") \
     || { echo "::error::cannot read the author of commit $sha" >&2; bad=1; continue; }
   n=$(printf '%s\n' "$who" | grep -ciE "$ident")
   if [[ "${n:-0}" -gt 0 ]]; then
-    echo "::error::commit $sha names an AI assistant as its author or committer — commit as yourself (see CONTRIBUTING.md §1)" >&2
+    echo "::error::commit $sha names an AI assistant as its author or committer — commit as yourself (see docs/CONTRIBUTING.md §1)" >&2
     bad=1
   fi
 done <<< "$commits"

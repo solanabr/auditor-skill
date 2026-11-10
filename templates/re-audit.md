@@ -2,7 +2,7 @@
 
 The finding-diff `/auditor:re-audit` writes to `audit_<n+1>/RE-AUDIT.md`. Baseline: the prior
 `audit_<n>/REPORT.md`, audited at `{AUDITED_SHA}`. Delta: `{BASE}..{HEAD}`. Execution mode for every build
-and PoC re-run: `{isolated | native}` (`OUTPUT-RULES.md` Rule 11a; native means target code ran on the
+and PoC re-run: `{isolated | native | none}` (`OUTPUT-RULES.md` Rule 11a; native means target code ran on the
 auditor's machine).
 
 **Generated:** {the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands}
