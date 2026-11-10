@@ -8,6 +8,8 @@ auditor-skill audits with a small team of subagents (spawned via the `Task` tool
 
 The agents' tool calls follow the session's mode, default or strict, since every bundled tool reads it for itself ([Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode)). An agent that lists a tool's outcomes copies each distinct `<tool>: note:` line into Coverage & Limitations once, as it stands. An agent started directly, with no command, has had no preflight run: its report says "working tree not checked by preflight".
 
+The commands start each agent by its plugin-scoped name, `auditor:<agent>`: a project agent cannot hold a `:` in its name, so a repository's own `.claude/agents/` file of the same bare name cannot answer in its place. They start it in the foreground, so it keeps the command's pre-approvals ([Turns and resuming](permissions-and-isolation.md#turns-and-resuming)).
+
 ## Roster
 
 | Agent | Model | Fires | Emits |

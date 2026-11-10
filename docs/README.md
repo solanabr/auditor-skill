@@ -8,6 +8,16 @@ A folder of markdown checklists, slash commands, and subagents — plus three sm
 
 Commands are namespaced `auditor`, so you invoke them as `/auditor:audit`, `/auditor:audit-cycle`, etc.
 
+### What the corpus covers
+
+- **Checklists** (`checklists/`): seven for on-chain programs (account validation, access control, arithmetic, CPI and PDAs, state machines, economic logic, operations and governance), then TypeScript, backend, frontend, supply chain, secrets, deployment and CI, Python, other languages, formal verification and testing, logging and incident readiness, privacy and change management, AI and agent components, and off-chain Rust services. The scope table in [SKILL.md](../SKILL.md#scope-gated-loading--load-what-the-repo-needs) says which ones a repository gets.
+- **Known attack vectors** (`known-vectors/INDEX.md`), each with a verification procedure. Among them: vendored or white-label program drift (KV-137), a slot used as a clock after SIMD-0525 and Alpenglow (KV-138), comment-triggered workflows and pwn requests in CI (KV-139, KV-140), and the host kernel and network of Internet-facing nodes (KV-141).
+- **Protocol methodologies** (`references/methodologies/`): AMM/CLMM, lending, perps, oracles, stablecoins, liquid staking, governance, bridges, multisig and custody, Token-2022, NFT marketplaces, launchpads, and token registries.
+- **Vulnerability-class playbooks** (`references/vuln-classes/`): GitHub Actions trigger trust, Transaction v1 (SIMD-0385), the host kernel and network attack surface, and ZK and compression.
+- **Framework idioms** (`references/framework-idioms/`): Anchor, native, Pinocchio, and build and tooling.
+
+What each release added: [changelog.md](changelog.md).
+
 ## Pick a depth
 
 | Depth | When | Run | Reads | Writes | [Cost](../COSTS.md#cost-and-time-by-depth) |

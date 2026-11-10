@@ -161,7 +161,7 @@ Build it in the installation, never inside the repository under audit, as for `a
 
 ## GitHub Actions workflow analysis
 
-Three layers, cheapest first. Each is optional; the corpus's GitHub Actions checks (`references/vuln-classes/github-actions.md`, `discovery/grep-commands.md` R1–R8) run without any of them.
+Three layers, cheapest first. Each is optional; the corpus's GitHub Actions checks (`references/vuln-classes/github-actions.md`, `discovery/grep-commands.md` R1–R9) run without any of them. R9 lists every action and reusable workflow pinned to a full commit SHA, with its version comment, and the playbook's §7 turns pins and repointed tags, self-hosted runners and OIDC trust policies into procedures (KV-080 Steps 4 and 8, KV-140 Step 7).
 
 1. **audit-scan's workflow pass** — bundled, offline, no prompt: `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" --contract=1 <program-path> --workflows .github/workflows --out audit_<n>/prescan.json`, the optional pre-pass of FULL-AUDIT.md 0.3 with `--workflows` added. It reads each `*.yml`/`*.yaml` into trigger → job → step facts (`workflows[]`), and lists under each workflow's `unknown[]` what it did not read (only a workflow with an empty `unknown` was read whole), and whole files under `skipped[]` (see [`tools/auditor-tools/README.md`](../tools/auditor-tools/README.md#the-workflow-pass)). It is a **map, not a verdict**: it enumerates the surface the grep rules and the tools below then judge.
 2. **zizmor** — a workflow SAST. Third-party, so it is an install plus a run and **prompts by design** ([permissions-and-isolation.md](permissions-and-isolation.md#what-still-asks-and-why)); run it in the recorded execution mode.
