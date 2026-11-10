@@ -89,4 +89,4 @@ Operating safety follows `OUTPUT-RULES.md` Rule 11. Target-controlled code (buil
 
 ## Honesty clause (state this in the report)
 
-This is **audit-shaped automation — a rigorous, reproducible first pass**, not a substitute for a human audit firm. It does not replace human business-logic, economic-model, and legal-compliance review. Recommend pairing with a human audit before mainnet (`SKILL.md` → When NOT to Use).
+This is **an automated first pass**, not a substitute for a human audit firm. It does not replace human business-logic, economic-model, and legal-compliance review. Recommend pairing with a human audit before mainnet (`SKILL.md` → When NOT to Use).
