@@ -1,17 +1,26 @@
 # What an audit costs
 
-These are measured runs, not estimates. On 2026-11-08 and 9, the depths ran on three Solana repositories, two public and one private, named here by size only. Quick and Standard ran on each one where they apply, and Full and the CI dry run on one.
+These are measured runs, not estimates. From 2026-11-08 to 2026-11-10, the depths ran on three Solana repositories, two public and one private, named here by size only. Quick and Standard ran on each one where they apply, and Full and the CI dry run on one. In short:
+
+- **Quick** costs about $2 to $8 and takes 4 to 23 minutes.
+  - diff-audit cost $8.10 on the final text, for a range that changes 7,830 lines of a program, its app and its tooling, and adds a 787-package npm lockfile. A narrow change, 1,248 lines of the 12K-line program with no lockfile, cost $3.99 in 9 minutes.
+  - quick-scan cost $6.98 on the final text, for a whole repository, and about $3 on a draft, for one program.
+- **Standard** costs about $13 to $19 and takes 36 to 56 minutes.
+- **Full** cost $19.52 and took an hour on the 3K-line program. It ran once, on that program only, without `--with-poc`.
+- **CI** reviews each pull request from your own branches, not a fork's or Dependabot's, at about what diff-audit costs on the final text: $3.99 for the narrow change and $8.10 for the large range above. The review job itself is not measured yet.
+  - The CI template caps each review at $15, a ceiling, not a charge.
+  - Give an unattended quick-scan or diff-audit the same room. Under a $5 cap, expect the early stop below.
+
+Each figure comes from a single run, so read it as a size, not a quote. The dollar figures are what Claude Code reports as `total_cost_usd`, at Anthropic's list prices. On a Claude subscription, a run uses your plan's allowance instead.
+
+The runs used:
 
 - **Claude Code and model:** Claude Code 2.1.304, with `claude-opus-5-5`, the account's default model, at Claude Code's default effort.
-- **Plugin, Standard and Full:** two development builds of 7.7.2 from 2026-11-08: one still labelled 7.7.0, for the 3K- and 12K-line programs, and the release candidate, for the 7K-line one. For these commands the two differ only in wording, and `OUTPUT-RULES.md` is 1.8 KB longer in the later one.
-- **Plugin, Quick and CI:** the Quick commands as this release ships them, and earlier drafts of them from the same two days.
-  - **Final** marks a run on the shipped selection: `references/depth-scope.md` and the commands as this release ships them, apart from each command's sentence on cost and later fixes to the lockfile budget's code. It reads what `references/depth-scope.md` selects, checklist sections and known-vector rows, and writes that selection to `audit_<n>/scope.md` before it reads any of them.
+- **Plugin, Standard and Full:** two pre-release builds of 7.7.2 from 2026-11-08, one for the 3K- and 12K-line programs and a later one for the 7K-line program. For these commands the two differ only in wording, and `OUTPUT-RULES.md` is 1.8 KB longer in the later one.
+- **Plugin, Quick and CI:** the Quick commands as this release ships them, and earlier drafts of them from the same days.
+  - **Final** marks a run on the shipped selection: `references/depth-scope.md` and the commands as this release ships them. It reads what `references/depth-scope.md` selects, checklist sections and known-vector rows, and writes that selection to `audit_<n>/scope.md` before it reads any of them.
   - **Draft** marks a run on an earlier text. The drafts kept the severity 7+ vectors of the detected domains whose markers occurred, and their quick-scan read no checklist.
   - Each figure names the `--max-budget-usd` cap it ran with.
-
-The dollar figures are what Claude Code reports as `total_cost_usd`, at Anthropic's list prices. On a Claude subscription, a run uses your plan's allowance instead.
-
-Each figure comes from a single run, so read it as a size, not a quote.
 
 ## Cost and time by depth
 
@@ -30,20 +39,20 @@ Each figure comes from a single run, so read it as a size, not a quote.
   - The final text read 98 vector files and 43 checklist sections, every one its selection listed. It ran checklist 11 §11.11's CI budget on the lockfile: a publish-age lookup for each of its 612 new names, in 18 s, then 17 key-handling packages and 11 others fetched and swept.
   - It reviewed 4,772 of the 7,830 changed lines. The rest, a 3,058-line HTML file's deletion, did not fit the 5,000-line budget, and its report names the file.
   - The draft read 58 vector files whole, plus checklists 04 and 06 and checklist 11's §11.11. Its report named the scope table's other checklists as not read, with no verdict on their items.
-  - The 12K-line range read 21 and 16 vector files, on drafts. Both runs passed the program's path after the range, which the shipped diff-audit does not take.
+  - The 12K-line range read 21 and 16 vector files, on drafts.
   - The final text, on that range (36 files, 1,248 changed lines, no lockfile), read 59 vector files and 36 checklist sections whole, every one its selection listed, and reviewed all 310 changed lines of non-test source.
 - **The CI figure** is one dry run of the CI template's review step, `--json-schema` and strict mode included, on the 3K-line program's range. It ran on a draft that read no vector file. On the final text the review job should cost about what diff-audit costs; it is not measured yet.
 - **Earlier drafts, before the Quick commands read the corpus:**
-  - diff-audit cost $1.23 and $0.84, then $1.29 and $0.83.
+  - diff-audit cost $1.23, $0.84, $1.29 and $0.83.
   - quick-scan cost $1.46, $2.20 and $3.62, with agents as each session chose. Starting no agent and reading no vector file, it cost $2.67, $2.91 and $2.19.
 - **The two final runs on the 3K-line repository had a lighter setup than the drafts.** The bundled tools were not built, so `audit-scan` mapped nothing, and quick-scan's cargo-audit had no advisory database, so it did not run. The final diff-audit on the 12K-line program had both.
 
-**A named limit: a cap close to the run's cost.** Claude Code shows the session its budget ("USD budget: $spent/$max; $remaining remaining"), and the session plans by it. Under a $5 cap, a draft session rationed: it stopped reading early, and its report said what it skipped.
+**A cap close to the run's cost cuts the review short.** Claude Code shows the session its budget ("USD budget: $spent/$max; $remaining remaining"), and the session plans by it. Under a $5 cap, a draft session rationed: it stopped reading early, and its report said what it skipped.
 
 - At a $5 cap, two whole-repository quick-scans each kept about 80 vector files and read only 14 and 15 of them.
 - The 3K-line diff-audit at a $5 cap read its 48 selected vector files, but left its checklists unread "to stay within the USD 5 session cap". It cost $2.94.
 - At a $10 cap, quick-scan read every kept file, and that diff-audit read all 58 of its selected vector files without mentioning its budget.
-- The final text says a budget is never a reason to leave a selected file unread. In CI, a run that leaves one unread fails.
+- The shipped commands tell the session never to leave a selected file unread for its budget, and in CI a run that leaves one unread fails.
 
 **A fuller setup may cost somewhat more.** These runs were lighter than a full one in three ways:
 
@@ -51,18 +60,7 @@ Each figure comes from a single run, so read it as a size, not a quote.
 - **Static analysis.** semgrep was not installed and the Trail of Bits submodule was empty, so the static-analysis step used the grep fallback. With semgrep installed, quick-scan and the audits also read its results.
 - **The bundled tools,** in the final Quick runs, as above.
 
-In short:
-
-- **Quick** costs about $2 to $8 and takes 4 to 23 minutes.
-  - diff-audit cost $8.10 on the final text, for a range that changes 7,830 lines of a program, its app and its tooling, and adds a 787-package npm lockfile. A narrow change, 1,248 lines of the 12K-line program with no lockfile, cost $3.99 in 9 minutes.
-  - quick-scan cost $6.98 on the final text, for a whole repository, and about $3 on a draft, for one program.
-- **Standard** costs about $13 to $19 and takes 36 to 56 minutes.
-- **Full** cost $19.52 and took an hour on the 3K-line program. It ran once, on that program only, without `--with-poc`.
-- **CI** reviews each pull request from your own branches, not a fork's or Dependabot's, at about what diff-audit costs on the final text: $3.99 for the narrow change and $8.10 for the large range above. The review job itself is not measured yet.
-  - The CI template caps each review at $15, a ceiling, not a charge.
-  - Give an unattended quick-scan or diff-audit the same room. Under a $5 cap, expect the early stop above.
-
-No run reached its cap: $3, $5, $10 and $15 for diff-audit, $5 and $10 for quick-scan, $5 for the CI review, $25 for Standard and $60 for Full.
+No run reached its cap: $3, $5, $8, $10 and $15 for diff-audit, $5 and $10 for quick-scan, $5 for the CI review, $25 for Standard and $60 for Full.
 
 ## The three repositories
 
