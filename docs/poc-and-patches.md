@@ -4,27 +4,27 @@ How auditor-skill turns a confirmed finding into an executable exploit and a ver
 
 Contents: [The one rule](#the-one-rule) · [Where it sits in the flow](#where-it-sits-in-the-flow) · [`--with-poc` vs on-demand](#--with-poc-vs-on-demand) · [Framework selection](#framework-selection) · [Toolchain requirements](#toolchain-requirements) · [Output layout](#output-layout) · [How `run.sh` builds and runs a PoC](#how-runsh-builds-and-runs-a-poc) · [When a PoC counts](#when-a-poc-counts) · [Evidence tiers](#evidence-tiers-poc) · [Fix tiers](#fix-tiers-patch)
 
-A finding is *asserted* by the Rule 5b gate (reachability + math/state-bounds, + attacker-model at ≥7). A **PoC** upgrades it to *demonstrated*; a **patch** proposes and proves the fix. Neither invents a finding — Rule 5b must have confirmed it first. Commands: [`/auditor:poc`](commands.md#auditorpoc), [`/auditor:patch`](commands.md#auditorpatch). Agents: [poc-engineer, patch-engineer](agents.md#poc-engineer). Reference: [`references/orchestration/poc-harness.md`](../references/orchestration/poc-harness.md).
+A finding is *asserted* by the Rule 5b gate (reachability + math/state-bounds, + attacker-model at ≥7). A PoC upgrades it to *demonstrated*; a patch proposes and proves the fix. Neither invents a finding — Rule 5b must have confirmed it first. Commands: [`/auditor:poc`](commands.md#auditorpoc), [`/auditor:patch`](commands.md#auditorpatch). Agents: [poc-engineer, patch-engineer](agents.md#poc-engineer). Reference: [`references/orchestration/poc-harness.md`](../references/orchestration/poc-harness.md).
 
 ## The one rule
 
-> **Executable evidence outranks prose, but prose is never removed.**
+> Executable evidence outranks prose, but prose is never removed.
 
-An unbuildable or un-forkable target still yields a complete finding — you downgrade the **evidence tier**, never the **severity**. A named blocker with the prose PoC intact is honest; a fabricated green test is not. This principle governs every tier below.
+An unbuildable or un-forkable target still yields a complete finding — you downgrade the evidence tier, never the severity. A named blocker with the prose PoC intact is a valid result; a fabricated green test never is.
 
 ## Where it sits in the flow
 
 1. Rule 5b confirms the finding ([output-and-rigor.md](output-and-rigor.md#the-rule-5b-validation-gate)).
 2. `/auditor:poc` → detect gates → pick framework → `poc-engineer` fills a copy of `<auditor-skill root>/templates/poc/` (`run.sh --init`) → `run.sh --crate` → award the highest tier reached.
 3. `/auditor:patch` → `patch-engineer` writes the `templates/patch/` diff → `target.sh build-sbf` builds the program as it is and patched, in a scratch clone → re-run the PoC → award a fix tier.
-4. `/auditor:audit-cycle` / `/auditor:re-audit` fold both tiers back into the finding block; the report's **Auditor Verification** line carries the fix verdict, and `RE-AUDIT.md` records each finding's step-4b PoC re-run (`<auditor-skill root>/templates/re-audit.md`).
+4. `/auditor:audit-cycle` / `/auditor:re-audit` fold both tiers back into the finding block; the report's Auditor Verification line carries the fix verdict, and `RE-AUDIT.md` records each finding's step-4b PoC re-run (`<auditor-skill root>/templates/re-audit.md`).
 
 ## `--with-poc` vs on-demand
 
-- **On demand:** run `/auditor:poc <finding-id>` then `/auditor:patch <finding-id>` for a specific finding. Default runs produce PoCs only this way, so baseline audit cost is unchanged.
-- **`/auditor:audit-cycle --with-poc`:** after reconciliation, the flow spawns `poc-engineer` on every confirmed **N≥7** finding → `audit_<n>/poc/F-xxx/`, then `patch-engineer` → `audit_<n>/patches/F-xxx.patch` + `VERIFICATION.md`, recording both tiers in the report's finding block.
+- **On demand:** run `/auditor:poc <finding-id>` then `/auditor:patch <finding-id>` for a specific finding. Default runs produce PoCs only this way, so a default run builds no PoC.
+- **`/auditor:audit-cycle --with-poc`:** after reconciliation, the flow spawns `poc-engineer` on every confirmed N≥7 finding → `audit_<n>/poc/F-xxx/`, then `patch-engineer` → `audit_<n>/patches/F-xxx.patch` + `VERIFICATION.md`, recording both tiers in the report's finding block.
 
-By default only **High/Critical (N≥7)** findings earn an executable PoC (a runnable exploit is the Rule 5b proof those severities want; spending the harness budget on low-severity items is waste). `--force` overrides the gate. A finding still at `[UNCONFIRMED]`/`[PARTIAL]` is **not** eligible — confirm it through Rule 5b first.
+By default only High/Critical (N≥7) findings earn an executable PoC (a runnable exploit is the Rule 5b proof those severities want; spending the harness budget on low-severity items is waste). `--force` overrides the gate. A finding still at `[UNCONFIRMED]`/`[PARTIAL]` is not eligible — confirm it through Rule 5b first.
 
 ## Framework selection
 
@@ -115,7 +115,7 @@ On prebuilt bytes (`--vulnerable-so`, plus `--fixed-so` for the fixed arm, each 
 
 ## Evidence tiers (PoC)
 
-Award the **highest tier the available tooling actually reached**, then stop. Each rung is a real, reportable finding; the ladder degrades gracefully to prose.
+Award the highest tier the available tooling actually reached, then stop. Each rung is a real, reportable finding; the ladder degrades gracefully to prose.
 
 | Tier | Meaning |
 |------|---------|
@@ -123,9 +123,9 @@ Award the **highest tier the available tooling actually reached**, then stop. Ea
 | `[PoC-SIM-REPRODUCED]` | Reproduced on a Surfpool mainnet-fork with a recorded net **P/L** (economic/oracle/MEV). |
 | `[PoC-FUZZ-REPRODUCED]` | A Trident/cargo-fuzz target produced the crashing/invariant-breaking input; the corpus/crash artifact is saved. |
 | `[PoC-ATTEMPTED]` | A required tool was absent, the execution mode in force couldn't run it, `run.sh` exited 3 (recorded with its blocker line and "PoC re-run needed"; a harness error after one repair pass), or the flaw couldn't be minimized into a standalone crate. Name the exact blocker, **keep the prose PoC**, record what a maintainer must install. Severity unchanged. |
-| `[PoC-PROSE]` | Structured attacker-narrative only (actor → capability → numbered steps → guard bypassed → quantified outcome). The accepted default for access-control/logic findings — a first-class Rule 5b proof form. |
+| `[PoC-PROSE]` | Structured attacker-narrative only (actor → capability → numbered steps → guard bypassed → quantified outcome). The accepted default for access-control/logic findings — a full Rule 5b proof form. |
 
-The exploit test must **assert** the vulnerability (`assert_exploit_effect!` on `vulnerable`: the concrete value the attack leaves in the account it targets; `assert_exploit_rejected_with!` on `fixed`: the guard's exact error, never a pattern; `assert_exploit_blocked!`, with its positive control, only to check a fix the team deployed) — a test that compiles and runs but doesn't assert the flaw is not a PoC. **Never fabricate a passing test to climb the ladder.**
+The exploit test must assert the vulnerability (`assert_exploit_effect!` on `vulnerable`: the concrete value the attack leaves in the account it targets; `assert_exploit_rejected_with!` on `fixed`: the guard's exact error, never a pattern; `assert_exploit_blocked!`, with its positive control, only to check a fix the team deployed) — a test that compiles and runs but doesn't assert the flaw is not a PoC. Never fabricate a passing test to climb the ladder.
 
 ## Fix tiers (patch)
 
@@ -133,8 +133,8 @@ After a PoC exists, `/auditor:patch` proposes a minimal idiomatic diff against t
 
 | Tier | Meaning |
 |------|---------|
-| `[FIX-VERIFIED]` | Diff applied to a scratch worktree, rebuilt, and the finding's PoC **re-ran and now reverts** — closure shown by execution. Optional `mewt` mutation / blast-radius clean. |
+| `[FIX-VERIFIED]` | Diff applied to a scratch clone, rebuilt, and the finding's PoC **re-ran and now reverts** — closure shown by execution. Optional `mewt` mutation / blast-radius clean. |
 | `[FIX-INSUFFICIENT]` | The diff doesn't fully close the bound: the PoC still exploits a residual path, a mutant survives on the patched line, or an adjacent path regressed. State exactly what remains open. |
 | `[FIX-PROPOSED]` | A minimal idiomatic diff re-derived from the code closes the cited bound, but **no executable PoC was available** to run the revert. Verified by reasoning, flagged not-yet-executed. |
 
-The patch is a **proposal, not an application** — the auditor stays read-only on the client's real tree and hands back the diff + `VERIFICATION.md`. **A cosmetic patch ≠ FIXED:** never claim `[FIX-VERIFIED]` without an *executed* revert of the finding's own exploit. `--verify-with-mutation` runs `mewt` mutation on the patched line (a surviving mutant means the guard is under-tested) plus a `differential-review` blast-radius check (a fix that breaks an adjacent instruction is `[FIX-INSUFFICIENT]`). Opt-in Trail of Bits `post-patch-validation` (`/auditor:patch --post-patch-validation`, isolated mode only, on a disposable clone) is optional evidence that can only lower a tier: a finding in its result turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`, with that check as the reason; a `[FIX-PROPOSED]` or `[FIX-INSUFFICIENT]` patch keeps its tier and records the finding under Residual, and nothing else in its result changes a tier. The fix tier feeds the report's **Auditor Verification** field.
+The patch is a proposal, not an application — the auditor stays read-only on the client's real tree and hands back the diff + `VERIFICATION.md`. A cosmetic patch ≠ FIXED: never claim `[FIX-VERIFIED]` without an *executed* revert of the finding's own exploit. `--verify-with-mutation` runs `mewt` mutation on the patched line (a surviving mutant means the guard is under-tested) plus a `differential-review` blast-radius check (a fix that breaks an adjacent instruction is `[FIX-INSUFFICIENT]`). Opt-in Trail of Bits `post-patch-validation` (`/auditor:patch --post-patch-validation`, isolated mode only, on a disposable clone) is optional evidence that can only lower a tier: a finding in its result turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`, with that check as the reason; a `[FIX-PROPOSED]` or `[FIX-INSUFFICIENT]` patch keeps its tier and records the finding under Residual, and nothing else in its result changes a tier. The fix tier feeds the report's Auditor Verification field.
