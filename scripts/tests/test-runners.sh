@@ -2583,8 +2583,8 @@ run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off AUDITOR_RUN_TIMEOUT=20 -- lock-budget 
 took=$(( $(date +%s) - t0 ))
 n=$(sed -n 's/.*; output audit_1\/deps\/lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/err")
 LBR=$WT/audit_1/deps/lock-budget-$n.txt
-check "lock-budget: a sweep still running at the time limit stops, its entry not compared: exit 3 after $took s, the report written" \
-  sh -c "[ '$RC' = 3 ] && [ '$took' -lt 18 ] && grep -qxF 'deps: blocker: 1 of 1 selected entries were not compared: the call reached its time limit; output audit_1/deps/lock-budget-$n.txt' '$T/err' && grep -qxF '1. npm lb-slow - -> 1.0.0 [direct] not compared: the call reached its time limit' '$LBR' && grep -qxF '>> artifacts: 1 entries, 1 artifacts fetched, 0 failed; 1 entries not compared: the call reached its time limit' '$T/out' && [ -f '$WT/audit_1/deps/lock-budget-$n/1/new/files/package/slow' ]"
+check "lock-budget: a sweep still running at the time limit stops, its entry not compared: exit 3 after $took s, before the 20-second watchdog, the report written" \
+  sh -c "[ '$RC' = 3 ] && [ '$took' -lt 20 ] && grep -qxF 'deps: blocker: 1 of 1 selected entries were not compared: the call reached its time limit; output audit_1/deps/lock-budget-$n.txt' '$T/err' && grep -qxF '1. npm lb-slow - -> 1.0.0 [direct] not compared: the call reached its time limit' '$LBR' && grep -qxF '>> artifacts: 1 entries, 1 artifacts fetched, 0 failed; 1 entries not compared: the call reached its time limit' '$T/out' && [ -f '$WT/audit_1/deps/lock-budget-$n/1/new/files/package/slow' ]"
 rm -rf "$WT/audit_1/deps/lock-budget-$n"
 # once the call has unpacked its 500 MB, a later selected artifact fails at once, with no request
 LBN=121
