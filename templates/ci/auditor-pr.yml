@@ -1,15 +1,18 @@
-# auditor-skill on every pull request. Copy this file to .github/workflows/auditor-pr.yml and set it up as
-# docs/ci.md (Setup) says: AUDITOR_SKILL_COMMIT below, and an ANTHROPIC_API_KEY repository secret.
+# auditor-skill on pull requests: the analyzers on every one, forks included, and a review on those from this
+# repository's own branches. Copy this file to .github/workflows/auditor-pr.yml and set it up as docs/ci.md
+# (Setup) says: AUDITOR_SKILL_COMMIT below, and an ANTHROPIC_API_KEY repository secret.
 #
 # Two jobs:
 #   tools   every pull request, forks included. It holds no secret: the bundled scripts run semgrep and the
 #           dependency audits, without Claude.
-#   review  pull requests from branches of this repository only, the ones this trigger gives secrets to.
+#   review  pull requests from branches of this repository only, the ones this trigger gives secrets to,
+#           other than Dependabot's. On the others its check shows Success with no review.
 #           Claude Code runs /auditor:diff-audit --ci on the pull request's changes, in strict mode, and
 #           builds and runs nothing from them.
 #
-# The job logs and summaries show pass or fail only (OUTPUT-RULES.md Rule 11d): no finding, count or path. To
-# read the details, run the same check in your own clone; each job's summary says how. What the analyzers and
+# The job logs and summaries show pass or fail only (OUTPUT-RULES.md Rule 11d): no finding and no count. Notes
+# about the tools can name repository paths: a .semgrepignore, a package.json with no lockfile, the path preflight
+# stopped at. To read the details, run the same check in your own clone; each job's summary says how. What the analyzers and
 # the review wrote stays on the runner, which GitHub discards after the job.
 #
 # Keep the trigger as it is. Its privileged variants (the target form of pull_request, and the run-completion
@@ -34,7 +37,8 @@ env:
   AUDITOR_SKILL_COMMIT: "0000000000000000000000000000000000000000"
   # The review fails on a finding of this severity or more, 1 to 10.
   AUDITOR_FAIL_ON: "7"
-  # The most one review may spend, in US dollars: a ceiling, not a charge. A review that reaches it fails.
+  # The spending cap on one review, in US dollars: a ceiling, not a charge. The review stops after the response
+  # that crosses it, so it can end a little over; a review that reaches it fails.
   AUDITOR_MAX_BUDGET_USD: "15"
   # A change over 5,000 changed lines (references/depth-scope.md §6): "count" reviews the riskiest 5,000 and
   # counts the rest in PR-REPORT.md; "fail" fails the review instead.

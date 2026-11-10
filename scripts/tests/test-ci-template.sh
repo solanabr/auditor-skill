@@ -426,7 +426,7 @@ same "fail: a result that stops at corpus-pass while its findings file stopped n
   "$(verdict "$T/v.json" "$T/pass-findings.json")"
 jq '.stopped = "line-budget" | .verdict = "fail"' "$T/pass-findings.json" > "$T/f.json"
 jq '.structured_output.stopped = "line-budget" | .structured_output.verdict = "fail"' "$T/pass-result.json" > "$T/v.json"
-same "fail: a change over the line budget, with the owner switch set to fail" \
+same "fail: a change over the line budget, with AUDITOR_OVER_BUDGET set to fail" \
   "auditor: verdict: fail (threshold 7, $RAN; stopped: line-budget)" "$(verdict "$T/v.json" "$T/f.json")"
 jq '.threshold = 9 | .verdict = "pass"' "$T/fail-findings.json" > "$T/f.json"
 jq '.structured_output.threshold = 9 | .structured_output.verdict = "pass"' "$T/fail-result.json" > "$T/v.json"

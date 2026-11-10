@@ -1320,7 +1320,12 @@ commands/quick-scan.md	Skip nothing scope.md lists and cut nothing short by choi
 commands/diff-audit.md	Skip nothing scope.md lists and cut nothing short by choice, not even to save cost or time; name there only one the Read tool could not open.
 commands/quick-scan.md	Measured scans cost USD 2.84 to 7.14 in all; this selection cost USD 6.98 on a whole repository, reading 38 vector files and 49 sections.
 commands/diff-audit.md	Measured reviews cost USD 1.68 to 8.10 in all; this selection cost USD 8.10 on a range of 7,830 changed lines that adds a 787-package lockfile.
-docs/ci.md	The top figure is the selection of `references/depth-scope.md` on a range of 7,830 changed lines that adds a 787-package lockfile, under a $15 cap: it read every file its selection lists and named no budget.
+docs/ci.md	The top figure is the shipped text, measured on the 3K-line repository only: the selection of `references/depth-scope.md` on a range of 7,830 changed lines that adds a 787-package lockfile, under a $15 cap.
+docs/ci.md	It read every file its selection lists and named no spending cap. The lower figures are earlier drafts, and the review job on the shipped text is not measured yet.
+docs/ci.md	On a fork's or Dependabot's pull request the review check shows Success with no review
+docs/ci.md	a cargo audit or npm audit advisory has no exception here, so fix or replace that dependency before you require the tools job
+docs/ci.md	Delete every `.claude/`, `.mcp.json`, `.claude.json`, `CLAUDE.md` and `CLAUDE.local.md` from that checkout, as the review job does
+docs/ci.md	the review stops at it, after the response that crosses it, so its last response can take it a little over
 docs/ci.md	Under a $10 cap, the depth-scope selection read 38 vector files and 49 checklist sections in that repository, for $6.98.
 commands/quick-scan.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
 commands/diff-audit.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
@@ -1465,6 +1470,11 @@ commands/diff-audit.md	no longer matches the write rule for `audit_*/`
 commands/deep-review.md	no longer matches the write rule for `audit_*/`
 AGENTS.md	`Edit(audit_*/**)` or `Edit(incident_*/**)` grant
 OUTPUT-RULES.md	the report lists each tool, the service it contacted, and what it sent.
+docs/ci.md	front A
+docs/ci.md	Front A
+docs/ci.md	owner switch
+docs/ci.md	named no budget
+templates/ci/auditor-pr.yml	no finding, count or path
 GONE
 
 # respond's step 5 and hunt's step 6 settle the mode as poc's step 5 does, each step read as one line so wording
