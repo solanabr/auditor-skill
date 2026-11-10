@@ -2,7 +2,7 @@
 ================================================================================
 CLIENT-FACING AUDIT REPORT TEMPLATE
 ================================================================================
-This is the PROFESSIONAL, findings-focused deliverable handed to the client —
+This is the client-facing, findings-focused deliverable handed to the client —
 structured the way public Solana security reports are (Trail of Bits, OtterSec,
 Neodyme, Zellic, Zenith, Halborn, Certora). It is DISTINCT from
 templates/report-template.md, which is the INTERNAL item-by-item verdict report
@@ -24,9 +24,6 @@ CONVENTION — NO "SAFE TO DEPLOY" STAMP:
   code-maturity narrative, (b) finding resolution status, and (c) explicit
   trust-model caveats. An audit is a point-in-time, scoped, non-exhaustive review
   — never a guarantee. This framing is enforced in the Disclaimer appendix.
-
-IP BOUNDARY: use only public-derivable firm conventions. Never reference or quote
-the proprietary knowledge base, and re-author all conventions in original wording.
 ================================================================================
 -->
 
@@ -102,7 +99,7 @@ delete.
 6. [Findings](#6-findings)
    - [6.1 Findings Summary Table](#61-findings-summary-table)
    - [6.2 Detailed Findings](#62-detailed-findings)
-7. [Findings Summary Table](#7-findings-summary-table)
+7. [Findings Grid](#7-findings-grid)
 8. [Code Maturity Assessment](#8-code-maturity-assessment)
 9. [Appendices](#9-appendices)
    - [9.1 Severity Rating Definitions](#91-severity-rating-definitions)
@@ -185,7 +182,7 @@ caveats, never through a blessing. Example framing:
    gaps at ...}; account validation is {rigorous / has the gaps noted in AUD-xx}.
    As of this revision, {all Critical and High findings are resolved / N High
    findings remain open}. The security of the deployed system depends on the
-   trust assumptions in §4.6 holding: {list the load-bearing ones}. Should any of
+   trust assumptions in §4.6 holding: {list the ones it rests on}. Should any of
    these assumptions change (upgrade authority handoff, oracle swap, parameter
    change), a re-review of the affected surface is recommended."
 -->
@@ -209,9 +206,9 @@ caveats, never through a blessing. Example framing:
 
 <!--
 The engagement-envelope block: the who/what/how-much of the review at a glance.
-Records the audited commit, remediation commit(s), effort, and an HONEST note when
+Records the audited commit, remediation commit(s), effort, and a note when
 the review met resistance (e.g. scope exceeded the LOC budget, code arrived late,
-part of the tree was closed-source). Do not soften a real constraint — a candid
+part of the tree was closed-source). Do not soften a real constraint: a plain
 note here is more credible than silence and protects both parties.
 -->
 
@@ -222,7 +219,7 @@ note here is more credible than silence and protects both parties.
 | **Scope Size**             | {LoC in scope} <!-- how it maps to the effort/budget --> |
 | **Effort**                 | {e.g. ~X person-days / N agents / team of M}      |
 | **Team / Agents**          | {e.g. auditor-skill agent fleet: <roles> / named reviewers} |
-| **Scope vs. Budget Note**  | {Honest note. E.g. "Scope came in at {LoC}, above the {budget} LoC envelope for this tier; {which surfaces got full depth vs. lighter passes}." or "Code was within budget; full depth across all in-scope files." or "Program X was delivered as a compiled artifact only — see §2.4."} |
+| **Scope vs. Budget Note**  | {Note. E.g. "Scope came in at {LoC}, above the {budget} LoC envelope for this tier; {which surfaces got full depth vs. lighter passes}." or "Code was within budget; full depth across all in-scope files." or "Program X was delivered as a compiled artifact only — see §2.4."} |
 
 ### 2.2 Repository & Commits
 
@@ -367,9 +364,8 @@ line's statement says.}
 ### 3.5 Coverage & Limitations
 
 <!--
-Be candid about what was and was not exercised. This is not an admission of
-weakness — it is what distinguishes a credible report from an overclaim, and it
-scopes the assurance the client should take away. Cover:
+State what was and was not exercised: it scopes the assurance the client should
+take away. Cover:
   - What received full depth vs. a lighter pass.
   - What was executed dynamically (tests/fuzzing/simulation) vs. reviewed statically.
   - The inherent limits of the tools used (static analysis has false negatives;
@@ -486,11 +482,11 @@ engagement:
 
 <!--
 State the trust assumptions and model simplifications the review operated under.
-This is load-bearing: the conclusion that the remaining (unfixed) findings are
-acceptable is CONDITIONED on these holding. Make explicit which admin, oracle,
-upgrade authority, or external program is trusted, and any place where the review
-simplified a complex real-world behavior to reason about it. If an assumption
-fails, the corresponding conclusions do not hold and a re-review is warranted.
+The conclusion that the remaining (unfixed) findings are acceptable is CONDITIONED
+on these holding. Make explicit which admin, oracle, upgrade authority, or
+external program is trusted, and any place where the review simplified a complex
+real-world behavior to reason about it. If an assumption fails, the corresponding
+conclusions do not hold and a re-review is warranted.
 -->
 
 The findings, severities, and residual-risk conclusions in this report are
@@ -828,9 +824,9 @@ For Open findings, leave Fix Commit as "—" and note "pending client triage".
 
 ---
 
-## 7. Findings Summary Table
+## 7. Findings Grid
 
-<!-- Full grid of every finding for at-a-glance scanning. Mirrors §6.1; keep both. -->
+<!-- Every finding, with its impact, likelihood and location; §6.1 is the short list. Keep both. -->
 
 | ID     | Title | Severity | Impact | Likelihood | Status | Location |
 | ------ | ----- | -------- | ------ | ---------- | ------ | -------- |

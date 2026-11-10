@@ -136,7 +136,7 @@ The placeholders here are this section's own. `{R}` is the run directory, `audit
 relative to the working directory; `{MODE}` is the word `{R}/exec-mode` holds or, when there is no such file,
 the mode `{R}/intake.md` §8 records (for an incident, the mode in its ledger header); `{FINDING_ID}` is the
 finding or incident id; `{COMMIT}` is the commit the patch targets; `{LEVEL}` is the highest evidence level the
-checks will honestly reach (`source`, `build` or `runtime`, as the skill defines them). Before the first block,
+checks will reach (`source`, `build` or `runtime`, as the skill defines them). Before the first block,
 write the finding's root cause and impact, in one sentence, to `{R}/patches/{FINDING_ID}.summary` with the Write
 tool: the block hands that file's text to the runner as one argument, so the shell never reads it as code,
 whatever quotes or `$` it holds.

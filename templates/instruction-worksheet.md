@@ -11,7 +11,7 @@
 |---|---|
 | **File** | `programs/<program>/src/instructions/<!-- name -->.rs` |
 | **Handler** | `pub fn <!-- name -->(ctx: Context<<!-- AccountsStruct -->>) -> Result<()>` |
-| **Invoked by** | <!-- manager / investor / anyone / admin --> |
+| **Invoked by** | <!-- anyone / admin / another named role --> |
 | **Risk tier** | <!-- HIGH (moves funds) / MEDIUM (changes state) / LOW (read-only / view) --> |
 
 ---
