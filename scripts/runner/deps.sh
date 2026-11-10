@@ -64,7 +64,9 @@
 #                   kept, with one retry, at most 50 MB a download and 500 MB unpacked in the whole call (one
 #                   past either counts as failed), into <R>/deps/lock-budget-<n>/<k>/new and old, and compared: the files added, changed and
 #                   removed, the added lines matched against SC-059's and SC-060's patterns, binary files and
-#                   entries left out of the unpacked files, counts first. A row from a source that is not
+#                   entries left out of the unpacked files, counts first. The sweep reads a line at a time and
+#                   keeps an old file's lines as hashes when it is at most 2 MB; in a newer copy of a larger
+#                   one every line counts as added. A row from a source that is not
 #                   public is never sent or fetched, and a scoped npm package the public registry does not
 #                   list (a 404) is taken as private: never fetched, reported, and no failure; a registry set
 #                   outside the repository is not seen, as the output says. The report goes to
@@ -1526,15 +1528,47 @@ SC059_LINE = re.compile(r"\x22(preinstall|install|postinstall|prepare)\x22\s*:|p
 SC060_LINE = re.compile(r"(child_process|execSync|spawn\(|Command::new|std::process|os\.system|subprocess|eval\(|new Function|vm\.run|fetch\(|https?://|TcpStream|reqwest|env::var|process\.env|\.config/solana|id\.json|[A-Za-z0-9+/=]{120,})")
 
 
-def read_text(path):
+# The sweep reads a file a line at a time, at most LINE_PIECE bytes at once, so what it holds is bounded whatever
+# an archive unpacks to. It remembers the lines of an old file of at most OLD_LINES bytes, as a count of each
+# hash of the line; in a newer copy of a larger one, every line counts as added. It keeps at most HITS_FILE hit lines
+# a file and HITS_ENTRY an entry, and counts them all.
+LINE_PIECE, OLD_LINES, HITS_FILE, HITS_ENTRY = 1 << 20, 2 * 1000 * 1000, 30, 300
+
+
+def is_binary(path):
     with open(path, "rb") as f:
-        data = f.read()
-    if b"\0" in data[:8192]:
+        return b"\0" in f.read(8192)
+
+
+def file_digest(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.digest()
+
+
+def pieces(path):
+    # each line of <path> with its number, a line longer than LINE_PIECE bytes in pieces of that size, each
+    # with the number of the line
+    with open(path, "rb") as f:
+        n, whole = 0, True
+        for raw in iter(lambda: f.readline(LINE_PIECE), b""):
+            if whole:
+                n += 1
+            whole = raw.endswith(b"\n")
+            yield n, raw.rstrip(b"\r\n")
+
+
+def line_counts(path):
+    # how many times each line of <path> occurs, by its hash; None when the file is larger than OLD_LINES
+    import collections
+    if os.path.getsize(path) > OLD_LINES or is_binary(path):
         return None
-    try:
-        return data.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
+    counts = collections.Counter()
+    for n, line in pieces(path):
+        counts[hashlib.blake2b(line, digest_size=8).digest()] += 1
+    return counts
 
 
 def sweep(old_top, new_top, left_out, first):
@@ -1542,51 +1576,58 @@ def sweep(old_top, new_top, left_out, first):
     # gives each, and the added lines that match SC-059 or SC-060. <first> is the folder the registry puts
     # every entry under: an entry elsewhere, or two entries on one path, is an SC-060 hit, and every copy on a
     # shared path is read whole.
-    import collections
     old, new = {}, {}
     for p, rel, full in tree_files(old_top) if old_top else []:
         old.setdefault(p, []).append(full)
     for p, rel, full in tree_files(new_top):
         new.setdefault(p, []).append((rel, full))
-    hits, binary, added, changed = [], [], 0, 0
+    hits, count, binary, added, changed = [], {"SC-059": 0, "SC-060": 0}, [], 0, 0
+    kept = {}
+
+    def hit(kind, where, n, text):
+        count[kind] += 1
+        if kept.get(where, 0) < HITS_FILE and len(hits) < HITS_ENTRY:
+            kept[where] = kept.get(where, 0) + 1
+            hits.append((kind, where, n, text[:300]))
     for p in sorted(new):
         copies = new[p]
         if len(copies) > 1:
-            hits.append(("SC-060", p, 0, "%d entries of the artifact unpack to this path, and the package manager keeps one: %s"
-                         % (len(copies), ", ".join(rel for rel, _ in copies[:5]))))
+            hit("SC-060", p, 0, "%d entries of the artifact unpack to this path, and the package manager keeps one: %s"
+                % (len(copies), ", ".join(rel for rel, _ in copies[:5])))
         for rel, full in copies:
             if rel.split("/")[0] != first:
-                hits.append(("SC-060", rel, 0, "an entry outside the %s/ folder the registry puts every entry under" % first))
+                hit("SC-060", rel, 0, "an entry outside the %s/ folder the registry puts every entry under" % first)
             before = old.get(p, [])
+            counts = None
             if len(copies) == 1 and len(before) == 1:
-                with open(before[0], "rb") as a, open(full, "rb") as b:
-                    if a.read() == b.read():
-                        continue
+                if os.path.getsize(before[0]) == os.path.getsize(full) and file_digest(before[0]) == file_digest(full):
+                    continue
                 changed += 1
                 was = "changed"
-                prior = read_text(before[0])
-                counts = collections.Counter(prior.splitlines() if prior is not None else [])
+                counts = line_counts(before[0])
             else:
                 added += 1
                 was = "added"
-                counts = collections.Counter()
             if SC059_PATH.search(p):
-                hits.append(("SC-059", rel, 0, "a %s file %s" % (p.rsplit("/", 1)[-1], was)))
-            text = read_text(full)
-            if text is None:
+                hit("SC-059", rel, 0, "a %s file %s" % (p.rsplit("/", 1)[-1], was))
+            if is_binary(full):
                 binary.append(rel)
                 continue
-            for n, line in enumerate(text.splitlines(), 1):
-                if counts[line] > 0:
-                    counts[line] -= 1
-                    continue
+            for n, raw in pieces(full):
+                if counts:
+                    key = hashlib.blake2b(raw, digest_size=8).digest()
+                    if counts[key] > 0:
+                        counts[key] -= 1
+                        continue
+                line = raw.decode("utf-8", "replace")
                 if SC059_LINE.search(line):
-                    hits.append(("SC-059", rel, n, line))
+                    hit("SC-059", rel, n, line)
                 if SC060_LINE.search(line):
-                    hits.append(("SC-060", rel, n, line))
+                    hit("SC-060", rel, n, line)
     for entry in left_out:
-        hits.append(("SC-060", entry, 0, "an entry left out of the unpacked files: a link, a special file or an unsafe name"))
-    return {"added": added, "changed": changed, "removed": sum(1 for p in old if p not in new), "hits": hits, "binary": binary}
+        hit("SC-060", entry, 0, "an entry left out of the unpacked files: a link, a special file or an unsafe name")
+    return {"added": added, "changed": changed, "removed": sum(1 for p in old if p not in new), "hits": hits, "count": count,
+            "binary": binary}
 
 
 def fetch_one(fetcher, eco, name, version, records, dest):
@@ -1775,12 +1816,12 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
         out.append("  not fetched: %s" % f)
     for r in privates:
         out.append("  not fetched: %s %s %s: %s" % (r["eco"], r["name"], r["new"], PRIVATE))
-    tot59 = sum(1 for _, _, s in results if s for h in s["hits"] if h[0] == "SC-059")
-    tot60 = sum(1 for _, _, s in results if s for h in s["hits"] if h[0] == "SC-060")
+    tot59 = sum(s["count"]["SC-059"] for _, _, s in results if s)
+    tot60 = sum(s["count"]["SC-060"] for _, _, s in results if s)
     totbin = sum(len(s["binary"]) for _, _, s in results if s)
     line = ("sweep: SC-059 %d hits in %d entries, SC-060 %d hits in %d entries, binary files added or changed %d in %d entries; the hits are in the report"
-            % (tot59, sum(1 for _, _, s in results if s and any(h[0] == "SC-059" for h in s["hits"])),
-               tot60, sum(1 for _, _, s in results if s and any(h[0] == "SC-060" for h in s["hits"])),
+            % (tot59, sum(1 for _, _, s in results if s and s["count"]["SC-059"]),
+               tot60, sum(1 for _, _, s in results if s and s["count"]["SC-060"]),
                totbin, sum(1 for _, _, s in results if s and s["binary"])))
     out.append(line)
     summary.append(line)
@@ -1792,8 +1833,8 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
             out.append("%d. %s %s %s -> %s [%s] not compared: an artifact was not fetched" % (k, r["eco"], r["name"], r["old"], r["new"], cats))
             continue
         out.append("%d. %s %s %s -> %s [%s] SC-059 %d, SC-060 %d, binary %d; files +%d ~%d -%d%s"
-                   % (k, r["eco"], r["name"], r["old"], r["new"], cats, sum(1 for h in s["hits"] if h[0] == "SC-059"),
-                      sum(1 for h in s["hits"] if h[0] == "SC-060"), len(s["binary"]), s["added"], s["changed"], s["removed"],
+                   % (k, r["eco"], r["name"], r["old"], r["new"], cats, s["count"]["SC-059"],
+                      s["count"]["SC-060"], len(s["binary"]), s["added"], s["changed"], s["removed"],
                       "" if r["old"] != "-" and r["oldsource"] == "public" else "; no earlier public version: every file is new"))
     if over:
         out.append("")
@@ -1808,16 +1849,11 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
         if not s or not (s["hits"] or s["binary"]):
             continue
         out.append("-- %d. %s %s %s -> %s" % (k, r["eco"], r["name"], r["old"], r["new"]))
-        per, total = {}, 0
         for kind, p, n, text in s["hits"]:
-            per[p] = per.get(p, 0) + 1
-            if per[p] > 30 or total >= 300:
-                continue
-            total += 1
             out.append("%s %s:%d: %s" % (kind, shown(p), n, shown(text.strip())[:240]))
         for p in s["binary"][:30]:
             out.append("binary %s" % shown(p))
-        extra = len(s["hits"]) - total
+        extra = s["count"]["SC-059"] + s["count"]["SC-060"] - len(s["hits"])
         if extra > 0:
             out.append("  ... %d more hits in this entry" % extra)
     log.close()

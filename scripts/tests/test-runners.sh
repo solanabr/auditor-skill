@@ -2409,6 +2409,22 @@ with tarfile.open(fileobj=buf, mode="w:gz") as t:
             ti.type, ti.linkname = tarfile.SYMTYPE, "/etc/passwd"
             t.addfile(ti)
 record("lb-unsafe", buf.getvalue())
+# a line longer than the 1 MiB the sweep reads at once, then a hit on line 2
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w:gz") as t:
+    data = b"-" * (1024 * 1024 + 100) + b"\n" + b"fetch(\"https://collector.invalid/k\");\n"
+    ti = tarfile.TarInfo("package/long.js")
+    ti.size = len(data)
+    t.addfile(ti, io.BytesIO(data))
+record("lb-long", buf.getvalue())
+# 120 MB of short lines, a 117 KB tarball: what the sweep holds must not grow with it
+big = b"ab\n" * 40000000
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w:gz") as t:
+    ti = tarfile.TarInfo("package/big.txt")
+    ti.size = len(big)
+    t.addfile(ti, io.BytesIO(big))
+record("lb-mem", buf.getvalue())
 PY
 LBN=106
 lb_set "$LBN" 'npm	package-lock.json	lb-twotop	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-gone	-	3.0.0	-	public	-'
@@ -2442,6 +2458,12 @@ LBR=$WT/audit_1/deps/lock-budget-$n.txt
 check "lock-budget: entries that climb out, sit at an absolute path or are links are left out and listed, each an SC-060 hit" \
   sh -c "[ '$RC' = 1 ] && grep -q '^SC-060 package/../escape.txt:0: an entry left out of the unpacked files' '$LBR' && grep -q '^SC-060 /abs.txt:0: an entry left out' '$LBR' && grep -q '^SC-060 package/link:0: an entry left out' '$LBR' && [ -f '$WT/audit_1/deps/lock-budget-$n/1/new/files/package/index.js' ] && [ ! -e '$WT/audit_1/deps/lock-budget-$n/1/new/escape.txt' ] && [ -z \"\$(find '$WT/audit_1/deps/lock-budget-$n' ! -type f ! -type d -print)\" ]"
 check "... and the run directory still passes its check" sh -c "(cd '$WT' && '$ROOT/scripts/rundir.sh' check audit_1) >/dev/null"
+LBN=124
+lb_set "$LBN" 'npm	package-lock.json	lb-long	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "lock-budget: a line longer than the 1 MiB the sweep reads at once keeps one number, and the hit after it is on line 2" \
+  sh -c "[ '$RC' = 1 ] && grep -q '^SC-060 package/long.js:2: fetch(' '$WT/audit_1/deps/lock-budget-$n.txt' && grep -q '^1. npm lb-long - -> 1.0.0 \[direct\] SC-059 0, SC-060 1, binary 0;' '$WT/audit_1/deps/lock-budget-$n.txt'"
 # lock-budget writes under <R>/deps/ only, and its one row to disclosures.tsv; a set that is a link, or larger
 # than 64 MiB, is refused before anything is sent
 LBN=113
@@ -2461,6 +2483,16 @@ run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-115.tsv
 check "lock-budget: a set larger than 64 MiB is refused before any request" \
   sh -c "[ '$RC' = 64 ] && grep -qxF 'deps: refused: the set is larger than 64 MiB: audit_1/deps/lock-set-115.tsv' '$T/err' && [ ! -s '$T/calls' ]"
 rm -f "$WT/audit_1/deps/lock-set-115.tsv"
+LBN=119
+lb_set "$LBN" 'npm	package-lock.json	lb-mem	-	1.0.0	-	public	direct'
+rm -rf "$NT" && mkdir -p "$NT"
+peak=$(cd "$WT" && python3 -I -c 'import resource, subprocess, sys
+subprocess.run(sys.argv[1:], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+r = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+print(int(r / (1 << 20) if sys.platform == "darwin" else r / 1024))' env -i HOME="$CLEANHOME" PATH="$FPATH" TMPDIR="$NT" AUDITOR_PUBLISH_AGE=off \
+  "${SHELLS[0]}" "$DEPS" lock-budget --run audit_1 "audit_1/deps/lock-set-$LBN.tsv")
+check "lock-budget: the sweep of 120 MB of short lines peaks at ${peak:-?} MB, under half what it unpacks" \
+  sh -c "[ '${peak:-999}' -lt 60 ] && grep -qx '1. npm lb-mem - -> 1.0.0 \[direct\] SC-059 0, SC-060 0, binary 0; files +1 ~0 -0; no earlier public version: every file is new' \"\$(ls -t '$WT'/audit_1/deps/lock-budget-*.txt | sed -n 1p)\""
 LBN=107
 lb_set "$LBN" 'npm	package-lock.json	lb-young	-	0.1.0	-	public	direct'
 run "$DEPS" "$WT" AUDITOR_RUN_TIMEOUT=3 -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
