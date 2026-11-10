@@ -27,7 +27,8 @@
 #          registry.yarnpkg.com, crates.io, pypi.org), git, url, file, registry:<host>, unnamed (an npm or yarn
 #          entry with no resolved URL, whose registry npm takes from config outside the lockfile) or bundled
 #          (inside another package's tarball). A bun.lock entry that names no registry takes the one the
-#          bunfig.toml or .npmrc beside it names at that commit (its scope's first), else registry.npmjs.org; a
+#          bunfig.toml or .npmrc beside it names at that commit (its scope's first), else registry.npmjs.org,
+#          and none, so unnamed, when that bunfig.toml cannot be read (a host is read past any user info); a
 #          bun.lock whose bunfig.toml or .npmrc changed is compared too, though it did not change. A registry
 #          set outside the repository (the environment, user or global config) is not seen. The marks: direct (a
 #          dependency the lockfile's root or workspace entries, or the manifest beside it, name), pin (an
@@ -375,8 +376,9 @@ def spec_source(v):
 
 
 def registry_kind(url):
-    # public for the npm registry and its yarn mirror, registry:<host> for any other
-    m = re.match(r"^https?://([^/:@]+)", url or "")
+    # public for the npm registry and its yarn mirror, registry:<host> for any other; the host is read past any
+    # user info, so https://registry.npmjs.org@host/ is that host
+    m = re.match(r"^https?://(?:[^/@]*@)?([^/:@]+)(?::[0-9]+)?(?:/|$)", url or "")
     if not m:
         return "url"
     host = m.group(1).lower()
@@ -712,7 +714,8 @@ def bun_registries(conf):
     try:
         doc = toml((conf or {}).get("bunfig", ""))
     except Unread:
-        doc = {}
+        # a bunfig.toml this reader cannot read may name any registry: (None, None), so no entry is public
+        return None, None
     install = doc.get("install") if isinstance(doc.get("install"), dict) else {}
 
     def url_of(v):
@@ -762,10 +765,13 @@ def read_bun(text, man, conf=None):
         source = spec_source(version)
         if not source:
             # the registry the entry names, or "" for the default: that of its scope, else the default the committed
-            # config gives, else registry.npmjs.org, as bun has it
+            # config gives, else registry.npmjs.org, as bun has it; none known when the bunfig.toml cannot be read
             named = arr[1] if len(arr) > 1 and isinstance(arr[1], str) else ""
             scope = name.split("/")[0] if name.startswith("@") else ""
-            source = registry_kind(named or scopes.get(scope) or default or "https://registry.npmjs.org/")
+            if named or default is not None:
+                source = registry_kind(named or scopes.get(scope) or default or "https://registry.npmjs.org/")
+            else:
+                source = "unnamed"
         meta = arr[2] if len(arr) > 2 and isinstance(arr[2], dict) else {}
         integ = arr[-1] if isinstance(arr[-1], str) and arr[-1].startswith("sha") else ""
         add(out, Entry(name, version, source, integ, dep_names(meta)))
