@@ -277,15 +277,16 @@ that no row of that table lists or excludes (FULL-AUDIT 0.2), as not reviewed.
 ## 3. Methodology
 
 <!--
-Describe HOW the review was conducted. Real reports state the mix of manual and
-automated work, the tools, the concrete questions asked, and the phases.
-auditor-skill runs a chunked, file-by-file manual review (never one-shot)
-augmented by tooling.
+Describe HOW the review was conducted: the tools, the concrete questions asked, and
+the phases. auditor-skill's AI agents review the code file by file, in chunks (never
+one-shot), with automated tooling beside them. Say what a person did, if anything, as
+the Generated line's statement says it, and never claim more.
 -->
 
-The assessment combined **manual, line-by-line human-in-the-loop review** with
-**automated tooling**. Manual review is the primary method; tooling is used to
-widen coverage and catch mechanical issues.
+AI agents ran the review, file by file, with **automated tooling**, and each finding
+passed the reachability and impact gate of `OUTPUT-RULES.md` Rule 5b before it was
+included. {What review a person did, if any, as the Generated line's statement
+states it: "No person reviewed this report before it was written." claims none.}
 
 ### 3.1 Assessment Goals
 
@@ -323,7 +324,7 @@ code:
 
 ### 3.2 Approach
 
-- **Manual review** — every in-scope instruction/handler read in full, with
+- **Agent review** — every in-scope instruction/handler read in full, with
   context reconstruction before any verdict (purpose, invariants, assumptions,
   external-interaction risks per function). Findings are gated for reachability
   and impact before being reported (over-reporting is actively suppressed).
@@ -351,15 +352,17 @@ code:
 ### 3.4 Human-in-the-Loop vs. Automated
 
 <!--
-One short paragraph. State clearly that a human/agent reasoned about each finding
-(automated tools alone do not close a finding). Reachability and exploitability
-claims are human-verified against the source.
+One short paragraph. State that the reviewing agents reasoned about each finding
+against the source (tool output alone closes no finding), then what a person
+verified, if anything, as the Generated line's statement says; claim no human
+verification it does not state.
 -->
 
-{All reported findings were manually verified against the source; automated tool
-output was triaged and confirmed by review before inclusion. Findings that could
-not be shown reachable and impactful were downgraded or excluded rather than
-reported speculatively.}
+{Each reported finding was checked against the source by the reviewing agents:
+automated tool output was triaged and confirmed before inclusion, and findings that
+could not be shown reachable and impactful were downgraded or excluded rather than
+reported speculatively. Then what a person verified, if anything, as the Generated
+line's statement says.}
 
 ### 3.5 Coverage & Limitations
 
@@ -367,7 +370,7 @@ reported speculatively.}
 Be candid about what was and was not exercised. This is not an admission of
 weakness — it is what distinguishes a credible report from an overclaim, and it
 scopes the assurance the client should take away. Cover:
-  - What received full manual depth vs. a lighter pass.
+  - What received full depth vs. a lighter pass.
   - What was executed dynamically (tests/fuzzing/simulation) vs. reviewed statically.
   - The inherent limits of the tools used (static analysis has false negatives;
     fuzzing explores a bounded input space; a passing test suite proves presence of
@@ -375,8 +378,8 @@ scopes the assurance the client should take away. Cover:
   - Anything that blocked coverage (missing source, unbuildable code, time box).
 -->
 
-- **Depth** — {Which components got full line-by-line review vs. which got a
-  lighter/targeted pass, and why.}
+- **Depth** — {Which components the review read in full, line by line, vs. which
+  got a lighter/targeted pass, and why.}
 - **Dynamic vs. static** — {What was exercised at runtime (existing tests,
   new PoCs, fuzzing, mainnet-fork simulation) vs. reasoned about statically.}
 - **Tool limitations** — Automated tooling is a supplement, not a guarantee.
@@ -944,7 +947,7 @@ best-effort activity; **no audit can guarantee** that a codebase is free of
 vulnerabilities, and this report does not constitute such a guarantee, nor any
 warranty, nor financial, investment, or legal advice.
 
-**Limits of testing and tooling.** The review combined manual analysis with
+**Limits of testing and tooling.** The review combined agent analysis with
 automated tools, each of which has inherent limits: static analysis produces false
 negatives and cannot reason about all cross-instruction or economic properties;
 fuzzing and property testing explore only a bounded input space; and a passing test

@@ -1353,6 +1353,9 @@ templates/incident-report.md	the line `"<auditor-skill root>/scripts/rundir.sh" 
 templates/audit-report.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
 templates/re-audit.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
 templates/response-plan.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
+templates/audit-report.md	AI agents ran the review, file by file, with **automated tooling**, and each finding
+templates/audit-report.md	claim no human
+templates/audit-report.md	  - Manually verified   — reasoned through by a reviewer against the source.
 docs/ci.md	Under a $10 cap, the depth-scope selection read 38 vector files and 49 checklist sections in that repository, for $6.98.
 commands/quick-scan.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
 commands/diff-audit.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
@@ -1512,6 +1515,11 @@ templates/ci/auditor-pr.yml	the commit of the auditor-skill release you use
 templates/pr-report.md	- **Plugin:** auditor-skill {version}
 templates/report-template.md	**Date:** <!-- YYYY-MM-DD -->
 templates/incident-report.md	**Date:** {ISO}
+templates/audit-report.md	Manual review is the primary method
+templates/audit-report.md	human-in-the-loop review
+templates/audit-report.md	All reported findings were manually verified
+templates/audit-report.md	got full line-by-line review
+templates/audit-report.md	The review combined manual analysis
 GONE
 
 # respond's step 5 and hunt's step 6 settle the mode as poc's step 5 does, each step read as one line so wording
