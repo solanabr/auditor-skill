@@ -319,9 +319,9 @@ longer builds against the refreshed harness copy. The pass fixes only the PoC's
 harness setup — mirrored in both test files, so the two attacks stay byte-identical —
 and re-runs through `run.sh`. The repair never changes the assertions, the expected
 error or effect, or the target, and its diff is kept next to the PoC as
-`harness-repair.diff`. Any other exit 3 (no execution mode, no toolchain, a bad input,
-a refused crate, the build lock) gets no repair pass: the PoC is re-run once what its
-line names is fixed. If the repaired re-run is still inconclusive, the finding stays
+`harness-repair.diff`. Any other exit 3 (the execution mode `none`, no toolchain, a bad
+input, a refused crate, the build lock) gets no repair pass: the PoC is re-run once what
+its line names is fixed. If the repaired re-run is still inconclusive, the finding stays
 `[PoC-ATTEMPTED]` with the error and the flag.
 
 **Checking the harness copy.** Every marker comes from code inside the PoC crate, so
