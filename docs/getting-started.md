@@ -2,7 +2,7 @@
 
 From an install to a first audit, for anyone setting up auditor-skill in Claude Code for the first time. Each step says what it is for and what you can skip. Back to the [docs index](README.md).
 
-Contents: [1. Install](#1-install) · [2. Once, after installing](#2-once-after-installing) · [3. The Trail of Bits submodule](#3-initialize-the-trail-of-bits-submodule-recommended) · [4. The Rust tools](#4-build-the-rust-tools-optional-high-value) · [5. Adapt to your repo](#5-adapt-to-your-repo) · [6. Your first audit](#6-run-your-first-audit) · [7. Prompts and isolation](#7-prompts-and-isolation) · [Scopes at a glance](#scopes-at-a-glance) · [Next](#next)
+Contents: [1. Install](#1-install) · [2. Once, after installing](#2-once-after-installing) · [3. The Trail of Bits submodule](#3-initialize-the-trail-of-bits-submodule-recommended) · [4. The Rust tools](#4-build-the-rust-tools-optional) · [5. Adapt to your repo](#5-adapt-to-your-repo) · [6. Your first audit](#6-run-your-first-audit) · [7. Prompts and isolation](#7-prompts-and-isolation) · [Scopes at a glance](#scopes-at-a-glance) · [Next](#next)
 
 ## 1. Install
 
@@ -71,7 +71,7 @@ It is pinned to a reviewed upstream commit; the [README](../README.md#tool-execu
 
 The corpus works **fully without it**: agents fall back to `discovery/grep-commands.md` scanners and note the tooling gap in the report. With it initialized, they delegate per [`references/orchestration/boundary-map.md`](../references/orchestration/boundary-map.md). See [power-tools.md](power-tools.md#trail-of-bits-plugins).
 
-## 4. Build the Rust tools (optional, high value)
+## 4. Build the Rust tools (optional)
 
 Three binaries cut audit cost, add cross-audit memory, and run the incident analysis offline. Build them once (`<auditor-skill root>` is where you installed it, e.g. `~/.claude/skills/auditor-skill`):
 
