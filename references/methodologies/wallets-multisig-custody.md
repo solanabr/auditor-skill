@@ -47,7 +47,7 @@ runs a compromised npm lockfile, misses the actual attack.
 **Off-chain items are not re-derived here.** Supply-chain (telemetry exfiltration, lockfile discipline,
 install-script auditing, dependency pinning) is owned by `checklists/11` (SC-*); secrets, key material,
 DNS, and blind-signing hygiene are owned by `checklists/12` (SEC-*). This methodology **cross-links** to
-them (§7) rather than duplicating — an on-chain-only reviewer must still open 11 and 12 for a custody
+them (§5) rather than duplicating — an on-chain-only reviewer must still open 11 and 12 for a custody
 target.
 
 ```
@@ -186,7 +186,7 @@ Each worksheet lists the safe shape. FAIL if any line is missing on any reachabl
   Cross-ref `KV-102` (introspection) (W8).
 - **S7 — Off-chain supply-chain surface.** Dependency pinning, install scripts, telemetry SDKs, build pipeline,
   RPC-endpoint trust. **The dominant loss vector post-2024.** Owned by `checklists/11` (SC-*) — cross-link,
-  don't re-derive (§7) (W13).
+  don't re-derive (§5 CC1) (W13).
 
 ---
 
@@ -216,7 +216,7 @@ Work backward from what an attacker wants; each maps to invariants to break:
   hash**, `cargo audit`/`cargo deny`/`npm audit signatures` in CI, GitHub Actions `uses:` pinned by commit
   SHA (not `@v3`), recently-published-dependency flagging (SC-007–SC-009), and — critically — **telemetry-SDK
   gating**: Sentry/Datadog/LogRocket transports must never receive anything deserializable into a key. The
-  Slope failure was exactly a misconfigured Sentry transport shipping plaintext seeds. Cross-ref SC-* and §7.
+  Slope failure was exactly a misconfigured Sentry transport shipping plaintext seeds. Cross-ref SC-* and §3 S7.
 - **CC2 — Hardware-wallet display verification.** Every transaction sent to Ledger/Trezor must render as
   human-readable text on-device (transfer-display plugins). Any flow that asks a user to sign a **hash** on a
   hardware wallet is a high-severity UX failure — blind-signing has caused nine-figure losses across chains.
