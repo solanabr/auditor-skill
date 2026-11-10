@@ -1319,9 +1319,9 @@ commands/diff-audit.md	(`deps.sh` adds a row to `audit_<n>/disclosures.tsv` befo
 commands/quick-scan.md	Skip nothing scope.md lists and cut nothing short by choice, not even to save cost or time; Coverage & Limitations names only a file the Read tool could not open
 commands/diff-audit.md	Skip nothing scope.md lists and cut nothing short by choice, not even to save cost or time; name there only one the Read tool could not open.
 commands/quick-scan.md	Measured scans cost USD 2.84 to 7.14 in all; this selection cost USD 6.98 on a whole repository, reading 38 vector files and 49 sections.
-commands/diff-audit.md	Measured reviews cost USD 1.68 to 8.10 in all; this selection cost USD 8.10 on a range of 7,830 changed lines that adds a 787-package lockfile.
-docs/ci.md	The top figure is the shipped text, measured on the 3K-line repository only: the selection of `references/depth-scope.md` on a range of 7,830 changed lines that adds a 787-package lockfile, under a $15 cap.
-docs/ci.md	It read every file its selection lists and named no spending cap. The lower figures are earlier drafts, and the review job on the shipped text is not measured yet.
+commands/diff-audit.md	Measured reviews cost USD 1.68 to 8.10 in all; this selection cost USD 3.99 on a 1,248-line change with no lockfile, and USD 8.10 on a range of 7,830 changed lines that adds a 787-package lockfile.
+docs/ci.md	On the shipped text, the selection of `references/depth-scope.md`, it cost $8.10 on the 3K-line repository, for a range of 7,830 changed lines that adds a 787-package lockfile, under a $15 cap, and $3.99 on the 12K-line program, for a 1,248-line change with no lockfile, under an $8 cap.
+docs/ci.md	Both read every file their selection lists and named no spending cap. The lower figures are earlier drafts, and the review job on the shipped text is not measured yet.
 docs/ci.md	On a fork's or Dependabot's pull request the review check shows Success with no review
 docs/ci.md	a cargo audit or npm audit advisory has no exception here, so fix or replace that dependency before you require the tools job
 docs/ci.md	Delete every `.claude/`, `.mcp.json`, `.claude.json`, `CLAUDE.md` and `CLAUDE.local.md` from that checkout, as the review job does

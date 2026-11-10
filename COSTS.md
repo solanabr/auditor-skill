@@ -17,7 +17,7 @@ Each figure comes from a single run, so read it as a size, not a quote.
 
 | Depth | Command | 3K-line program | 7K-line program | 12K-line program |
 |---|---|---|---|---|
-| Quick | `/auditor:diff-audit <base>..<head>` | final: $8.10 · 18.8 min ($15 cap); draft: $4.84 · 10.5 min ($10 cap) | not run (the repository has one commit, so there is no range) | draft: $1.68 · 3.7 min and $1.77 · 3.9 min ($3 cap) |
+| Quick | `/auditor:diff-audit <base>..<head>` | final: $8.10 · 18.8 min ($15 cap); draft: $4.84 · 10.5 min ($10 cap) | not run (the repository has one commit, so there is no range) | final: $3.99 · 8.7 min ($8 cap); draft: $1.68 · 3.7 min and $1.77 · 3.9 min ($3 cap) |
 | Quick | `/auditor:quick-scan` | final: $6.98 · 22.6 min ($10 cap); draft: $6.78 · 16.4 min ($10 cap) | draft: $7.14 · 11.9 min ($10 cap) | draft: $2.84 · 5.5 min ($5 cap) |
 | Standard | `/auditor:audit <path> --scope program` | $13.07 · 36 min | $14.70 · 36 min | $18.83 · 56 min |
 | Full | `/auditor:audit-cycle <path> --scope program` | $19.52 · 61 min | not run | not run |
@@ -31,11 +31,12 @@ Each figure comes from a single run, so read it as a size, not a quote.
   - It reviewed 4,772 of the 7,830 changed lines. The rest, a 3,058-line HTML file's deletion, did not fit the 5,000-line budget, and its report names the file.
   - The draft read 58 vector files whole, plus checklists 04 and 06 and checklist 11's §11.11. Its report named the scope table's other checklists as not read, with no verdict on their items.
   - The 12K-line range read 21 and 16 vector files, on drafts. Both runs passed the program's path after the range, which the shipped diff-audit does not take.
+  - The final text, on that range (36 files, 1,248 changed lines, no lockfile), read 59 vector files and 36 checklist sections whole, every one its selection listed, and reviewed all 310 changed lines of non-test source.
 - **The CI figure** is one dry run of the CI template's review step, `--json-schema` and strict mode included, on the 3K-line program's range. It ran on a draft that read no vector file. On the final text the review job should cost about what diff-audit costs; it is not measured yet.
 - **Earlier drafts, before the Quick commands read the corpus:**
   - diff-audit cost $1.23 and $0.84, then $1.29 and $0.83.
   - quick-scan cost $1.46, $2.20 and $3.62, with agents as each session chose. Starting no agent and reading no vector file, it cost $2.67, $2.91 and $2.19.
-- **The final runs had a lighter setup than the drafts.** The bundled tools were not built, so `audit-scan` mapped nothing, and quick-scan's cargo-audit had no advisory database, so it did not run.
+- **The two final runs on the 3K-line repository had a lighter setup than the drafts.** The bundled tools were not built, so `audit-scan` mapped nothing, and quick-scan's cargo-audit had no advisory database, so it did not run. The final diff-audit on the 12K-line program had both.
 
 **A named limit: a cap close to the run's cost.** Claude Code shows the session its budget ("USD budget: $spent/$max; $remaining remaining"), and the session plans by it. Under a $5 cap, a draft session rationed: it stopped reading early, and its report said what it skipped.
 
@@ -53,11 +54,11 @@ Each figure comes from a single run, so read it as a size, not a quote.
 In short:
 
 - **Quick** costs about $2 to $8 and takes 4 to 23 minutes.
-  - diff-audit cost $8.10 on the final text, for a range that changes 7,830 lines of a program, its app and its tooling, and adds a 787-package npm lockfile. On a draft, a smaller range cost about $2.
+  - diff-audit cost $8.10 on the final text, for a range that changes 7,830 lines of a program, its app and its tooling, and adds a 787-package npm lockfile. A narrow change, 1,248 lines of the 12K-line program with no lockfile, cost $3.99 in 9 minutes.
   - quick-scan cost $6.98 on the final text, for a whole repository, and about $3 on a draft, for one program.
 - **Standard** costs about $13 to $19 and takes 36 to 56 minutes.
 - **Full** cost $19.52 and took an hour on the 3K-line program. It ran once, on that program only, without `--with-poc`.
-- **CI** reviews each pull request from your own branches, not a fork's or Dependabot's, at about what diff-audit costs: $8.10 on the final text for the large range above. The final review job is not measured yet.
+- **CI** reviews each pull request from your own branches, not a fork's or Dependabot's, at about what diff-audit costs on the final text: $3.99 for the narrow change and $8.10 for the large range above. The review job itself is not measured yet.
   - The CI template caps each review at $15, a ceiling, not a charge.
   - Give an unattended quick-scan or diff-audit the same room. Under a $5 cap, expect the early stop above.
 
@@ -117,7 +118,7 @@ No run reached its cap: $3, $5, $10 and $15 for diff-audit, $5 and $10 for quick
 ## Not measured yet
 
 - These depths on a large program of 50K lines or more.
-- The final Quick text on the 7K- and 12K-line programs, and the final CI review job.
+- quick-scan's final text on the 7K- and 12K-line programs, diff-audit's on the 7K-line one, and the CI template's review job.
 - Sonnet as the session's model, and a higher effort.
 - quick-scan and the audits with semgrep installed.
 - Repeat runs, to see how far each figure varies.
