@@ -2,11 +2,13 @@
 
 How auditor-skill turns a confirmed finding into an executable exploit and a verified fix patch, for anyone who wants a finding demonstrated or a fix proven, or who reviews what a PoC run may do on their machine. Back to the [docs index](README.md).
 
-Contents: [The one rule](#the-one-rule) · [Where it sits in the flow](#where-it-sits-in-the-flow) · [`--with-poc` vs on-demand](#--with-poc-vs-on-demand) · [Framework selection](#framework-selection) · [Toolchain requirements](#toolchain-requirements) · [Output layout](#output-layout) · [How `run.sh` builds and runs a PoC](#how-runsh-builds-and-runs-a-poc) · [When a PoC counts](#when-a-poc-counts) · [Evidence tiers](#evidence-tiers-poc) · [Fix tiers](#fix-tiers-patch)
+Contents: [Executable evidence outranks prose](#executable-evidence-outranks-prose) · [Where it sits in the flow](#where-it-sits-in-the-flow) · [`--with-poc` vs on-demand](#--with-poc-vs-on-demand) · [Framework selection](#framework-selection) · [Toolchain requirements](#toolchain-requirements) · [Output layout](#output-layout) · [How `run.sh` builds and runs a PoC](#how-runsh-builds-and-runs-a-poc) · [When a PoC counts](#when-a-poc-counts) · [Evidence tiers](#evidence-tiers-poc) · [Fix tiers](#fix-tiers-patch)
 
 A finding is *asserted* by the Rule 5b gate (reachability + math/state-bounds, + attacker-model at ≥7). A PoC upgrades it to *demonstrated*; a patch proposes and proves the fix. Neither invents a finding — Rule 5b must have confirmed it first. Commands: [`/auditor:poc`](commands.md#auditorpoc), [`/auditor:patch`](commands.md#auditorpatch). Agents: [poc-engineer, patch-engineer](agents.md#poc-engineer). Reference: [`references/orchestration/poc-harness.md`](../references/orchestration/poc-harness.md).
 
-## The one rule
+## Executable evidence outranks prose
+
+<a id="the-one-rule"></a>
 
 > Executable evidence outranks prose, but prose is never removed.
 
