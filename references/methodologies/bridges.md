@@ -247,5 +247,5 @@ Work backward from what an attacker wants; each maps to invariants to break:
 enabling forged guardian signatures + stale-signature-set replay). Message-format taxonomy, signature
 schemes, sequence/replay mechanics, and the sigVerify-precompile pattern are public bridge architecture
 and post-mortem material. Cross-refs: `AV-069`–`AV-074` (sysvar/introspection), `SM-027`/`SM-045`
-(reinit/replay), `CPI-010` (invoke_signed program-id), `KV-102` (precompile-introspection), `KV-123`
-(sysvar write-demotion), and vuln-class VC-43 (cross-chain message replay).*
+(reinit/replay), `CPI-010` (invoke_signed program-id), `KV-102` (precompile-introspection), and `KV-123`
+(sysvar write-demotion).*
