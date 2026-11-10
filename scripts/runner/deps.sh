@@ -70,16 +70,17 @@
 #                   entries left out of the unpacked files, counts first. The sweep reads a line at a time and
 #                   keeps an old file's lines as hashes when it is at most 2 MB; in a newer copy of a larger
 #                   one every line counts as added. A row from a source that is not public is never sent or
-#                   fetched, and a scoped npm package the public registry does not list (a 404) is taken as
-#                   private: never fetched, reported, and no failure; a registry set outside the repository is
-#                   not seen, as the output says. The report goes to <R>/deps/lock-budget-<n>.txt, the publish
-#                   ages to lock-budget-<n>/ages.tsv and each request to lock-budget-<n>/requests.txt. Exit 1
-#                   when anything is flagged; 3 when an artifact the budget selects is not fetched, or an
-#                   entry is not compared in time, once the rest are compared, the last line giving the
-#                   counts. The whole call ends by 540 seconds, or AUDITOR_RUN_TIMEOUT when that is less,
-#                   inside the 600 a Bash tool call may take: its requests, unpacking and sweep stop 10
-#                   seconds before that end, so its report is written in time, and an entry it has not
-#                   compared by then counts as failed.
+#                   fetched, and a scoped npm package the public registry has no record of (a 404 for the
+#                   package, or with the publish age off for the version) is taken as private: never fetched,
+#                   reported, and no failure; a registry set outside the repository is not seen, as the output
+#                   says. The report goes to <R>/deps/lock-budget-<n>.txt, the publish ages to
+#                   lock-budget-<n>/ages.tsv and each request to lock-budget-<n>/requests.txt. Exit 1 when
+#                   anything is flagged; 3 when an artifact the budget selects is not fetched, or an entry is
+#                   not compared in time, once the rest are compared, the last line giving the counts. The
+#                   whole call ends by 540 seconds, or AUDITOR_RUN_TIMEOUT when that is less, inside the 600 a
+#                   Bash tool call may take: its requests, unpacking and sweep stop 10 seconds before that
+#                   end, so its report is written in time, and an entry it has not compared by then counts as
+#                   failed.
 #
 # Manifests. Each --manifest is a confined regular file of at most 50 MB under the working directory, named
 # as its action takes it: Cargo.lock, Cargo.toml, package.json, package-lock.json or npm-shrinkwrap.json,
@@ -1194,7 +1195,7 @@ MARGIN = 10
 IN_FLIGHT = 8
 # At most this much a download of the budget, and this much unpacked in one call.
 ARTIFACT_MAX, CALL_UNPACKED = 50 * 1000 * 1000, 500 * 1000 * 1000
-# What a scoped npm package the public registry does not list is taken for: never fetched, never a failure.
+# What a scoped npm package the public registry has no record of is taken for: never fetched, never a failure.
 PRIVATE = "the public registry does not list this scoped package; it may be private"
 # The publisher the npm registry names for a release made by trusted publishing from GitHub Actions.
 CI_PUBLISHER = "GitHub Actions"
@@ -1481,7 +1482,7 @@ def age_check(rows, fetcher, now, log):
         if yanked:
             flags.append("yanked")
         out[r["i"]] = {"published": published, "publisher": publisher, "earlier": earlier, "flags": flags}
-    return out, records, asked, time.time() - start, not_checked
+    return out, records, asked, time.time() - start, not_checked, {k for k, hist in results.items() if hist}
 
 
 def crate_publishers(chosen, ages, fetcher):
@@ -1663,9 +1664,10 @@ def sweep(old_top, new_top, left_out, first, stop=None):
             "binary": binary}
 
 
-def fetch_one(fetcher, eco, name, version, records, dest):
+def fetch_one(fetcher, eco, name, version, records, dest, listed=False):
     # the record (from the publish-age answer when there is one), the artifact, its digest, the unpacked files;
-    # nothing is asked once the call has unpacked all it may
+    # nothing is asked once the call has unpacked all it may. <listed>: the registry gave a record of the whole
+    # package, so a version it does not list is a failure, not a sign of a private package
     import contextlib, shutil
     if fetcher.unpacked >= CALL_UNPACKED:
         return False, ROOM % (CALL_UNPACKED // 1000000), []
@@ -1678,7 +1680,7 @@ def fetch_one(fetcher, eco, name, version, records, dest):
         url = ("https://registry.npmjs.org/%s/%s" % (npm_url_path(name), version) if eco == "npm"
                else "https://crates.io/api/v1/crates/%s/%s" % (name, version))
         got, why = fetcher.get(url, True, False, 60)
-        if not got and why.startswith("HTTP 404 ") and eco == "npm" and name.startswith("@"):
+        if not got and why.startswith("HTTP 404 ") and eco == "npm" and name.startswith("@") and not listed:
             return None, PRIVATE, []
         if not got:
             return False, why, []
@@ -1740,9 +1742,9 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
     fetcher = Fetcher(scratch, min(float(deadline), now + CALL_SECONDS) - MARGIN, int(maxsize), agent, log)
     out, summary = [], []
     out.append("lock-budget: %s: %d rows%s" % (setname, len(rows), "; %d lines that are not a row of the set, never sent" % odd if odd else ""))
-    ages, records, asked, took, not_checked = {}, {}, 0, 0.0, {}
+    ages, records, asked, took, not_checked, found = {}, {}, 0, 0.0, {}, set()
     if age == "on":
-        ages, records, asked, took, not_checked = age_check(rows, fetcher, now, log)
+        ages, records, asked, took, not_checked, found = age_check(rows, fetcher, now, log)
     private = [r for r in rows if ages.get(r["i"], {}).get("private")]
     for r in private:
         r["public"], r["private"] = False, True
@@ -1828,12 +1830,13 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
         os.mkdir(os.path.join(outdir, str(k)), 0o700)
         for side, version in sides:
             dest = os.path.join(outdir, str(k), side)
-            ok, said, left = fetch_one(fetcher, r["eco"], r["name"], version, records, dest)
+            listed = (r["eco"], r["name"]) in found
+            ok, said, left = fetch_one(fetcher, r["eco"], r["name"], version, records, dest, listed)
             if ok is False and not FINAL.search(said) and fetcher.deadline - time.time() > 10:
                 time.sleep(2)
                 if os.path.exists(dest):
                     shutil_rm(dest)
-                ok, said, left = fetch_one(fetcher, r["eco"], r["name"], version, records, dest)
+                ok, said, left = fetch_one(fetcher, r["eco"], r["name"], version, records, dest, listed)
             if ok is None or (not ok and said.startswith(LATE)):
                 break
             if ok:

@@ -2377,6 +2377,20 @@ lb_set "$LBN" 'npm	package-lock.json	lb-nowhere	-	1.0.0	-	public	direct'
 run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 check "lock-budget: an unscoped package the registry does not list stays a failure when selected" \
   sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 1 of 1 selected artifacts could not be fetched; output ' '$T/err'"
+# a scoped package the registry has a record of, at a version it does not list: flagged, and a failed fetch, not a
+# private package
+python3 -I - "$T/fix" <<'PY'
+import json, os, sys
+key = "https://registry.npmjs.org/@lbpub%2Fkit".replace("/", "_").replace(":", "_").replace("%", "_").replace("@", "_")
+open(os.path.join(sys.argv[1], key), "w").write(json.dumps({"name": "@lbpub/kit", "time": {"1.0.0": "2020-01-01T00:00:00.000Z"},
+    "versions": {"1.0.0": {"name": "@lbpub/kit", "version": "1.0.0", "_npmUser": {"name": "alice"}}}}))
+PY
+LBN=125
+lb_set "$LBN" 'npm	package-lock.json	@lbpub/kit	-	2.0.0	-	public	direct'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/.*; output audit_1\/deps\/lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/err")
+check "lock-budget: a scoped package with a registry record, at a version it does not list, is flagged and fails its fetch, not taken as private" \
+  sh -c "[ '$RC' = 3 ] && grep -q '; not listed by the registry: 1' '$T/out' && grep -qxF '  not fetched: npm @lbpub/kit 2.0.0: HTTP 404 from https://registry.npmjs.org/@lbpub%2Fkit/2.0.0' '$WT/audit_1/deps/lock-budget-$n.txt' && ! grep -q 'maybe private' '$T/out'"
 LBN=104
 lb_set "$LBN"
 r0=$(rows)
