@@ -49,7 +49,7 @@ This command's pre-approvals last for the turn that invoked it: Claude Code clea
    - **Languages & frameworks** (`Q3`–`Q7`) — drives the scope-gated checklist set (`SKILL.md` → SCOPE-GATED LOADING).
    - **Protocol class** (`Q1`, `Q17`–`Q24`) — gates checklist 06 + economic known-vectors when funds are handled.
    - **Compliance** (`Q35`–`Q38`) — gates checklist 18.
-   - **Severity calibration** (`Q8`, `Q10`, `Q11`, `Q40`–`Q41`) — record the concrete lever applied (mainnet → +1 on fund findings; TVL > $1M → double-weight criticals; single-wallet upgrade authority → auto Severity 8+), per the QUESTIONS.md effects table. Feeds report §5.
+   - **Severity calibration** (`Q8`, `Q10`, `Q11`, `Q40`–`Q41`) — record the concrete lever applied (mainnet → +1 on fund findings; single-wallet upgrade authority → auto Severity 8+), per the QUESTIONS.md effects table. Feeds report §5.
    - **Trust-model inputs (critical)** (`Q11`, `Q14`–`Q16`, `Q23`) — for each of admin / upgrade authority / oracle / keeper / LP / permissionless user, record who holds it, what they can do, and what the review trusts them **NOT** to do. "Untrusted / permissionless" is a valid, important answer. This seeds report §4.4 and §4.6, and is the actor list `/auditor:threat-model` expands.
    - **Security history** (`Q25`–`Q28`).
 

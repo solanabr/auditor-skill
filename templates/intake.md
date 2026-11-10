@@ -145,7 +145,6 @@ Record the concrete calibration rule applied, not just the answer.
      "How Answers Affect the Audit"). Each is a lever the report's §5 will cite. -->
 
 - {Q8 = mainnet-live → +1 severity on all fund-related findings.}
-- {Q10 > $1M → critical findings double-weighted in risk score.}
 - {Q11 = single wallet → upgrade authority auto-flagged Severity 8+.}
 - {Q41 = quick → recorded only: a Full run keeps its full walk; Quick is /auditor:diff-audit, /auditor:quick-scan or /auditor:deep-review.}
 
@@ -182,7 +181,7 @@ text for report §4.6.}
 ## 7. Security History
 
 <!-- Q25-Q28. Feeds methodology / prior-fix assumptions. Q25 = first audit -> no
-     assumptions about prior fixes; enables deeper analysis. -->
+     assumptions about prior fixes. -->
 
 | | |
 | ----------------------- | --------------------------------------------- |
