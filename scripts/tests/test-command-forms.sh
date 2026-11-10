@@ -1279,7 +1279,7 @@ commands/diff-audit.md	with the Bash tool's timeout at 600000
 commands/diff-audit.md	`deps-artifacts` is the `lock-budget` call: it ran when the call ends 0 or 1, an empty budget included
 references/depth-scope.md	`deps-artifacts` is required when a `Cargo.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` or `bun.lock` changes.
 docs/ci.md	needs `lock-delta` and `deps-artifacts`
-OUTPUT-RULES.md	for `lock-budget`, the name of each new package of the set it was given, one row per service for its whole run.
+OUTPUT-RULES.md	for `lock-budget`, the name of each package of the set it was given that comes from a public registry, new packages and new versions alike (a name from another source is never sent), one row per service for its whole run.
 commands/quick-scan.md	an item that needs a call this scan does not make, which gets `[N/A at this depth — needs <call>]`
 commands/diff-audit.md	an item that needs a call this review does not make, which gets `[N/A at this depth — needs <call>]`
 commands/quick-scan.md	except the items no site in scope reaches, which share the section's one N/A line, and an item
@@ -1477,6 +1477,7 @@ docs/ci.md	named no budget
 templates/ci/auditor-pr.yml	no finding, count or path
 docs/ci.md	a change to on-chain code alone
 references/depth-scope.md	a change to on-chain code alone selects at most 46
+OUTPUT-RULES.md	the name of each new package of the set
 GONE
 
 # respond's step 5 and hunt's step 6 settle the mode as poc's step 5 does, each step read as one line so wording

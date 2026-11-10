@@ -44,8 +44,9 @@ env:
   # counts the rest in PR-REPORT.md; "fail" fails the review instead.
   AUDITOR_OVER_BUDGET: "count"
   # A changed lockfile (checklists/11-supply-chain.md §11.11, CI budget): "on" asks each public registry once per
-  # new package for its publish time and publisher, which selects versions under 14 days old for review; "off"
-  # sends no such request. Either way the review fetches the published code of every changed key-handling package
+  # changed package name, new packages and new versions alike, and crates.io once more for the publisher of each
+  # crate the budget selects, for publish times and publishers, which select versions under 14 days old for
+  # review; a name from a source that is not public is never sent. "off" sends no such request. Either way the review fetches the published code of every changed key-handling package
   # and of at most 40 other changed packages.
   AUDITOR_PUBLISH_AGE: "on"
   # The tools job: the semgrep rulesets it runs, and the analyzer releases it installs. Pin a release that has

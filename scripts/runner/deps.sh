@@ -2179,11 +2179,11 @@ case "$ACTION" in
     plan=$(registry_py plan "$WT/$SETF" "$AGE") || done_with 3 "${plan:-the set cannot be read}"
     for svc in $plan; do
       case "$svc:$AGE" in
-        npmjs.org:on) disclose npmjs.org "the name of each new npm package in this set (its registry record: publish times and publishers), then the tarballs of the versions its budget selects" "$SETF" ;;
+        npmjs.org:on) disclose npmjs.org "the name of each npm package in this set from the public registry, new packages and new versions alike (its registry record: publish times and publishers), then the tarballs of the versions its budget selects" "$SETF" ;;
         npmjs.org:off) disclose npmjs.org "the npm versions this set's budget selects (each version's registry record, then its tarball)" "$SETF" ;;
-        crates.io:on) disclose crates.io "the name of each new crate in this set (its entry in the crates.io index, for publish times; crates.io's record of the crates its budget selects, for their publishers), then the .crate files of the versions it selects" "$SETF" ;;
+        crates.io:on) disclose crates.io "the name of each crate in this set from crates.io, new crates and new versions alike (its entry in the crates.io index, for publish times; crates.io's record of the crates its budget selects, for their publishers), then the .crate files of the versions it selects" "$SETF" ;;
         crates.io:off) disclose crates.io "the crate versions this set's budget selects (each version's crates.io record, then its .crate download)" "$SETF" ;;
-        pypi.org:on) disclose pypi.org "the name of each new PyPI project in this set (its PyPI JSON record: upload times)" "$SETF" ;;
+        pypi.org:on) disclose pypi.org "the name of each PyPI project in this set from pypi.org, new projects and new versions alike (its PyPI JSON record: upload times)" "$SETF" ;;
       esac
     done
     : > "$S/head"
