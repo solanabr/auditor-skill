@@ -76,7 +76,7 @@
 #       not read. diff-audit and quick-scan keep their --ci and --fail-on, the findings file that starts as a
 #       failing record, the Rule 5b statuses that count, a reply without finding text, and the closing line;
 #       each of the three Quick commands names the report it writes from templates/pr-report.md, writes it in
-#       its own session (quick-scan and diff-audit start no agent at all, so their cost holds still, and
+#       its own session (quick-scan and diff-audit start no agent at all, so what they read follows their steps, and
 #       deep-review leaves an agent's model to its definition), runs no cd, after which the bundled tools would
 #       look for the run directory in the wrong folder, and reads the corpus from the root, each verdict naming
 #       what it rests on: quick-scan and diff-audit the selection of references/depth-scope.md, written to
@@ -1298,7 +1298,7 @@ commands/diff-audit.md	on the changed functions of the kept files and their dire
 commands/diff-audit.md	each vector file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, whole, with no line limit, several in each message
 commands/diff-audit.md	run §11.11 of `${CLAUDE_PLUGIN_ROOT}/checklists/11-supply-chain.md`
 commands/deep-review.md	reading each one's file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, before its verdict
-commands/quick-scan.md	Steps 2 to 4 run in this session: start no agent, so a scan costs the same from one run to the next.
+commands/quick-scan.md	Steps 2 to 4 run in this session: start no agent, so the scan reads what its steps name, not what an agent picks.
 commands/quick-scan.md	Write it yourself, in this session.
 commands/quick-scan.md	Run no `cd` in this session, not even before a plain `grep`
 commands/diff-audit.md	Run no `cd` in this session, not even before a plain `grep`
@@ -1317,8 +1317,8 @@ templates/pr-report.md	`Loaded … security advisories (from <folder>)`, names a
 commands/diff-audit.md	(`deps.sh` adds a row to `audit_<n>/disclosures.tsv` before its first request to each service)
 commands/quick-scan.md	Skip nothing scope.md lists and cut nothing short by choice, not even to save cost or time; Coverage & Limitations names only a file the Read tool could not open
 commands/diff-audit.md	Skip nothing scope.md lists and cut nothing short by choice, not even to save cost or time; name there only one the Read tool could not open.
-commands/quick-scan.md	Measured scans cost USD 2.84 to 7.14 in all; this selection cost USD 6.98 on a whole repository, reading 38 vector files and 49 sections.
-commands/diff-audit.md	Measured reviews cost USD 1.68 to 8.10 in all; this selection cost USD 3.99 on a 1,248-line change with no lockfile, and USD 8.10 on a range of 7,830 changed lines that adds a 787-package lockfile.
+commands/quick-scan.md	This selection cost USD 6.98 on a whole repository, reading 38 vector files and 49 sections.
+commands/diff-audit.md	This selection cost USD 3.99 on a 1,248-line change with no lockfile, and USD 8.10 on a range of 7,830 changed lines that adds a 787-package lockfile.
 docs/ci.md	On the shipped text, the selection of `references/depth-scope.md`, it cost $8.10 on the 3K-line repository, for a range of 7,830 changed lines that adds a 787-package lockfile, under a $15 cap, and $3.99 on the 12K-line program, for a 1,248-line change with no lockfile, under an $8 cap.
 docs/ci.md	Both read every file their selection lists and named no spending cap. The lower figures are earlier drafts, and the review job on the shipped text is not measured yet.
 docs/ci.md	On a fork's or Dependabot's pull request the review check shows Success with no review
@@ -1367,7 +1367,7 @@ commands/diff-audit.md	first, with the Read tool, before any verdict of this ste
 commands/diff-audit.md	Each verdict names the checklist item id or the vector step it rests on
 commands/deep-review.md	Each verdict names the checklist item id or the vector step it rests on
 commands/diff-audit.md	Write it yourself, in this session.
-commands/diff-audit.md	Steps 2 to 6 run in this session: start no agent, so a review of the same range costs the same from one run to the next.
+commands/diff-audit.md	Steps 2 to 6 run in this session: start no agent, so the review reads what its steps name, not what an agent picks.
 commands/deep-review.md	Write it yourself, in this session, from what any agent you started returned
 commands/quick-scan.md	but the job never fails only because none exists, and never falls back to printing findings in the log
 commands/re-audit.md	only into `grep`, `head`, `tail` or `wc`
