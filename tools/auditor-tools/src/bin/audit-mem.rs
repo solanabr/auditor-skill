@@ -642,7 +642,7 @@ fn make_store(wt: &Path, store: &Store) -> Result<(), Stop> {
 }
 
 /// A store error as one line: a store audit-mem refuses (`mem::Refusal`) as a
-/// refusal, naming the store; anything SQLite says as an error.
+/// refusal, naming the store; anything SQLite says as an error (`mem::message`).
 fn store_error(store: &Store) -> impl Fn(anyhow::Error) -> Stop + '_ {
     move |e: anyhow::Error| match e.downcast_ref::<mem::Refusal>() {
         Some(r) => refuse(format!("{}: {r}", store.shown())),
@@ -651,7 +651,7 @@ fn store_error(store: &Store) -> impl Fn(anyhow::Error) -> Stop + '_ {
             format!(
                 "error: {}: {}",
                 store.shown(),
-                shown(format!("{e:#}").as_bytes())
+                shown(mem::message(&e).as_bytes())
             ),
         ),
     }

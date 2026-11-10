@@ -2,6 +2,7 @@
 name = "auditor-tools"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.89"
 description = "Host-side static-analysis CLI for Solana/Anchor codebases: risky-surface scanner and cross-audit findings memory."
 license = "MIT"
 
@@ -24,7 +25,9 @@ quote = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 walkdir = "2"
-rusqlite = { version = "0.32", features = ["bundled"] }
+# Without its default features: they add sqlite-wasm-rs, used only on wasm, and the
+# crates it needs to the lockfile. "cache" is the statement cache 0.32 always built.
+rusqlite = { version = "0.41", default-features = false, features = ["bundled", "cache"] }
 sha2 = "0.10"
 anyhow = "1"
 # For openat, as audit-logs takes it: already in the lockfile, without its default

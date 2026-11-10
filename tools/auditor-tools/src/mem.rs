@@ -381,6 +381,26 @@ pub fn unfinished_write(e: &anyhow::Error) -> bool {
     })
 }
 
+/// What `{e:#}` prints, the error and each of its causes, with the code of SQLite's
+/// refusal to read a store beside a hot `-journal` (`SQLITE_READONLY_ROLLBACK`)
+/// described as libsqlite3-sys 0.30 described it, "(requires write access)"
+/// included: libsqlite3-sys 0.39 describes each code in SQLite's words, which for
+/// this one are those of any read-only error.
+pub fn message(e: &anyhow::Error) -> String {
+    let causes: Vec<String> = e
+        .chain()
+        .map(|cause| match cause.downcast_ref::<rusqlite::ffi::Error>() {
+            Some(f) if f.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK => format!(
+                "Error code {}: Database has hot journal that must be rolled back \
+                 (requires write access)",
+                f.extended_code
+            ),
+            _ => cause.to_string(),
+        })
+        .collect();
+    causes.join(": ")
+}
+
 /// How long a writer waits for the store while another writer holds it.
 const BUSY: Duration = Duration::from_secs(5);
 
