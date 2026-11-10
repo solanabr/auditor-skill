@@ -24,7 +24,12 @@
 #          columns eco (npm, crates or pypi), lockfile, name, old (the version it replaces, or -), new, oldsource,
 #          source and marks; stdout gets a summary and the rows to read first, and the file on its last line,
 #          "lock-set: <R>/deps/lock-set-<n>.tsv (<rows> rows)". A source is public (registry.npmjs.org or
-#          registry.yarnpkg.com, crates.io, pypi.org), git, url, file or registry:<host>. The marks: direct (a
+#          registry.yarnpkg.com, crates.io, pypi.org), git, url, file, registry:<host>, unnamed (an npm or yarn
+#          entry with no resolved URL, whose registry npm takes from config outside the lockfile) or bundled
+#          (inside another package's tarball). A bun.lock entry that names no registry takes the one the
+#          bunfig.toml or .npmrc beside it names at that commit (its scope's first), else registry.npmjs.org; a
+#          bun.lock whose bunfig.toml or .npmrc changed is compared too, though it did not change. A registry
+#          set outside the repository (the environment, user or global config) is not seen. The marks: direct (a
 #          dependency the lockfile's root or workspace entries, or the manifest beside it, name), pin (an
 #          override, resolution, [patch] or [replace] entry, or a uv override or constraint), key (the closed list
 #          of checklist 11 §11.11's CI budget), install (npm's hasInstallScript), source-change (now from the
@@ -360,16 +365,35 @@ def spec_name(spec):
     return name, rng
 
 
-def npm_source(resolved, version):
+def spec_source(v):
+    # the kind of a version written as a source (git, file or url), or "" for a version number
+    if v.startswith(("git+", "git:", "github:", "gitlab:", "bitbucket:", "ssh:")):
+        return "git"
+    if v.startswith(("file:", "link:", "workspace:", "portal:")):
+        return "file"
+    return "url" if v.startswith(("http:", "https:")) else ""
+
+
+def registry_kind(url):
+    # public for the npm registry and its yarn mirror, registry:<host> for any other
+    m = re.match(r"^https?://([^/:@]+)", url or "")
+    if not m:
+        return "url"
+    host = m.group(1).lower()
+    return "public" if host in NPM_HOSTS else "registry:" + host
+
+
+def npm_source(resolved, version, bundled=False):
+    # An entry with no resolved URL names no registry: npm then takes the one its config gives, set outside
+    # the lockfile (omit-lockfile-registry-resolved), so it is not known to be public. One bundled inside
+    # another package ships in that tarball.
     r = resolved or ""
     v = version or ""
-    probe = r or v
-    if probe.startswith(("git+", "git:", "github:", "gitlab:", "bitbucket:", "ssh:")):
-        return "git"
-    if probe.startswith(("file:", "link:", "workspace:", "portal:")):
-        return "file"
+    kind = spec_source(r or v)
+    if kind in ("git", "file"):
+        return kind
     if not r:
-        return "url" if v.startswith(("http:", "https:")) else "public"
+        return kind or ("bundled" if bundled else "unnamed")
     m = re.match(r"^https?://([^/:@]+)(?::[0-9]+)?/", r)
     if not m:
         return "url"
@@ -555,7 +579,7 @@ def add(out, e):
         out[k] = e
 
 
-def read_npm(text, man):
+def read_npm(text, man, conf=None):
     try:
         data = json.loads(text)
     except ValueError as why:
@@ -580,8 +604,8 @@ def read_npm(text, man):
             if not isinstance(version, str) or not name:
                 continue
             resolved = e.get("resolved") if isinstance(e.get("resolved"), str) else ""
-            add(out, Entry(name, version, npm_source(resolved, version), str(e.get("integrity") or ""), dep_names(e),
-                           bool(e.get("hasInstallScript")), [resolved] if resolved else []))
+            add(out, Entry(name, version, npm_source(resolved, version, bool(e.get("inBundle"))), str(e.get("integrity") or ""),
+                           dep_names(e), bool(e.get("hasInstallScript")), [resolved] if resolved else []))
     elif isinstance(data.get("dependencies"), dict):
         stack = [data["dependencies"]]
         while stack:
@@ -594,7 +618,7 @@ def read_npm(text, man):
                     name, version = spec_name(version[4:])
                 resolved = e.get("resolved") if isinstance(e.get("resolved"), str) else ""
                 req = e.get("requires")
-                add(out, Entry(name, version, npm_source(resolved, version), str(e.get("integrity") or ""),
+                add(out, Entry(name, version, npm_source(resolved, version, bool(e.get("bundled"))), str(e.get("integrity") or ""),
                                [str(k) for k in req] if isinstance(req, dict) else [], False, [resolved] if resolved else []))
                 if isinstance(e.get("dependencies"), dict):
                     stack.append(e["dependencies"])
@@ -603,7 +627,7 @@ def read_npm(text, man):
     return out, direct, pins
 
 
-def read_yarn(text, man):
+def read_yarn(text, man, conf=None):
     out, cur, sub = {}, None, None
     if re.search(r"(?m)^__metadata:", text) and not re.search(r"(?m)^  version \x22", text):
         return None
@@ -681,7 +705,36 @@ def jsonc(text):
     return json.loads("".join(out))
 
 
-def read_bun(text, man):
+def bun_registries(conf):
+    # the default registry and the registry of each scope that bun takes from the bunfig.toml and .npmrc beside
+    # bun.lock; bunfig.toml first. A registry set outside the repository (the environment, user config) is not seen.
+    default, scopes = "", {}
+    try:
+        doc = toml((conf or {}).get("bunfig", ""))
+    except Unread:
+        doc = {}
+    install = doc.get("install") if isinstance(doc.get("install"), dict) else {}
+
+    def url_of(v):
+        if isinstance(v, dict):
+            v = v.get("url")
+        return v if isinstance(v, str) else ""
+    default = url_of(install.get("registry"))
+    for k, v in (install.get("scopes") if isinstance(install.get("scopes"), dict) else {}).items():
+        if url_of(v):
+            scopes["@" + str(k).lstrip("@")] = url_of(v)
+    for line in (conf or {}).get("npmrc", "").splitlines():
+        m = re.match(r"^\s*(@[^:=\s]+:)?registry\s*=\s*(\S+)", line)
+        if not m:
+            continue
+        if m.group(1):
+            scopes.setdefault(m.group(1)[:-1], m.group(2).strip(chr(34) + chr(39)))
+        elif not default:
+            default = m.group(2).strip(chr(34) + chr(39))
+    return default, scopes
+
+
+def read_bun(text, man, conf=None):
     try:
         data = jsonc(text)
     except ValueError as why:
@@ -695,6 +748,7 @@ def read_bun(text, man):
             direct |= dep_names(ws, ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"))
     if isinstance(data.get("overrides"), dict):
         pins |= {spec_name(k)[0] for k in data["overrides"]}
+    default, scopes = bun_registries(conf)
     for arr in data["packages"].values():
         if not isinstance(arr, list) or not arr or not isinstance(arr[0], str):
             continue
@@ -705,16 +759,20 @@ def read_bun(text, man):
         name, version = spec[:at], spec[at + 1:]
         if version.startswith("workspace:"):
             continue
-        source = npm_source("", version)
-        if source == "public" and len(arr) > 1 and isinstance(arr[1], str) and arr[1]:
-            source = npm_source(arr[1].rstrip("/") + "/" + name + "/-/x.tgz", version)
+        source = spec_source(version)
+        if not source:
+            # the registry the entry names, or "" for the default: that of its scope, else the default the committed
+            # config gives, else registry.npmjs.org, as bun has it
+            named = arr[1] if len(arr) > 1 and isinstance(arr[1], str) else ""
+            scope = name.split("/")[0] if name.startswith("@") else ""
+            source = registry_kind(named or scopes.get(scope) or default or "https://registry.npmjs.org/")
         meta = arr[2] if len(arr) > 2 and isinstance(arr[2], dict) else {}
         integ = arr[-1] if isinstance(arr[-1], str) and arr[-1].startswith("sha") else ""
         add(out, Entry(name, version, source, integ, dep_names(meta)))
     return out, direct, pins
 
 
-def read_cargo(text, man):
+def read_cargo(text, man, conf=None):
     doc = toml(text)
     out, direct = {}, set()
     meta = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
@@ -756,7 +814,7 @@ def uv_source(src):
     return "local"
 
 
-def read_uv(text, man):
+def read_uv(text, man, conf=None):
     doc = toml(text)
     out, direct, pins = {}, set(), set()
     manifest = doc.get("manifest") if isinstance(doc.get("manifest"), dict) else {}
@@ -793,7 +851,7 @@ def read_uv(text, man):
     return out, direct, pins
 
 
-def read_poetry(text, man):
+def read_poetry(text, man, conf=None):
     doc = toml(text)
     out = {}
     meta = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
@@ -936,6 +994,18 @@ def main(scratch, out_tsv, summary_out, fatal_out):
                     ok = False
                 if not ok:
                     why = "the package.json beside it is not a JSON object"
+        confs = {}
+        for side in ("old", "new"):
+            confs[side] = {}
+            for cname, cfile in (("bunfig", "bunfig.toml"), ("npmrc", ".npmrc")):
+                cp = os.path.join(scratch, "%s.%s.%s" % (k, cname, side))
+                if os.path.exists(cp + ".link"):
+                    why = why or "the %s beside it is a symbolic link" % cfile
+                elif os.path.exists(cp + ".big"):
+                    why = why or "the %s beside it is larger than 4 MiB" % cfile
+                elif os.path.exists(cp):
+                    with open(cp, encoding="utf-8-sig", errors="replace") as f:
+                        confs[side][cname] = f.read()
         if why:
             not_compared.append((path, why))
             fatal.append((path, why))
@@ -949,7 +1019,7 @@ def main(scratch, out_tsv, summary_out, fatal_out):
                     continue
                 with open(p, encoding="utf-8-sig") as f:
                     text = f.read()
-                got = READERS[kind](text, man if side == "new" else "")
+                got = READERS[kind](text, man if side == "new" else "", confs[side])
                 if got is None:
                     raise Unread("yarn berry")
                 sides.append(got)
@@ -967,7 +1037,7 @@ def main(scratch, out_tsv, summary_out, fatal_out):
         r, gone = compare(kind, path, sides[0], sides[1])
         rows += r
         removed += gone
-        compared.append((path, kind, {"A": "added", "D": "deleted"}.get(status, "changed"), len(r)))
+        compared.append((path, kind, {"A": "added", "D": "deleted", "C": "its registry config changed"}.get(status, "changed"), len(r)))
     with open(fatal_out, "w", encoding="utf-8", errors="backslashreplace") as f:
         for path, why in fatal:
             f.write(shown("%s (%s)" % (path, why)) + "\n")
@@ -989,11 +1059,13 @@ def main(scratch, out_tsv, summary_out, fatal_out):
                  % (len(rows), len(rows) - bumps - same, bumps, same, len(names), removed))
     kinds = {}
     for r in rows:
-        if r[6] != "public":
+        if r[6] not in ("public", "bundled"):
             kinds[r[6].split(":")[0]] = kinds.get(r[6].split(":")[0], 0) + 1
     off = sum(kinds.values())
-    lines.append("sources: %d from the public registry; %d not public%s" % (len(rows) - off, off,
-                 " (" + ", ".join("%s %d" % kv for kv in sorted(kinds.items())) + "): SC-061, never fetched" if off else ""))
+    bundled = sum(1 for r in rows if r[6] == "bundled")
+    lines.append("sources: %d from the public registry; %d not public%s%s" % (len(rows) - off - bundled, off,
+                 " (" + ", ".join("%s %d" % kv for kv in sorted(kinds.items())) + "): SC-061, never fetched" if off else "",
+                 "; %d bundled inside another package, never fetched" % bundled if bundled else ""))
     count = {}
     for r in rows:
         for m in r[7].split(","):
@@ -1005,7 +1077,7 @@ def main(scratch, out_tsv, summary_out, fatal_out):
 
     def strongest(r):
         ms = [rank[m.split("=")[0]] for m in r[7].split(",") if m.split("=")[0] in rank]
-        if r[6] != "public":
+        if r[6] not in ("public", "bundled"):
             ms.append(4)
         return min(ms) if ms else None
     flagged = sorted((r for r in rows if strongest(r) is not None), key=strongest)
@@ -1078,46 +1150,94 @@ set_blob() {
   hgit_tree "$REPO" cat-file blob "$1" > "$2"
 }
 
-# run_set <base> <head> <scratch>: each changed lockfile, whole, at both commits, and the manifest beside it at
-# <head>, into <scratch>; the set difference computed there; its rows kept in <R>/deps/lock-set-<n>.tsv.
+# tree_entry <commit> <path>: TE_MODE and TE_OID of <path> in <commit>, all zeros when it is not there
+tree_entry() {
+  local entry
+  entry=$(hgit_tree "$REPO" ls-tree --full-tree -z "$1" -- "$2" | tr '\000' '\n') || return
+  TE_MODE=000000 TE_OID=0000000000000000000000000000000000000000
+  [ -n "$entry" ] || return 0
+  TE_MODE=${entry%% *}
+  entry=${entry#* }
+  entry=${entry#* }
+  TE_OID=${entry%%$'\t'*}
+}
+
+# set_beside <commit> <path> <file>: the file at <path> in <commit> into <file> when it is a regular file of at
+# most 4 MiB; an empty <file>.big when it is larger, <file>.link when it is a link; nothing when it is not there.
+set_beside() {
+  tree_entry "$1" "$2" || return
+  case "$TE_MODE" in
+    100644|100755) set_blob "$TE_OID" "$3" 4194304 ;;
+    120000) : > "$3.link" ;;
+  esac
+}
+
+# set_entry <path> <status> <mode at base> <mode at head> <object at base> <object at head>: one lockfile, whole,
+# into the scratch directory, with the manifest beside it at <head> and, for bun.lock, the registry config bun
+# reads beside it at each commit
+set_entry() {
+  local path=$1 m1=$3 m2=$4 o1=$5 o2=$6 side o m man dir rev
+  k=$((k + 1))
+  printf '%s' "$path" > "$S/$k.path"
+  printf '%s\t%s\t%s\t%s\n' "$k" "${2:0:1}" "$m1" "$m2" >> "$S/list"
+  for side in old new; do
+    if [ "$side" = old ]; then o=$o1 m=$m1; else o=$o2 m=$m2; fi
+    case "$o" in *[!0]*) ;; *) continue ;; esac
+    case "$m" in 100644|100755) set_blob "$o" "$S/$k.$side" "$SET_MAX" || return ;; esac
+  done
+  case "${path##*/}" in
+    package-lock.json|npm-shrinkwrap.json|yarn.lock|bun.lock) man=package.json ;;
+    Cargo.lock) man=Cargo.toml ;;
+    uv.lock|poetry.lock) man=pyproject.toml ;;
+    *) man="" ;;
+  esac
+  case "$path" in */*) dir=${path%/*}/ ;; *) dir="" ;; esac
+  if [ -n "$man" ] && [ -e "$S/$k.new" ]; then
+    set_beside "$H" "$dir$man" "$S/$k.man" || return
+  fi
+  if [ "${path##*/}" = bun.lock ]; then
+    for side in old new; do
+      [ -e "$S/$k.$side" ] || continue
+      if [ "$side" = old ]; then rev=$B; else rev=$H; fi
+      set_beside "$rev" "${dir}bunfig.toml" "$S/$k.bunfig.$side" || return
+      set_beside "$rev" "${dir}.npmrc" "$S/$k.npmrc.$side" || return
+    done
+  fi
+}
+
+# run_set <base> <head> <scratch>: each changed lockfile into <scratch>, as set_entry puts it, and each bun.lock
+# whose registry config changed when it did not; the set difference computed there; its rows kept in
+# <R>/deps/lock-set-<n>.tsv.
 run_set() {
-  local B H S=$3 k=0 meta path m1 m2 o1 o2 st side o m man dir n D rc
+  local B H S=$3 k=0 meta path n D rc dir p listed="" confdirs="" m1 o1
   local -a specs=()
   B=$(hgit_tree "$REPO" rev-parse --verify --end-of-options "$1^{commit}") || exit
   H=$(hgit_tree "$REPO" rev-parse --verify --end-of-options "$2^{commit}") || exit
-  for n in $SET_LOCKS; do specs+=("$top*$n"); done
+  for n in $SET_LOCKS bunfig.toml .npmrc; do specs+=("$top*$n"); done
   hgit_text_tree "$REPO" diff --raw -z --no-abbrev --no-renames --no-textconv --no-ext-diff --ignore-submodules=none \
     --end-of-options "$B" "$H" -- "${specs[@]}" > "$S/raw" || exit
   : > "$S/list"
   while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
     set -- $meta
-    m1=${1#:} m2=$2 o1=$3 o2=$4 st=$5
-    k=$((k + 1))
-    printf '%s' "$path" > "$S/$k.path"
-    printf '%s\t%s\t%s\t%s\n' "$k" "${st:0:1}" "$m1" "$m2" >> "$S/list"
-    for side in old new; do
-      if [ "$side" = old ]; then o=$o1 m=$m1; else o=$o2 m=$m2; fi
-      case "$o" in *[!0]*) ;; *) continue ;; esac
-      case "$m" in 100644|100755) set_blob "$o" "$S/$k.$side" "$SET_MAX" || exit ;; esac
-    done
     case "${path##*/}" in
-      package-lock.json|npm-shrinkwrap.json|yarn.lock|bun.lock) man=package.json ;;
-      Cargo.lock) man=Cargo.toml ;;
-      uv.lock|poetry.lock) man=pyproject.toml ;;
-      *) man="" ;;
+      bunfig.toml|.npmrc)
+        case "$path" in */*) confdirs=$confdirs${path%/*}/$'\n' ;; *) confdirs=$confdirs$'\n' ;; esac
+        continue ;;
     esac
-    case "$path" in */*) dir=${path%/*}/ ;; *) dir="" ;; esac
-    if [ -n "$man" ] && [ -e "$S/$k.new" ]; then
-      entry=$(hgit_tree "$REPO" ls-tree --full-tree -z "$H" -- "$dir$man" | tr '\000' '\n') || exit
-      m=${entry%% *} o=${entry#* }
-      o=${o#* }
-      o=${o%%$'\t'*}
-      case "$m" in
-        100644|100755) set_blob "$o" "$S/$k.man" 4194304 || exit ;;
-        120000) : > "$S/$k.man.link" ;;
-      esac
-    fi
+    listed=$listed$path$'\n'
+    set_entry "$path" "$5" "${1#:}" "$2" "$3" "$4" || exit
   done < "$S/raw"
+  # a bun.lock whose registry config changed while it did not: its entries may now come from another registry
+  printf '%s' "$confdirs" > "$S/confdirs"
+  while IFS= read -r dir || [ -n "$dir" ]; do
+    p=${dir}bun.lock
+    case $'\n'$listed in *$'\n'"$p"$'\n'*) continue ;; esac
+    listed=$listed$p$'\n'
+    tree_entry "$B" "$p" || exit
+    m1=$TE_MODE o1=$TE_OID
+    tree_entry "$H" "$p" || exit
+    case "$o1$TE_OID" in *[!0]*) set_entry "$p" C "$m1" "$TE_MODE" "$o1" "$TE_OID" || exit ;; esac
+  done < "$S/confdirs"
   (cd / && exec python3 -I -c "$SET_PY" "$S" "$S/set.tsv" "$S/summary" "$S/fatal") || blocker "the set cannot be computed"
   D=$WT/$RUN/deps
   if [ ! -d "$D" ] && [ ! -L "$D" ]; then confine_mkdir "$D" || blocker "cannot create $RUN/deps"; fi

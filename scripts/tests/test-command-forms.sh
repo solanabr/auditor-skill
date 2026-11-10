@@ -1263,7 +1263,7 @@ commands/deep-review.md	`audit_<n>/DEEP-REVIEW-<unit>.md`, from `${CLAUDE_PLUGIN
 commands/quick-scan.md	Read `${CLAUDE_PLUGIN_ROOT}/references/depth-scope.md` and `${CLAUDE_PLUGIN_ROOT}/known-vectors/INDEX.md` with the Read tool
 commands/quick-scan.md	select the checklist sections of its §2 and the vector rows of its §3, exactly as those tables say: none is chosen by judgment
 commands/quick-scan.md	The DevOps and supply-chain rows apply to every repository.
-docs/ci.md	That is at most 62 sections, about 102 KB, for a change that touches every kind of file, and at most 46 for a change to on-chain code alone.
+docs/ci.md	That is at most 62 sections, about 103 KB, for a change that touches every kind of file, and at most 46 for a change to on-chain code alone.
 commands/quick-scan.md	Write the selection to `audit_<n>/scope.md`, in the form of its §9, with the Write tool, before you read any checklist section or vector file.
 commands/quick-scan.md	each section with the Read tool from its `## ` heading to the next one: at its start line, with its line count as the limit, or, when that line is not the heading, from the line Grep finds the heading on to the next `## `; and each vector file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, whole, with no line limit
 commands/diff-audit.md	each section with the Read tool from its `## ` heading to the next one: at its start line, with its line count as the limit, or, when that line is not the heading, from the line Grep finds the heading on to the next `## `; and each vector file
