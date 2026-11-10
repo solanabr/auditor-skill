@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-rundir.sh — self-test for scripts/rundir.sh: the case file fixtures/rundir/cases.txt, new (names,
 # numbering, .gitignore first, the standard subdirectories, repositories that track run directories,
-# in default and strict mode, the strict marker), check, sub and store, in repositories whose config
+# in default and strict mode, the strict marker), check, sub, store and stamp, in repositories whose config
 # names programs. Every case runs under each bash on
 # the machine (/bin/bash and the bash running this suite, when they differ) and must print the same
 # under each. Needs git; no network. Usage (from the repo root): bash scripts/tests/test-rundir.sh
@@ -193,7 +193,7 @@ check "the case file has cases ($ncase)" test "$ncase" -gt 70
 tree "$W" > "$T/tree.after"
 check "no case changed anything in the working directory" cmp -s "$T/tree.before" "$T/tree.after"
 run "$W"
-check "no arguments: usage, exit 64" refused 'usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store'
+check "no arguments: usage, exit 64" refused 'usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, store, or stamp'
 
 # =================================================================================================
 # check
@@ -436,6 +436,82 @@ run "$S" store
 check "store refuses a tracked store that is missing from the working tree" \
   refused 'the repository tracks .audit-memory (in some letter case); use <R>/audit-mem.db'
 check "store ran no configured program, hook or helper" nomarks
+
+# =================================================================================================
+# stamp
+# =================================================================================================
+# stamp_run <dir> <statement or -unset->: rundir.sh stamp under each shell, with its time made <time>; each shell must
+# print the same
+stamp_run() {
+  local dir=$1 i=0 rc
+  while [ "$i" -lt "${#SHELLS[@]}" ]; do
+    if [ "$2" = -unset- ]; then
+      (cd "$dir" && unset AUDITOR_REVIEW_STATEMENT && "${SHELLS[$i]}" "$STAMPER" stamp) >"$T/sout" 2>"$T/err" </dev/null
+    else
+      (cd "$dir" && AUDITOR_REVIEW_STATEMENT=$2 "${SHELLS[$i]}" "$STAMPER" stamp) >"$T/sout" 2>"$T/err" </dev/null
+    fi
+    rc=$?
+    sed 's/ on [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\. / on <time>. /' "$T/sout" > "$T/out.$i"
+    cp "$T/err" "$T/err.$i"
+    if [ "$i" = 0 ]; then
+      RC=$rc; cp "$T/out.0" "$T/out"
+    elif [ "$rc" != "$RC" ] || ! cmp -s "$T/out" "$T/out.$i" || ! cmp -s "$T/err.0" "$T/err.$i"; then
+      ko "the same stamp under ${SHELLS[0]} and ${SHELLS[$i]}"
+    fi
+    i=$((i + 1))
+  done
+  cp "$T/err.0" "$T/err"
+}
+STAMPER=$RUNDIR
+V=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")
+W="$T/stampwd"; mkdir -p "$W"
+stamp_run "$W" -unset-
+check "stamp: the version from plugin.json, the time in UTC, and the default statement" \
+  sh -c "[ '$RC' = 0 ] && [ ! -s '$T/err' ] && [ \"\$(cat '$T/out')\" = 'Generated automatically by auditor-skill $V on <time>. No person reviewed this report before it was written.' ] && grep -Eq '^Generated automatically by auditor-skill [^ ]+ on [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\. ' '$T/sout'"
+check "... a time no more than a minute from this machine's clock, in UTC" python3 -I -c 'import calendar, re, sys, time
+m = re.search(r" on (\S+)Z\. ", open(sys.argv[1]).read())
+sys.exit(0 if m and abs(calendar.timegm(time.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")) - time.time()) < 60 else 1)' "$T/sout"
+stamp_run "$W" ''
+check "stamp: an empty AUDITOR_REVIEW_STATEMENT keeps the default" out_is "Generated automatically by auditor-skill $V on <time>. No person reviewed this report before it was written."
+stamp_run "$W" 'Reviewed in full by J. Doe, 2026-11-10.'
+check "stamp: AUDITOR_REVIEW_STATEMENT in place of the default" out_is "Generated automatically by auditor-skill $V on <time>. Reviewed in full by J. Doe, 2026-11-10."
+stamp_run "$W" $'  Read by\nJ. Doe,\tthen\033[31m signed.\r\n  '
+check "stamp: a newline, a tab, a carriage return and an escape become spaces, and the ends are trimmed" \
+  out_is "Generated automatically by auditor-skill $V on <time>. Read by J. Doe, then [31m signed."
+stamp_run "$W" $'a\xc2\x85b \xe2\x82\xac'
+check "stamp: a C1 control becomes a space, and a character UTF-8 writes in three bytes stays" \
+  out_is "Generated automatically by auditor-skill $V on <time>. a b "$'\xe2\x82\xac'
+stamp_run "$W" '   '
+check "stamp: a statement of spaces keeps the default" out_is "Generated automatically by auditor-skill $V on <time>. No person reviewed this report before it was written."
+long=$(printf 'x%.0s' $(seq 1 310))
+stamp_run "$W" "$long"
+check "stamp: a statement over 300 characters is cut at 300, with a note on stderr" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$T/out')\" = \"Generated automatically by auditor-skill $V on <time>. $(printf 'x%.0s' $(seq 1 300))\" ] && [ \"\$(cat '$T/err')\" = 'rundir: note: AUDITOR_REVIEW_STATEMENT holds more than 300 characters; the stamp keeps the first 300' ]"
+wide=$(printf $'\xc3\xa9%.0s' $(seq 1 301))
+stamp_run "$W" "$wide"
+check "stamp: the cut counts characters, not bytes: 301 two-byte letters keep 300" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$T/out')\" = \"Generated automatically by auditor-skill $V on <time>. $(printf $'\xc3\xa9%.0s' $(seq 1 300))\" ] && [ -s '$T/err' ]"
+stamp_run "$W" "$(printf 'y%.0s' $(seq 1 300))"
+check "stamp: exactly 300 characters are kept whole, with no note" \
+  sh -c "[ '$RC' = 0 ] && [ ! -s '$T/err' ] && [ \"\$(cat '$T/out')\" = \"Generated automatically by auditor-skill $V on <time>. $(printf 'y%.0s' $(seq 1 300))\" ]"
+run "$W" stamp extra
+check "stamp: an argument is refused" refused 'stamp takes no arguments'
+# the version is the installation's own: a copy of the scripts beside a plugin.json of another version
+I="$T/install"; mkdir -p "$I/.claude-plugin"
+cp -R "$ROOT/scripts" "$I/scripts"
+printf '{\n  "name": "auditor",\n  "version": "9.8.7-rc.1"\n}\n' > "$I/.claude-plugin/plugin.json"
+STAMPER="$I/scripts/rundir.sh"
+stamp_run "$W" -unset-
+check "stamp: the version is read from the plugin.json of the installation the script is in" \
+  out_is "Generated automatically by auditor-skill 9.8.7-rc.1 on <time>. No person reviewed this report before it was written."
+printf '{\n  "name": "auditor"\n}\n' > "$I/.claude-plugin/plugin.json"
+stamp_run "$W" -unset-
+check "stamp: a plugin.json that names no version is refused" refused '.claude-plugin/plugin.json names no version'
+rm "$I/.claude-plugin/plugin.json"
+stamp_run "$W" -unset-
+check "stamp: a missing plugin.json is refused" refused '.claude-plugin/plugin.json cannot be read'
+STAMPER=$RUNDIR
+check "stamp changed nothing in its working directory" sh -c "[ -z \"\$(ls -A '$W')\" ]"
 
 # =================================================================================================
 # The installation is never inside the working directory.
