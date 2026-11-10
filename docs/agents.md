@@ -1,6 +1,8 @@
 # Agent Roster
 
-The 9 subagents in `agents/`, their model tiers, when they fire, and how they chain. Back to the [docs index](README.md).
+The 9 subagents in `agents/`, their model tiers, when they fire, and how they chain, for anyone who wants to know which model does which part of an audit, or what an agent may run. Back to the [docs index](README.md).
+
+Contents: [Roster](#roster) · [How they chain in `/auditor:audit-cycle`](#how-they-chain-in-auditoraudit-cycle) · [The agents](#the-agents) · [Graceful degradation](#graceful-degradation)
 
 auditor-skill audits with a small team of subagents (spawned via the `Task` tool) plus, when present, the vendored Trail of Bits execution tooling. Orchestration overview: [`AGENTS.md`](../AGENTS.md).
 
@@ -10,13 +12,13 @@ The agents' tool calls follow the session's mode, default or strict, since every
 
 | Agent | Model | Fires | Emits |
 |-------|-------|-------|-------|
-| [context-builder](#context-builder) | sonnet | first, in every full audit | context worksheets (no verdicts) |
+| [context-builder](#context-builder) | sonnet | first, in every Standard and Full audit; source confirmation in `/auditor:hunt` and `/auditor:respond` | context worksheets (no verdicts) |
 | [threat-modeler](#threat-modeler) | opus | after context | `threat-model.md` (no verdicts) |
 | [vuln-hunter](#vuln-hunter) | opus | the main review pass | item-by-item verdicts + findings |
 | [economic-analyst](#economic-analyst) | opus | in parallel with vuln-hunter | checklist 06 + quantified economic findings |
 | [peer-reviewer](#peer-reviewer) | opus | after triage, top-severity only | CONFIRM / DISPUTE / DOWNGRADE |
 | [audit-reporter](#audit-reporter) | sonnet | synthesis | the assembled report |
-| [poc-engineer](#poc-engineer) | opus | on demand / `--with-poc` | executable PoC crate + `[PoC-*]` tier |
+| [poc-engineer](#poc-engineer) | opus | on demand / `--with-poc`; the local PoC on the real bytes in `/auditor:hunt` and `/auditor:respond` | executable PoC crate + `[PoC-*]` tier |
 | [patch-engineer](#patch-engineer) | opus | on demand / `--with-poc` | fix diff + `[FIX-*]` tier |
 | [incident-responder](#incident-responder) | opus | `/auditor:hunt`, `/auditor:respond`, through the `auditor:dnr-analyze` skill (all reading and analysis of the incident corpus) | hypothesis ledger, INCIDENTS.json, incident report or a proposed response plan for people to carry out |
 
