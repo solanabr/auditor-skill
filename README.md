@@ -149,7 +149,7 @@ auditor-skill vendors **Trail of Bits** ([trailofbits/skills](https://github.com
 git submodule update --init --depth 1 -- vendor/trailofbits
 ```
 
-**Pinned at** [`1f68e03`](https://github.com/trailofbits/skills/tree/1f68e03536f7980d4c0e6869596f708043a19443) — trailofbits/skills `main` of 2026-10-15. Upstream publishes no tags or releases, so the pin is a commit, and it moves only after a reviewed bump ([CONTRIBUTING.md §5](CONTRIBUTING.md#5-tooling-changes)); CI fails if this line and the submodule disagree, and plugin installs receive a new pin with the next release. To read the pin of any checkout without initializing the submodule: `git ls-tree HEAD vendor/trailofbits`.
+**Pinned at** [`711af09`](https://github.com/trailofbits/skills/tree/711af095215ad4ecde5b90cd1d0124b3f1c4ca9e) — trailofbits/skills `main` of 2026-11-02. Upstream publishes no tags or releases, so the pin is a commit, and it moves only after a reviewed bump ([CONTRIBUTING.md §5](CONTRIBUTING.md#5-tooling-changes)); CI fails if this line and the submodule disagree, and plugin installs receive a new pin with the next release. To read the pin of any checkout without initializing the submodule: `git ls-tree HEAD vendor/trailofbits`.
 
 The native corpus works fully **without** it (it falls back to grep-based checks and notes where deeper tooling would run). With the submodule initialized, the auditor delegates to the vendored tools per [`references/orchestration/boundary-map.md`](references/orchestration/boundary-map.md). For the optional token-efficiency tools (`audit-scan` pre-scanner + `audit-mem` memory), build the Rust CLIs (`<auditor-skill root>` is where you installed auditor-skill):
 
