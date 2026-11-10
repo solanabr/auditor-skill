@@ -2,11 +2,11 @@
 # holds the run directory audit_1 (made by rundir.sh new audit), a.rs and src/.
 # One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each
 # case prints nothing on stdout and changes nothing in the working directory.
-64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store	nope
-64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store	--help
-64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store	-x
-64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store	NEW
-64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store	create
+64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, store, or stamp	nope
+64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, store, or stamp	--help
+64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, store, or stamp	-x
+64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, store, or stamp	NEW
+64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, store, or stamp	create
 64	rundir: refused: new takes audit or incident, then --strict or nothing	new
 64	rundir: refused: new takes audit or incident, then --strict or nothing, not x	new	audit	x
 64	rundir: refused: new takes audit or incident, then --strict or nothing, not x	new	audit	--strict	x
@@ -87,3 +87,6 @@
 64	rundir: refused: the run directory is not an existing directory: audit_99	sub	audit_99	patches
 64	rundir: refused: store takes no arguments	store	x
 64	rundir: refused: store takes no arguments	store	--db
+64	rundir: refused: stamp takes no arguments	stamp	x
+64	rundir: refused: stamp takes no arguments	stamp	--help
+64	rundir: refused: usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, store, or stamp	Stamp

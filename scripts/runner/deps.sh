@@ -41,6 +41,46 @@
 #                   compressed with anything but gzip, bzip2 or xz (zstd), or in an xz stream whose
 #                   decompressor would need more than 128 MiB, and a zip whose central directory takes
 #                   more than 16 MiB or with an entry compressed with anything but deflate, are refused.
+#   lock-budget     <R>/deps/lock-set-<n>.tsv: the CI budget of checklist 11 §11.11 over a set that
+#                   scripts/recipes/lock-delta.sh set wrote, in one run. First the publish age: one request
+#                   for each distinct name of the set from a public registry (the npm registry's record of the
+#                   package, the crate's entry in the crates.io index at index.crates.io, PyPI's record of the
+#                   project), in the budget's order, at most 8 at a time, 1,000 names (each with one retry)
+#                   and 300 seconds, no lookup running past them; a lookup that still fails after its retry,
+#                   the names past those bounds and a version with no publish time are "not checked", which
+#                   fails nothing (such a version is still flagged when it is yanked, and a crate the budget
+#                   selects still has its publisher checked). For each new version: its publish time, its
+#                   publisher (for a crate, from crates.io's record, one request a second, asked only for the
+#                   crates the budget selects) and the publishers of earlier versions, flagging one under 14
+#                   days old, a first release under 14 days old, a publisher that published no earlier version
+#                   (a person to trusted publishing, npm's "GitHub Actions" or a crate version crates.io
+#                   records with trustpub_data, apart, at low severity), a yanked version and one the registry
+#                   does not list (a package it has no record of included). AUDITOR_PUBLISH_AGE=off (the
+#                   default is on) leaves this out. Then the budget: each key handler (lock-delta.sh's key
+#                   mark) whose version changed, first and outside the budget, then at most 40 of the other
+#                   npm and crates rows whose version changed, in this order: direct dependencies, pins,
+#                   install scripts, versions under 14 days, sources now on the public registry; PyPI rows and
+#                   the rest are metadata only. Each entry's new and old artifacts are fetched as
+#                   fetch-artifact fetches one (60 seconds a record request, 120 a download), its digest
+#                   checked before it is kept, with one retry (none for an artifact past a bound), at most 50
+#                   MB a download and 500 MB unpacked in the whole call (one past either counts as failed, and
+#                   once the 500 MB is spent no later artifact is asked for), into
+#                   <R>/deps/lock-budget-<n>/<k>/new and old, and compared: the files added, changed and
+#                   removed, the added lines matched against SC-059's and SC-060's patterns, binary files and
+#                   entries left out of the unpacked files, counts first. The sweep reads a line at a time and
+#                   keeps an old file's lines as hashes when it is at most 2 MB; in a newer copy of a larger
+#                   one every line counts as added. A row from a source that is not public is never sent or
+#                   fetched, and a scoped npm package the public registry has no record of (a 404 for the
+#                   package, or with the publish age off for the version) is taken as private: never fetched,
+#                   reported, and no failure; a registry set outside the repository is not seen, as the output
+#                   says. The report goes to <R>/deps/lock-budget-<n>.txt, the publish ages to
+#                   lock-budget-<n>/ages.tsv and each request to lock-budget-<n>/requests.txt. Exit 1 when
+#                   anything is flagged; 3 when an artifact the budget selects is not fetched, or an entry is
+#                   not compared in time, once the rest are compared, the last line giving the counts. The
+#                   whole call ends by 540 seconds, or AUDITOR_RUN_TIMEOUT when that is less, inside the 600 a
+#                   Bash tool call may take: its requests, unpacking and sweep stop 10 seconds before that
+#                   end, so its report is written in time, and an entry it has not compared by then counts as
+#                   failed.
 #
 # Manifests. Each --manifest is a confined regular file of at most 50 MB under the working directory, named
 # as its action takes it: Cargo.lock, Cargo.toml, package.json, package-lock.json or npm-shrinkwrap.json,
@@ -77,7 +117,8 @@
 # Hosts. registry.npmjs.org; crates.io, index.crates.io and static.crates.io; pypi.org, and the
 # files.pythonhosted.org URLs PyPI's record names; github.com, for the RustSec database. Registry queries
 # run curl -q (no .curlrc), https only, with no redirects and at most 100 MiB. Before the first request to
-# each service, one row goes to <R>/disclosures.tsv: time, tool, service, what was sent, and a count.
+# each service, one row goes to <R>/disclosures.tsv: time, tool, service, what was sent, and a count;
+# lock-budget writes one row per service for its whole run, naming the set.
 #
 # Environment. Every tool runs in the cleaned environment of scripts/lib/isolation.sh: env -i, a throwaway
 # HOME, TMPDIR in the scratch directory, the cleaned PATH, the user's CARGO_HOME and RUSTUP_HOME, and the
@@ -112,7 +153,7 @@ confine_init deps "$root"
 confine_need env git find grep mkdir mktemp rm chmod cat wc date
 WT=$CONFINE_WT
 
-USAGE='usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact'
+USAGE='usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info, fetch-artifact and lock-budget'
 TOOL=scripts/runner/deps.sh
 NPM_SPEC='^(@[A-Za-z0-9~-][A-Za-z0-9._~-]*/)?[A-Za-z0-9~-][A-Za-z0-9._~-]*$'
 CRATE_SPEC='^[A-Za-z][A-Za-z0-9_-]{0,63}$'
@@ -131,7 +172,7 @@ blocker() { printf 'deps: blocker: %s\n' "$1" >&2; exit 3; }
 ACTION=$1
 shift
 case "$ACTION" in
-  cargo-audit|cargo-outdated|cargo-tree|npm-audit|npm-view|npm-time|crate-info|pypi-info|fetch-artifact) ;;
+  cargo-audit|cargo-outdated|cargo-tree|npm-audit|npm-view|npm-time|crate-info|pypi-info|fetch-artifact|lock-budget) ;;
   *) refuse "$USAGE" ;;
 esac
 RUN_ARG="" NO_FETCH=0 seen=" "
@@ -261,6 +302,19 @@ case "$ACTION" in
       pypi) pypi_name "$NAME"; pep440 "$VER" ;;
       *) refuse "fetch-artifact takes crates, npm or pypi, not $(confine_text "$ECO")" ;;
     esac ;;
+  lock-budget)
+    [ "$n" = 1 ] || refuse "lock-budget takes one word: the set lock-delta.sh set wrote, <R>/deps/lock-set-<n>.tsv"
+    SETF=${POS[0]#./}
+    case "$SETF" in
+      "$R"/deps/lock-set-[1-9]*.tsv) k=${SETF#"$R"/deps/lock-set-}; k=${k%.tsv} ;;
+      *) k=x ;;
+    esac
+    case "$k" in ''|*[!0-9]*) refuse "lock-budget takes a set in this run, $R/deps/lock-set-<n>.tsv, not $(confine_text "${POS[0]}")" ;; esac
+    confine_path "$SETF" "the set" any
+    [ "$CONFINE_TYPE" = file ] || refuse "the set is not an existing regular file: $(confine_text "$SETF")"
+    [ -z "$(find "$WT/$SETF" -prune -size +67108864c -print 2>/dev/null)" ] || refuse "the set is larger than 64 MiB: $(confine_text "$SETF")"
+    AGE=${AUDITOR_PUBLISH_AGE:-on}
+    case "$AGE" in on|off) ;; *) refuse "AUDITOR_PUBLISH_AGE is '$(confine_text "$AGE")', not on or off" ;; esac ;;
 esac
 
 CAP=${AUDITOR_RUN_TIMEOUT:-1800}
@@ -760,7 +814,7 @@ cargo_py() { (cd / && exec python3 -I -c "$CARGO_PY" "$@"); }
 # <file name> <algo> <digest> <dir>": verify, then unpack the regular files and directories into <dir>, as
 # a zip for a .whl or .zip name and as a tar otherwise (exit 3 with the reason); prints what it did and
 # what it left out.
-REGISTRY_PY='import base64, hashlib, io, json, os, re, stat, sys, tarfile, zipfile
+REGISTRY_PY='import base64, hashlib, io, json, os, re, stat, sys, tarfile, time, zipfile
 
 try:
     import lzma
@@ -768,6 +822,14 @@ except ImportError:
     lzma = None
 
 FILES, BYTES = 50000, 512 * 1024 * 1024
+# What an unpack may take, and what it says past that: BYTES, or for lock-budget what its call has left.
+CAP = [BYTES, "the artifact unpacks to more than 512 MiB"]
+# When lock-budget must stop starting work (a time.time() value), or None: unpack checks it before each entry.
+STOP = [None]
+LATE = "the call reached its time limit"
+# A failure a retry cannot change: a bound the artifact passes, or the time limit of the call.
+FINAL = re.compile(r"^the call reached its time limit|is larger than [0-9]+ MB|unpacks? to more than|holds? more than|takes more than|needs more than")
+ROOM = "the artifacts of this call would unpack to more than %d MB"
 # What a tar may hold in pax and GNU long-name headers in all, and in global pax headers; what a zip
 # central directory may take.
 EXTENDED, GLOBAL, CENTRAL = 4 * 1024 * 1024, 128, 16 * 1024 * 1024
@@ -893,8 +955,8 @@ class Capped(tarfile.TarInfo):
         else:
             tf.chain = 0
             tf.data_bytes = getattr(tf, "data_bytes", 0) + self.size
-            if tf.data_bytes > BYTES:
-                fail("the artifact unpacks to more than 512 MiB")
+            if tf.data_bytes > CAP[0]:
+                fail(CAP[1])
         if self.type == tarfile.XGLTYPE:
             tf.global_bytes = getattr(tf, "global_bytes", 0) + self.size
             if tf.global_bytes > GLOBAL:
@@ -1058,11 +1120,13 @@ def unpack(archive, filename, algo, expected, dest):
         if declared_size < 0:
             fail("the artifact gives an entry a size below zero")
         declared += declared_size
-        if declared > BYTES:
-            fail("the artifact unpacks to more than 512 MiB")
+        if declared > CAP[0]:
+            fail(CAP[1])
         entries.append((name, kind, declared_size if kind == "file" else 0, ref))
     files = dirs = size = 0
     for e in entries:
+        if STOP[0] is not None and time.time() > STOP[0]:
+            fail(LATE)
         name, kind = e[0], e[1]
         parts = [p for p in name.split("/") if p not in ("", ".")]
         if name.startswith("/") or ".." in parts or not parts or re.search(r"[\x00-\x1f\x7f\\\\]", name):
@@ -1111,6 +1175,768 @@ def unpack(archive, filename, algo, expected, dest):
         print("  %s: %s" % (shown(name), why))
 
 
+# ---- lock-budget: the CI budget of checklist 11 §11.11 over a set lock-delta.sh set wrote ------------------
+SET_HEADER = "eco\tlockfile\tname\told\tnew\toldsource\tsource\tmarks"
+SET_ECOS = {"npm": (r"^(@[A-Za-z0-9~-][A-Za-z0-9._~-]*/)?[A-Za-z0-9~-][A-Za-z0-9._~-]*$", 214),
+            "crates": (r"^[A-Za-z][A-Za-z0-9_-]{0,63}$", 64),
+            "pypi": (r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$", 100)}
+SEMVER = r"^(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})(-[0-9A-Za-z.-]{1,64})?(\+[0-9A-Za-z.-]{1,64})?$"
+PEP440 = r"^[0-9][0-9A-Za-z.!+_-]{0,63}$"
+# The order of the 40-entry budget. A key handler, which lock-delta.sh marks key, is compared whatever the budget, first.
+CATEGORY = (("direct", 1), ("pin", 2), ("install", 3), ("young", 4), ("source-change", 5))
+MARKS = (("key", 0),) + CATEGORY
+# One call stays inside the 600 seconds a Bash tool call may take: the publish ages stop at 300 seconds, and the
+# whole call at 540. Its work stops MARGIN seconds before that end: no request, unpack or sweep runs past it, and
+# what is left is not compared, so the report is written in time.
+BUDGET, ASK_CAP, ASK_SECONDS, CALL_SECONDS, CRATES_GAP, QUARANTINE = 40, 1000, 300, 540, 1.0, 14
+MARGIN = 10
+# At most this many publish-age requests in flight. The crates.io API, asked only for the publishers of the
+# crates the budget selects, takes one request a second.
+IN_FLIGHT = 8
+# At most this much a download of the budget, and this much unpacked in one call.
+ARTIFACT_MAX, CALL_UNPACKED = 50 * 1000 * 1000, 500 * 1000 * 1000
+# What a scoped npm package the public registry has no record of is taken for: never fetched, never a failure.
+PRIVATE = "the public registry does not list this scoped package; it may be private"
+# The publisher the npm registry names for a release made by trusted publishing from GitHub Actions.
+CI_PUBLISHER = "GitHub Actions"
+# The publisher this file names for a crate version made by trusted publishing: crates.io gives such a version
+# a trustpub_data object ("filled if the version was published via trusted publishing", EncodableVersion in
+# crates_io_api_types), read before published_by, which such a version may lack.
+CRATES_CI = "trusted publishing"
+
+
+def clean(text):
+    # shown, without its cut: the report and its summary lines are long by design
+    return re.sub(r"[\x00-\x1f\x7f]", "?", str(text))
+
+
+def set_rows(path):
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    if not lines or lines[0] != SET_HEADER:
+        fail("%s is not a set lock-delta.sh set wrote: its first line is not the header" % path)
+    rows, odd = [], 0
+    for i, line in enumerate(lines[1:]):
+        if not line:
+            continue
+        cells = line.split("\t")
+        if len(cells) != 8:
+            odd += 1
+            continue
+        eco, lockfile, name, old, new, oldsource, source, marks = cells
+        spec = SET_ECOS.get(eco)
+        vspec = PEP440 if eco == "pypi" else SEMVER
+        if spec is None or not re.match(spec[0], name) or len(name) > spec[1]:
+            odd += 1
+            continue
+        public = source == "public" and bool(re.match(vspec, new))
+        if old != "-" and not re.match(vspec, old):
+            old, oldsource = "-", "-"
+        rows.append({"i": i, "eco": eco, "lockfile": lockfile, "name": name, "old": old, "new": new,
+                     "oldsource": oldsource, "source": source, "public": public,
+                     "marks": {m.split("=")[0] for m in marks.split(",") if m and m != "-"}})
+    return rows, odd
+
+
+def rank(row):
+    # 0 for a key handler, 1 to 5 for the order of the budget, 7 for a row the budget does not select
+    if "key" in row["marks"]:
+        return 0
+    got = [c for m, c in CATEGORY if m in row["marks"]]
+    return min(got) if got else 7
+
+
+def services(path, age):
+    rows, _ = set_rows(path)
+    out = []
+    for eco, host in (("npm", "npmjs.org"), ("crates", "crates.io"), ("pypi", "pypi.org")):
+        mine = [r for r in rows if r["eco"] == eco and r["public"]]
+        if not mine:
+            continue
+        if age == "on" or (eco != "pypi" and any(rank(r) < 7 and r["old"] != r["new"] for r in mine)):
+            out.append(host)
+    print("\n".join(out))
+
+
+class Fetcher:
+    # curl, one request at a time per thread; safe to call from several threads
+    def __init__(self, scratch, deadline, maxsize, agent, log):
+        import threading
+        self.scratch, self.deadline, self.maxsize, self.agent, self.log = scratch, deadline, maxsize, agent, log
+        self.count, self.last_crates, self.k, self.unpacked = 0, 0.0, 0, 0
+        self.lock, self.crates_lock = threading.Lock(), threading.Lock()
+
+    def get(self, url, accept_json=False, compressed=False, most=120, size=None):
+        import subprocess, time
+        if url.startswith("https://crates.io/"):
+            with self.crates_lock:
+                wait = self.last_crates + CRATES_GAP - time.time()
+                if wait > 0:
+                    time.sleep(wait)
+                self.last_crates = time.time()
+        left = int(self.deadline - time.time())
+        if left < 5:
+            return None, "the call reached its time limit (%d seconds, or AUDITOR_RUN_TIMEOUT when that is less)" % CALL_SECONDS
+        with self.lock:
+            self.k += 1
+            self.count += 1
+            out = os.path.join(self.scratch, "get-%d" % self.k)
+        args = ["curl", "-q", "--proto", "=https", "--proto-redir", "=https", "--tlsv1.2", "-sS", "--connect-timeout", "30",
+                "--max-time", str(min(left - 2, most)), "--max-filesize", str(size or self.maxsize), "-A", self.agent]
+        if accept_json:
+            args += ["-H", "Accept: application/json"]
+        if compressed:
+            args += ["--compressed"]
+        args += ["-o", out, "-w", "%{http_code}", "--", url]
+        p = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        code = p.stdout.decode("ascii", "replace")[-3:]
+        with self.lock:
+            self.log.write("GET %s -> %s\n" % (url, code if p.returncode == 0 else "curl exit %d" % p.returncode))
+        if p.returncode == 63 and size:
+            return None, "the artifact at %s is larger than %d MB" % (url, size // 1000000)
+        if p.returncode != 0:
+            return None, "the request to %s did not finish (curl exit %d: %s)" % (url, p.returncode, shown(p.stderr.decode("utf-8", "replace").strip())[:200])
+        if not re.match(r"^[0-9]{3}$", code):
+            return None, "the request to %s gave no HTTP status" % url
+        if code != "200":
+            return None, "HTTP %s from %s" % (code, url)
+        if size and os.path.getsize(out) > size:
+            os.remove(out)
+            return None, "the artifact at %s is larger than %d MB" % (url, size // 1000000)
+        return out, ""
+
+
+def when(text):
+    import calendar
+    m = re.match(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})[T ]([0-9]{2}):([0-9]{2}):([0-9]{2})", str(text or ""))
+    if not m:
+        return None
+    t = calendar.timegm(tuple(int(x) for x in m.groups()) + (0, 0, 0))
+    off = re.search(r"([+-])([0-9]{2}):?([0-9]{2})$", str(text))
+    if off and not str(text).endswith("Z"):
+        t -= (1 if off.group(1) == "+" else -1) * (int(off.group(2)) * 3600 + int(off.group(3)) * 60)
+    return t
+
+
+def history(eco, name, path, wanted):
+    # {version: (published, publisher, yanked)}, and the records fetch-artifact reads for the versions in
+    # <wanted>, from one registry answer
+    if eco == "crates-index":
+        with open(path, encoding="utf-8") as f:
+            data = [line for line in f.read().split("\n") if line.strip()]
+    else:
+        data = load(path)
+    hist, records = {}, {}
+    if eco == "npm":
+        times = data.get("time") if isinstance(data.get("time"), dict) else {}
+        versions = data.get("versions") if isinstance(data.get("versions"), dict) else {}
+        for v, rec in versions.items():
+            if not isinstance(rec, dict):
+                continue
+            user = rec.get("_npmUser") if isinstance(rec.get("_npmUser"), dict) else {}
+            hist[v] = (when(times.get(v)), str(user.get("name") or "") or None, False)
+            if v in wanted:
+                records[v] = {"name": rec.get("name"), "version": rec.get("version"), "dist": rec.get("dist")}
+    elif eco == "crates":
+        for rec in data.get("versions") or []:
+            if not isinstance(rec, dict) or not isinstance(rec.get("num"), str):
+                continue
+            by = rec.get("published_by") if isinstance(rec.get("published_by"), dict) else {}
+            who = CRATES_CI if rec.get("trustpub_data") else str(by.get("login") or "") or None
+            hist[rec["num"]] = (when(rec.get("created_at")), who, bool(rec.get("yanked")))
+            if rec["num"] in wanted:
+                records[rec["num"]] = {"version": {"num": rec["num"], "crate": rec.get("crate") or name, "checksum": rec.get("checksum")}}
+    elif eco == "crates-index":
+        # the crates.io index: one JSON line per version, its pubtime where crates.io records one
+        read = 0
+        for line in data:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict) or not isinstance(rec.get("vers"), str) or str(rec.get("name", "")).lower() != name.lower():
+                continue
+            read += 1
+            v = rec["vers"]
+            hist[v] = (when(rec.get("pubtime")), None, bool(rec.get("yanked")))
+            if v in wanted and isinstance(rec.get("cksum"), str):
+                records[v] = {"version": {"num": v, "crate": name, "checksum": rec["cksum"]}}
+        if not read:
+            raise ValueError("the index entry holds no version of %s" % name)
+    else:
+        for v, files in (data.get("releases") or {}).items():
+            if not isinstance(files, list):
+                continue
+            stamps = [when(f.get("upload_time_iso_8601") or f.get("upload_time")) for f in files if isinstance(f, dict)]
+            stamps = [s for s in stamps if s is not None]
+            hist[v] = (min(stamps) if stamps else None, None, bool(files) and all(isinstance(f, dict) and f.get("yanked") for f in files))
+    return hist, records
+
+
+def npm_url_path(name):
+    return name.replace("/", "%2F") if name.startswith("@") else name
+
+
+def index_path(name):
+    # where the crates.io index keeps a crate: by the length of its lowercase name, then its first letters
+    n = name.lower()
+    if len(n) <= 2:
+        return "%d/%s" % (len(n), n)
+    if len(n) == 3:
+        return "3/%s/%s" % (n[0], n)
+    return "%s/%s/%s" % (n[:2], n[2:4], n)
+
+
+def age_check(rows, fetcher, now, log):
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    names, seen = [], set()
+    for r in sorted((r for r in rows if r["public"]), key=lambda r: (rank(r), r["i"])):
+        k = (r["eco"], r["name"])
+        if k not in seen:
+            seen.add(k)
+            names.append(k)
+    wanted = {}
+    for r in rows:
+        wanted.setdefault((r["eco"], r["name"]), set()).update((r["new"], r["old"]))
+    start = time.time()
+
+    def ask(eco, name):
+        # one registry record, with one retry: (history, records, why not checked). No redirect is followed: a
+        # PyPI name comes from lock-delta.sh normalized as PEP 503 has it, the spelling the JSON API of PyPI
+        # answers itself, since it redirects only another spelling (warehouse legacy/api/json.py)
+        url = {"npm": "https://registry.npmjs.org/" + npm_url_path(name), "crates": "https://index.crates.io/" + index_path(name),
+               "pypi": "https://pypi.org/pypi/%s/json" % name}[eco]
+        why = ""
+        for attempt in (1, 2):
+            # each attempt gets 60 seconds, or what the 300 leave; none starts with less than 5 left
+            room = int(ASK_SECONDS - (time.time() - start))
+            if room < 5:
+                return None, None, why or "the 300-second bound"
+            got, why = fetcher.get(url, eco != "crates", eco != "pypi", min(60, room))
+            if not got and why.startswith("HTTP 404 "):
+                # the registry has no such package: a scoped npm one may be private to its organization;
+                # every version of any other is one the registry does not list
+                return ({}, {}, PRIVATE) if eco == "npm" and name.startswith("@") else ({}, {}, "")
+            if got:
+                try:
+                    hist, recs = history("crates-index" if eco == "crates" else eco, name, got, wanted.get((eco, name), set()))
+                    return hist, recs, ""
+                except BaseException as e:
+                    why = "the answer cannot be read: %s" % (str(e) or type(e).__name__)
+                finally:
+                    os.remove(got)
+            if "time limit" in why:
+                break
+            if attempt == 1:
+                time.sleep(1)
+        return None, None, why
+
+    results, records, not_checked = {}, {}, {}
+    asking = names[:ASK_CAP]
+    for k in names[ASK_CAP:]:
+        not_checked[k] = "the 1,000-name cap"
+    with ThreadPoolExecutor(max_workers=IN_FLIGHT) as pool:
+        answers = list(pool.map(lambda k: ask(*k), asking))
+    private = set()
+    for k, (hist, recs, why) in zip(asking, answers):
+        if why == PRIVATE:
+            private.add(k)
+            continue
+        if why:
+            not_checked[k] = why
+            continue
+        results[k] = hist
+        for v, rec in recs.items():
+            records[(k[0], k[1], v)] = rec
+    asked = len(asking)
+    out = {}
+    for r in rows:
+        if not r["public"]:
+            continue
+        k = (r["eco"], r["name"])
+        if k in private:
+            out[r["i"]] = {"private": True}
+            continue
+        if k in not_checked:
+            out[r["i"]] = {"why": not_checked[k], "unchecked": True}
+            continue
+        hist = results.get(k, {})
+        if r["new"] not in hist:
+            out[r["i"]] = {"flags": ["unlisted"], "why": "the registry does not list %s" % r["new"]}
+            continue
+        published, publisher, yanked = hist[r["new"]]
+        if published is None:
+            out[r["i"]] = {"why": "no publish time", "unchecked": True, "flags": ["yanked"] if yanked else []}
+            continue
+        flags = []
+        earlier = sorted({p for v, (t, p, y) in hist.items() if p and t is not None and published is not None and t < published})
+        older = [v for v, (t, p, y) in hist.items() if t is not None and published is not None and t < published]
+        if published is not None and (now - published) < QUARANTINE * 86400:
+            flags.append("young")
+        if published is not None and not older and "young" in flags:
+            flags.append("first-release")
+        if publisher and earlier and publisher not in earlier:
+            # a person to trusted publishing is reported plainly, at low severity; any other change is SC-061
+            flags.append("ci-publishing" if publisher == CI_PUBLISHER else "publisher-change")
+        if yanked:
+            flags.append("yanked")
+        out[r["i"]] = {"published": published, "publisher": publisher, "earlier": earlier, "flags": flags}
+    return out, records, asked, time.time() - start, not_checked, {k for k, hist in results.items() if hist}
+
+
+def crate_publishers(chosen, ages, fetcher):
+    # the record crates.io keeps of each crate the budget selects, one request a second with one retry: the publisher of
+    # each version, for SC-061. The index gives no publisher, and no other crate is asked.
+    import time
+    names = []
+    for r in chosen:
+        if r["eco"] == "crates" and r["name"] not in names:
+            names.append(r["name"])
+    hists, whys = {}, {}
+    for name in names:
+        why = ""
+        for attempt in (1, 2):
+            got, why = fetcher.get("https://crates.io/api/v1/crates/" + name, True, False, 60)
+            if got:
+                try:
+                    hists[name] = history("crates", name, got, set())[0]
+                    why = ""
+                except BaseException as e:
+                    why = "the answer cannot be read: %s" % (str(e) or type(e).__name__)
+                finally:
+                    os.remove(got)
+                if not why:
+                    break
+            if "time limit" in why or why.startswith("HTTP 404 "):
+                break
+            if attempt == 1:
+                time.sleep(1)
+        if why:
+            whys[name] = why
+    unchecked = 0
+    for r in chosen:
+        a = ages.get(r["i"])
+        if r["eco"] != "crates" or a is None:
+            continue
+        a.setdefault("flags", [])
+        hist = hists.get(r["name"])
+        mine = hist.get(r["new"]) if hist else None
+        if not mine:
+            a["publisher_why"] = whys.get(r["name"], "crates.io lists no %s" % r["new"])
+            unchecked += 1
+            continue
+        published, publisher = mine[0], mine[1]
+        earlier = sorted({p for v, (s, p, y) in hist.items() if p and s is not None and published is not None and s < published})
+        a["publisher"], a["earlier"] = publisher, earlier
+        if publisher and earlier and publisher not in earlier:
+            # as for npm: a person to trusted publishing is reported plainly, at low severity
+            a["flags"].append("ci-publishing" if publisher == CRATES_CI else "publisher-change")
+    return len(names), unchecked
+
+
+def tree_files(top):
+    # [(path below the first folder of the archive, path below files/, absolute path)] of every file, in a fixed
+    # order. npm and cargo drop the first folder of each entry as they unpack, so two entries can land on one
+    # path.
+    out = []
+    for d, dirs, files in os.walk(top):
+        dirs.sort()
+        for f in sorted(files):
+            full = os.path.join(d, f)
+            rel = os.path.relpath(full, top).split(os.sep)
+            out.append(("/".join(rel[1:]) if len(rel) > 1 else rel[0], "/".join(rel), full))
+    return out
+
+
+SC059_PATH = re.compile(r"(^|/)(build\.rs|setup\.py|binding\.gyp)$")
+SC059_LINE = re.compile(r"\x22(preinstall|install|postinstall|prepare)\x22\s*:|proc-macro\s*=\s*true|build-backend")
+SC060_LINE = re.compile(r"(child_process|execSync|spawn\(|Command::new|std::process|os\.system|subprocess|eval\(|new Function|vm\.run|fetch\(|https?://|TcpStream|reqwest|env::var|process\.env|\.config/solana|id\.json|[A-Za-z0-9+/=]{120,})")
+
+
+# The sweep reads a file a line at a time, at most LINE_PIECE bytes at once, so what it holds is bounded whatever
+# an archive unpacks to. It remembers the lines of an old file of at most OLD_LINES bytes, as a count of each
+# hash of the line; in a newer copy of a larger one, every line counts as added. It keeps at most HITS_FILE hit lines
+# a file and HITS_ENTRY an entry, and counts them all.
+LINE_PIECE, OLD_LINES, HITS_FILE, HITS_ENTRY = 1 << 20, 2 * 1000 * 1000, 30, 300
+
+
+def is_binary(path):
+    with open(path, "rb") as f:
+        return b"\0" in f.read(8192)
+
+
+def file_digest(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.digest()
+
+
+def pieces(path):
+    # each line of <path> with its number, a line longer than LINE_PIECE bytes in pieces of that size, each
+    # with the number of the line
+    with open(path, "rb") as f:
+        n, whole = 0, True
+        for raw in iter(lambda: f.readline(LINE_PIECE), b""):
+            if whole:
+                n += 1
+            whole = raw.endswith(b"\n")
+            yield n, raw.rstrip(b"\r\n")
+
+
+def line_counts(path):
+    # how many times each line of <path> occurs, by its hash; None when the file is larger than OLD_LINES
+    import collections
+    if os.path.getsize(path) > OLD_LINES or is_binary(path):
+        return None
+    counts = collections.Counter()
+    for n, line in pieces(path):
+        counts[hashlib.blake2b(line, digest_size=8).digest()] += 1
+    return counts
+
+
+class Late(Exception):
+    pass
+
+
+def sweep(old_top, new_top, left_out, first, stop=None):
+    # the files added, changed and removed between two unpacked artifacts, by the path the package manager
+    # gives each, and the added lines that match SC-059 or SC-060. <first> is the folder the registry puts
+    # every entry under: an entry elsewhere, or two entries on one path, is an SC-060 hit, and every copy on a
+    # shared path is read whole. Past <stop>, a time.time() value, it raises Late.
+    old, new = {}, {}
+    for p, rel, full in tree_files(old_top) if old_top else []:
+        old.setdefault(p, []).append(full)
+    for p, rel, full in tree_files(new_top):
+        new.setdefault(p, []).append((rel, full))
+    hits, count, binary, added, changed = [], {"SC-059": 0, "SC-060": 0}, [], 0, 0
+    kept = {}
+
+    def hit(kind, where, n, text):
+        count[kind] += 1
+        if kept.get(where, 0) < HITS_FILE and len(hits) < HITS_ENTRY:
+            kept[where] = kept.get(where, 0) + 1
+            hits.append((kind, where, n, text[:300]))
+    for p in sorted(new):
+        copies = new[p]
+        if len(copies) > 1:
+            hit("SC-060", p, 0, "%d entries of the artifact unpack to this path, and the package manager keeps one: %s"
+                % (len(copies), ", ".join(rel for rel, _ in copies[:5])))
+        for rel, full in copies:
+            if stop is not None and time.time() > stop:
+                raise Late()
+            if rel.split("/")[0] != first:
+                hit("SC-060", rel, 0, "an entry outside the %s/ folder the registry puts every entry under" % first)
+            before = old.get(p, [])
+            counts = None
+            if len(copies) == 1 and len(before) == 1:
+                if os.path.getsize(before[0]) == os.path.getsize(full) and file_digest(before[0]) == file_digest(full):
+                    continue
+                changed += 1
+                was = "changed"
+                counts = line_counts(before[0])
+            else:
+                added += 1
+                was = "added"
+            if SC059_PATH.search(p):
+                hit("SC-059", rel, 0, "a %s file %s" % (p.rsplit("/", 1)[-1], was))
+            if is_binary(full):
+                binary.append(rel)
+                continue
+            for n, raw in pieces(full):
+                if stop is not None and (n % 1000 == 0 or len(raw) > 65536) and time.time() > stop:
+                    raise Late()
+                if counts:
+                    key = hashlib.blake2b(raw, digest_size=8).digest()
+                    if counts[key] > 0:
+                        counts[key] -= 1
+                        continue
+                line = raw.decode("utf-8", "replace")
+                if SC059_LINE.search(line):
+                    hit("SC-059", rel, n, line)
+                if SC060_LINE.search(line):
+                    hit("SC-060", rel, n, line)
+    for entry in left_out:
+        hit("SC-060", entry, 0, "an entry left out of the unpacked files: a link, a special file or an unsafe name")
+    return {"added": added, "changed": changed, "removed": sum(1 for p in old if p not in new), "hits": hits, "count": count,
+            "binary": binary}
+
+
+def fetch_one(fetcher, eco, name, version, records, dest, listed=False):
+    # the record (from the publish-age answer when there is one), the artifact, its digest, the unpacked files;
+    # nothing is asked once the call has unpacked all it may. <listed>: the registry gave a record of the whole
+    # package, so a version it does not list is a failure, not a sign of a private package
+    import contextlib, shutil
+    if fetcher.unpacked >= CALL_UNPACKED:
+        return False, ROOM % (CALL_UNPACKED // 1000000), []
+    rec = records.get((eco, name, version))
+    recfile = os.path.join(fetcher.scratch, "record.json")
+    if rec is not None:
+        with open(recfile, "w", encoding="utf-8") as f:
+            json.dump(rec, f)
+    else:
+        url = ("https://registry.npmjs.org/%s/%s" % (npm_url_path(name), version) if eco == "npm"
+               else "https://crates.io/api/v1/crates/%s/%s" % (name, version))
+        got, why = fetcher.get(url, True, False, 60)
+        if not got and why.startswith("HTTP 404 ") and eco == "npm" and name.startswith("@") and not listed:
+            return None, PRIVATE, []
+        if not got:
+            return False, why, []
+        shutil.move(got, recfile)
+
+    def quiet(fn, *args):
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                return True, fn(*args), buf.getvalue()
+        except SystemExit:
+            return False, None, buf.getvalue()
+        except Exception as why:
+            return False, None, buf.getvalue() + "cannot read the answer or the artifact: %s\n" % (str(why) or type(why).__name__)
+    ok, _, said = quiet(artifact, "crates" if eco == "crates" else "npm", name, version, recfile)
+    if not ok:
+        return False, said.strip().split("\n")[-1], []
+    parts = said.strip().split("\n")[-1].split("\t")
+    if len(parts) != 4:
+        return False, "the registry record names no artifact", []
+    url, algo, digest, filename = parts
+    got, why = fetcher.get(url, size=ARTIFACT_MAX)
+    if not got:
+        return False, why, []
+    # the digest first, so an artifact that does not match is neither kept nor unpacked
+    ok, _, said = quiet(verify, got, algo, digest)
+    if not ok:
+        os.remove(got)
+        return False, said.strip().split("\n")[-1], []
+    os.mkdir(dest, 0o700)
+    shutil.copyfile(got, os.path.join(dest, filename))
+    os.mkdir(os.path.join(dest, "files"), 0o700)
+    room = CALL_UNPACKED - fetcher.unpacked
+    CAP[:] = [min(BYTES, room), "the artifact unpacks to more than 512 MiB" if room >= BYTES else ROOM % (CALL_UNPACKED // 1000000)]
+    STOP[0] = fetcher.deadline
+    try:
+        if time.time() > STOP[0]:
+            ok, said = False, LATE
+        else:
+            ok, _, said = quiet(unpack, got, filename, algo, digest, os.path.join(dest, "files"))
+    finally:
+        CAP[:] = [BYTES, "the artifact unpacks to more than 512 MiB"]
+        STOP[0] = None
+        os.remove(got)
+    if not ok:
+        shutil.rmtree(dest, ignore_errors=True)
+        return False, said.strip().split("\n")[-1], []
+    m = re.search(r"^unpacked: [0-9]+ files, ([0-9]+) bytes", said, re.M)
+    fetcher.unpacked += int(m.group(1)) if m else 0
+    left = [shown(l.strip()).split(": ")[0] for l in said.split("\n") if l.startswith("  ")]
+    return True, said.strip().split("\n")[0], left
+
+
+def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, maxsize, agent):
+    import time
+    now = time.time()
+    rows, odd = set_rows(setfile)
+    log = open(os.path.join(outdir, "requests.txt"), "w", encoding="utf-8", errors="backslashreplace")
+    fetcher = Fetcher(scratch, min(float(deadline), now + CALL_SECONDS) - MARGIN, int(maxsize), agent, log)
+    out, summary = [], []
+    out.append("lock-budget: %s: %d rows%s" % (setname, len(rows), "; %d lines that are not a row of the set, never sent" % odd if odd else ""))
+    ages, records, asked, took, not_checked, found = {}, {}, 0, 0.0, {}, set()
+    if age == "on":
+        ages, records, asked, took, not_checked, found = age_check(rows, fetcher, now, log)
+    private = [r for r in rows if ages.get(r["i"], {}).get("private")]
+    for r in private:
+        r["public"], r["private"] = False, True
+    for r in rows:
+        if "young" in ages.get(r["i"], {}).get("flags", []):
+            r["marks"].add("young")
+    candidates, seen = [], set()
+    for r in sorted((r for r in rows if r["public"] and r["eco"] in ("npm", "crates") and r["old"] != r["new"]),
+                    key=lambda r: (rank(r), r["i"])):
+        k = (r["eco"], r["name"], r["old"], r["new"])
+        if k not in seen:
+            seen.add(k)
+            candidates.append(r)
+    keys = [r for r in candidates if rank(r) == 0]
+    pool = [r for r in candidates if 0 < rank(r) < 7]
+    chosen, over = keys + pool[:BUDGET], pool[BUDGET:]
+    by = {}
+    for r in pool[:BUDGET]:
+        name = dict((c, m) for m, c in CATEGORY)[rank(r)]
+        by[name] = by.get(name, 0) + 1
+    crate_asked = crate_unchecked = 0
+    if age == "on":
+        crate_asked, crate_unchecked = crate_publishers(chosen, ages, fetcher)
+    flagged = {f: [r for r in rows if f in ages.get(r["i"], {}).get("flags", [])] for f in ("young", "first-release", "publisher-change", "ci-publishing", "yanked", "unlisted")}
+    unchecked = sum(1 for r in rows if r["public"] and ages.get(r["i"], {}).get("unchecked"))
+    public = [r for r in rows if r["public"]]
+    if age == "on":
+        line = ("publish age: %d names asked in %d s; not checked: %d of %d rows%s; under %d days: %d; first releases: %d; publisher changes: %d; from a person to CI publishing: %d; yanked: %d; not listed by the registry: %d"
+                % (asked, took, unchecked, len(public), (" (" + ", ".join(sorted({a["why"] for a in ages.values() if a.get("unchecked")})[:5]) + ")") if unchecked else "",
+                   QUARANTINE, len(flagged["young"]), len(flagged["first-release"]), len(flagged["publisher-change"]), len(flagged["ci-publishing"]),
+                   len(flagged["yanked"]), len(flagged["unlisted"])))
+        if crate_asked:
+            line += "; crate publishers, the selected crates only: %d asked, %d not checked" % (crate_asked, crate_unchecked)
+        if private:
+            line += "; scoped packages the public registry does not list, maybe private, never fetched: %d" % len(private)
+    else:
+        line = "publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: %d of %d rows" % (len(public), len(public))
+    out.append(line)
+    summary.append(line)
+    if any(r["eco"] == "npm" for r in rows):
+        line = "note: a registry set outside the repository (the environment, user or global npm or bun config) is not seen"
+        out.append(line)
+        summary.append(line)
+    for r in private[:50]:
+        out.append("  %s: %s %s %s (%s)" % (PRIVATE, r["eco"], r["name"], r["new"], r["lockfile"]))
+    with open(os.path.join(outdir, "ages.tsv"), "w", encoding="utf-8", errors="backslashreplace") as f:
+        f.write("eco\tname\tversion\tpublished\tage_days\tpublisher\tearlier_publishers\tflags\n")
+        for r in public:
+            a = ages.get(r["i"], {})
+            t = a.get("published")
+            f.write("\t".join(shown(x) for x in (r["eco"], r["name"], r["new"],
+                    time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t)) if t else "-",
+                    "%d" % ((now - t) // 86400) if t else "-", a.get("publisher") or "-",
+                    ",".join(a.get("earlier", [])[:20]) or "-", ",".join(a.get("flags", [])) or a.get("why", "-"))) + "\n")
+    for f, title in (("unlisted", "not listed by the registry"), ("publisher-change", "published by an account that published no earlier version"),
+                     ("ci-publishing", "publisher changed from a person to CI publishing (trusted publishing; low severity)"),
+                     ("first-release", "the first release of the package"), ("young", "published under %d days ago" % QUARANTINE), ("yanked", "yanked")):
+        for r in flagged[f][:50]:
+            a = ages[r["i"]]
+            extra = ""
+            if f in ("publisher-change", "ci-publishing"):
+                extra = ": %s (earlier: %s)" % (a.get("publisher"), ", ".join(a.get("earlier", [])[:5]))
+            out.append("  %s: %s %s %s (%s)%s" % (title, r["eco"], r["name"], r["new"], r["lockfile"], extra))
+        if len(flagged[f]) > 50:
+            out.append("  %s: %d more in %s/ages.tsv" % (title, len(flagged[f]) - 50, outname))
+    line = ("budget: %d key handlers to compare, outside the %d-entry budget; %d entries to compare (%s); over the %d-entry budget: %d; metadata only: %d; PyPI rows, metadata only: %d; same version with a new checksum: %d; not public, never fetched (SC-061): %d; a version outside its registry grammar, never sent: %d"
+            % (len(keys), BUDGET, len(pool[:BUDGET]), ", ".join("%s %d" % (m, by.get(m, 0)) for m, _ in CATEGORY), BUDGET, len(over),
+               len(candidates) - len(keys) - len(pool),
+               sum(1 for r in rows if r["eco"] == "pypi" and r["public"] and r["old"] != r["new"]), sum(1 for r in rows if r["old"] == r["new"]),
+               sum(1 for r in rows if r["source"] != "public"), sum(1 for r in rows if r["source"] == "public" and not r["public"] and not r.get("private"))))
+    out.append(line)
+    summary.append(line)
+    fetched = failed = 0
+    failures, results, privates, late, why_not = [], [], [], [], {}
+    for k, r in enumerate(chosen, 1):
+        if time.time() > fetcher.deadline:
+            late.append(r)
+            why_not[k] = LATE
+            results.append((k, r, None))
+            continue
+        sides = [("new", r["new"])] + ([("old", r["old"])] if r["old"] != "-" and r["oldsource"] == "public" else [])
+        got = {}
+        os.mkdir(os.path.join(outdir, str(k)), 0o700)
+        for side, version in sides:
+            dest = os.path.join(outdir, str(k), side)
+            listed = (r["eco"], r["name"]) in found
+            ok, said, left = fetch_one(fetcher, r["eco"], r["name"], version, records, dest, listed)
+            if ok is False and not FINAL.search(said) and fetcher.deadline - time.time() > 10:
+                time.sleep(2)
+                if os.path.exists(dest):
+                    shutil_rm(dest)
+                ok, said, left = fetch_one(fetcher, r["eco"], r["name"], version, records, dest, listed)
+            if ok is None or (not ok and said.startswith(LATE)):
+                break
+            if ok:
+                fetched += 1
+                got[side] = (os.path.join(dest, "files"), left)
+            else:
+                failed += 1
+                failures.append("%s %s %s: %s" % (r["eco"], r["name"], version, said))
+        s = None
+        if ok is None:
+            privates.append(r)
+            why_not[k] = PRIVATE
+        elif not ok and said.startswith(LATE):
+            why_not[k] = LATE
+        elif "new" in got and ("old" in got or len(sides) == 1):
+            try:
+                if time.time() > fetcher.deadline:
+                    raise Late()
+                s = sweep(got["old"][0] if "old" in got else None, got["new"][0], got["new"][1],
+                          "package" if r["eco"] == "npm" else "%s-%s" % (r["name"], r["new"]), fetcher.deadline)
+            except Late:
+                why_not[k] = LATE
+        if why_not.get(k) == LATE:
+            late.append(r)
+        results.append((k, r, s))
+    line = "artifacts: %d entries, %d artifacts fetched, %d failed" % (len(chosen), fetched, failed)
+    if late:
+        line += "; %d entries not compared: %s" % (len(late), LATE)
+    if privates:
+        line += "; %d scoped packages the public registry does not list, maybe private, never fetched" % len(privates)
+    out.append(line)
+    summary.append(line)
+    for f in failures:
+        out.append("  not fetched: %s" % f)
+    for k, r, s in results:
+        if k in why_not:
+            out.append("  not %s: %s %s %s: %s" % ("fetched" if why_not[k] == PRIVATE else "compared", r["eco"], r["name"], r["new"], why_not[k]))
+    tot59 = sum(s["count"]["SC-059"] for _, _, s in results if s)
+    tot60 = sum(s["count"]["SC-060"] for _, _, s in results if s)
+    totbin = sum(len(s["binary"]) for _, _, s in results if s)
+    line = ("sweep: SC-059 %d hits in %d entries, SC-060 %d hits in %d entries, binary files added or changed %d in %d entries; the hits are in the report"
+            % (tot59, sum(1 for _, _, s in results if s and s["count"]["SC-059"]),
+               tot60, sum(1 for _, _, s in results if s and s["count"]["SC-060"]),
+               totbin, sum(1 for _, _, s in results if s and s["binary"])))
+    out.append(line)
+    summary.append(line)
+    out.append("")
+    out.append("== the entries compared, counts first (files under %s/<n>/new/files and old/files)" % outname)
+    for k, r, s in results:
+        cats = ",".join(m for m, _ in MARKS if m in r["marks"])
+        if s is None:
+            out.append("%d. %s %s %s -> %s [%s] not compared: %s" % (k, r["eco"], r["name"], r["old"], r["new"], cats,
+                                                                     why_not.get(k, "an artifact was not fetched")))
+            continue
+        out.append("%d. %s %s %s -> %s [%s] SC-059 %d, SC-060 %d, binary %d; files +%d ~%d -%d%s"
+                   % (k, r["eco"], r["name"], r["old"], r["new"], cats, s["count"]["SC-059"],
+                      s["count"]["SC-060"], len(s["binary"]), s["added"], s["changed"], s["removed"],
+                      "" if r["old"] != "-" and r["oldsource"] == "public" else "; no earlier public version: every file is new"))
+    if over:
+        out.append("")
+        out.append("== over the %d-entry budget, metadata only" % BUDGET)
+        for r in over[:200]:
+            out.append("  %s %s %s -> %s [%s]" % (r["eco"], r["name"], r["old"], r["new"], ",".join(m for m, _ in MARKS if m in r["marks"])))
+        if len(over) > 200:
+            out.append("  ... %d more" % (len(over) - 200))
+    out.append("")
+    out.append("== the hits, by entry (at most 30 lines a file and 300 an entry)")
+    for k, r, s in results:
+        if not s or not (s["hits"] or s["binary"]):
+            continue
+        out.append("-- %d. %s %s %s -> %s" % (k, r["eco"], r["name"], r["old"], r["new"]))
+        for kind, p, n, text in s["hits"]:
+            out.append("%s %s:%d: %s" % (kind, shown(p), n, shown(text.strip())[:240]))
+        for p in s["binary"][:30]:
+            out.append("binary %s" % shown(p))
+        extra = s["count"]["SC-059"] + s["count"]["SC-060"] - len(s["hits"])
+        if extra > 0:
+            out.append("  ... %d more hits in this entry" % extra)
+    log.close()
+    with open(report, "w", encoding="utf-8", errors="backslashreplace") as f:
+        f.write("\n".join(clean(x) if x else "" for x in out) + "\n")
+    for line in summary:
+        print(">> " + clean(line))
+    if late or failed:
+        said = []
+        if late:
+            said.append("%d of %d selected entries were not compared: %s" % (len(late), len(chosen), LATE))
+        if failed:
+            said.append("%d of %d selected artifacts could not be fetched" % (failed, failed + fetched))
+        print("; ".join(said))
+        sys.exit(3)
+    flags = tot59 + tot60 + totbin + sum(len(v) for v in flagged.values())
+    sys.exit(1 if flags else 0)
+
+
+def shutil_rm(path):
+    import shutil
+    shutil.rmtree(path, ignore_errors=True)
+
+
 try:
     what = sys.argv[1]
     if what == "time":
@@ -1121,6 +1947,10 @@ try:
         verify(*sys.argv[2:5])
     elif what == "unpack":
         unpack(*sys.argv[2:7])
+    elif what == "plan":
+        services(sys.argv[2], sys.argv[3])
+    elif what == "budget":
+        budget(*sys.argv[2:12])
 except SystemExit:
     raise
 except BaseException as why:
@@ -1345,4 +2175,31 @@ case "$ACTION" in
     printf '%s\n' "$result" >> "$DEPS/$ACTION-$N.txt"
     [ "$rc" = 0 ] || done_with 3 "${result##*$'\n'}"
     done_with 0 "$NAME $VER, its $algo digest as $reg gives it, unpacked into $R/deps/$ACTION-$N/files" ;;
+  lock-budget)
+    plan=$(registry_py plan "$WT/$SETF" "$AGE") || done_with 3 "${plan:-the set cannot be read}"
+    for svc in $plan; do
+      case "$svc:$AGE" in
+        npmjs.org:on) disclose npmjs.org "the name of each npm package in this set from the public registry, new packages and new versions alike (its registry record: publish times and publishers), then the tarballs of the versions its budget selects" "$SETF" ;;
+        npmjs.org:off) disclose npmjs.org "the npm versions this set's budget selects (each version's registry record, then its tarball)" "$SETF" ;;
+        crates.io:on) disclose crates.io "the name of each crate in this set from crates.io, new crates and new versions alike (its entry in the crates.io index, for publish times; crates.io's record of the crates its budget selects, for their publishers), then the .crate files of the versions it selects" "$SETF" ;;
+        crates.io:off) disclose crates.io "the crate versions this set's budget selects (each version's crates.io record, then its .crate download)" "$SETF" ;;
+        pypi.org:on) disclose pypi.org "the name of each PyPI project in this set from pypi.org, new projects and new versions alike (its PyPI JSON record: upload times)" "$SETF" ;;
+      esac
+    done
+    : > "$S/head"
+    keep "$S/head"
+    AD=$DEPS/$ACTION-$N
+    confine_mkdir "$AD" || done_with 3 "cannot create $R/deps/$ACTION-$N"
+    STEP_OUT=$S/summary
+    step / ${NET[@]+"${NET[@]}"} python3 -I -c "$REGISTRY_PY" budget "$WT/$SETF" "$SETF" "$S" "$AD" "$R/deps/$ACTION-$N" "$S/report" "$AGE" "$DEADLINE" "$GET_MAX" "$UA"
+    STEP_OUT=""
+    [ ! -f "$S/report" ] || cat "$S/report" >> "$DEPS/$ACTION-$N.txt"
+    [ ! -f "$S/summary" ] || grep '^>> ' "$S/summary"
+    why=$(stopped)
+    [ -z "$why" ] || done_with 3 "lock-budget stopped: $why"
+    case "$STEP_END" in
+      'exit 0') done_with 0 "nothing flagged" ;;
+      'exit 1') done_with 1 "rows or hits flagged, counts first in the report" ;;
+      *) last=$(tail -n 1 "$S/summary" 2>/dev/null); done_with 3 "${last:-lock-budget failed ($STEP_END)}" ;;
+    esac ;;
 esac

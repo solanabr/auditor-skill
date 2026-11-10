@@ -6,7 +6,7 @@ allowed-tools:
   - Grep
   - Glob
   - Task
-  - Edit(audit_*/**)
+  - Edit(/audit_*/**)
   - 'Bash("${CLAUDE_SKILL_DIR}/scripts/preflight.sh" *)'
   - 'Bash("${CLAUDE_SKILL_DIR}/scripts/rundir.sh" *)'
   - 'Bash("${CLAUDE_SKILL_DIR}/scripts/git-ro.sh" *)'
@@ -55,6 +55,19 @@ auditor-skill does not read its whole corpus up front. It discovers the repo, de
 | **any repo** | 11, 12, 13, 16, 17, 18 |
 
 Checklists outside this set are **never read** — a Rust-only repo never loads 14 or the TS/web vectors.
+
+**Scopes, defined here once.** `--scope` on `/auditor:audit`, `/auditor:audit-cycle` and `/auditor:audit-assist` picks the part of the repository a run reviews, and its checklists; a path argument narrows that part to the path. The language rows above apply as they occur in that part:
+
+| Scope | Reviews | Checklists |
+|-------|---------|------------|
+| `full` (the default) | the whole repository | every row above that the repository matches, the any-repo row included |
+| `program` | the on-chain programs | 01–07, 16 |
+| `backend` | off-chain services: APIs, servers, workers, indexers, keepers | 08 + 09 for TypeScript, 14 for Python, 15 for other languages, 20 for Rust, as they occur; 11, 12, 16, 17, 18 |
+| `frontend` | the web client | 08, 10; 12, 16, 17 |
+
+Only `full` takes the whole any-repo row. A narrower scope takes the part of it listed, read against the scoped part, and 19 joins any scope whose part has agent components. No `--scope` value names DEVOPS: intake records that scope when the `QUESTIONS.md` Q39 answer is "DevOps / infrastructure only", and it reviews 07, 11, 12, 13, 16, 17, 18. Q39's narrower answers (one area, named files) narrow any scope further. A scope is not a depth (Audit Modes): `--scope full` is the whole repository at Standard or Full depth, and the Quick commands take no `--scope`. README.md, FULL-AUDIT.md and the docs point here.
+
+Quick and CI (`/auditor:quick-scan`, `/auditor:diff-audit`) take a smaller declared scope instead, the selection of `references/depth-scope.md`: they write it to `audit_<n>/scope.md` before they read a checklist section or a vector file, and what it leaves out is out of that depth's scope (`OUTPUT-RULES.md` Rule 0).
 
 **Step 3 — Load on demand.** Load an in-scope checklist when its phase begins; load a known-vector only when its phase + language/domain trigger reaches it (`known-vectors/INDEX.md` groups vectors by `{phase, language, trigger}`). Beyond the phase+language gate, vectors and feature-specific checklist sections also load on **feature presence** via the INDEX **"Load when (markers)"** column and the prescan advisory manifest (`references/orchestration/pre-scan.md`): a vector/section whose feature markers are *provably absent* (zero grep hits, and, for a marker a prescan array covers, that array empty; an empty array alone is not proof) is skip-deferred and renders `[N/A — feature absent]`. This is advisory only — it reopens on demand the instant a manual read surfaces the feature, and every in-scope item still gets a verdict (Rule 0).
 
@@ -139,11 +152,22 @@ Target-controlled code runs only in the execution mode in force (native by defau
 
 ## Audit Modes
 
-- **Mode 1 — FULL Repository Audit.** Complete security review of the entire codebase. → Read [OUTPUT-RULES.md](OUTPUT-RULES.md), then follow [FULL-AUDIT.md](FULL-AUDIT.md) top to bottom (discovery, per-instruction review, report via [templates/report-template.md](templates/report-template.md)).
+Pick the depth from what the user wants checked, then run its mode. A request in plain words ("quickly check this", "audit this module", "audit this before the release") picks its depth the same way.
+
+| Depth | When | Mode |
+|-------|------|------|
+| **Quick** | a branch or pull request, a first look at a repository, one function | Mode 4, Mode 6 or Mode 3 |
+| **Standard** | one module or program before it merges | Mode 1 on that path, with a scope (Step 2) |
+| **Full** | a release, or a report for someone outside the team | the [Audit Flows](#audit-flows-full-engagement-lifecycle) below, then `/auditor:re-audit` after fixes |
+
+CI is Quick run unattended: `--ci` on `/auditor:diff-audit` and `/auditor:quick-scan`. Mode 2, Mode 5, the per-finding commands (`/auditor:poc`, `/auditor:patch`, `/auditor:economic-sim`, `/auditor:triage`) and the post-incident track sit outside the depths.
+
+- **Mode 1 — Item-by-Item Audit.** A whole repository, or one path in it, with a verdict for every in-scope item. → Read [OUTPUT-RULES.md](OUTPUT-RULES.md), then follow [FULL-AUDIT.md](FULL-AUDIT.md) top to bottom (discovery, per-instruction review, report via [templates/report-template.md](templates/report-template.md)). Command `/auditor:audit [path] [--scope …]`.
 - **Mode 2 — Targeted Checklist Audit.** Review a specific domain or subset of files. → Read [OUTPUT-RULES.md](OUTPUT-RULES.md) + the relevant `checklists/` file, walk target files one at a time, record every verdict inline.
-- **Mode 3 — Single Instruction / Function Review.** Deep-dive into one handler, endpoint, or function. → Read the source completely, fill [templates/instruction-worksheet.md](templates/instruction-worksheet.md), cross-reference shared-state code.
-- **Mode 4 — Differential / PR-Scoped Audit.** A PR, commit range, or branch — not the whole tree. → Command `/auditor:diff-audit` (changed-set → Phase 0.5 on changed fns + 1-hop → risk-classify + git-blame removed guards → in-scope items through Rule 5b → dependency lane (checklist 11 §11.11) when a manifest or lockfile changed → `audit_<n>/PR-REPORT.md`).
+- **Mode 3 — Single Instruction / Function Review.** Deep-dive into one handler, endpoint, or function. → Read the source completely, fill [templates/instruction-worksheet.md](templates/instruction-worksheet.md), cross-reference shared-state code. Command `/auditor:deep-review <file> [fn]` (→ `audit_<n>/DEEP-REVIEW-<unit>.md`).
+- **Mode 4 — Differential / PR-Scoped Audit.** A PR, commit range, or branch — not the whole tree. → Command `/auditor:diff-audit` (changed-set → Phase 0.5 on changed fns + 1-hop → risk-classify + git-blame removed guards → the sections and vectors `references/depth-scope.md` selects, through Rule 5b → checklist 11 §11.11's CI budget when a manifest or lockfile changed → `audit_<n>/PR-REPORT.md`).
 - **Mode 5 — Spec-Compliance Audit.** A spec / whitepaper / RFC is supplied and you need code-vs-spec conformance. → Command `/auditor:spec-audit` (Spec-IR requirement list → map each instruction/state field → Compliance Matrix through the Rule 5b gate).
+- **Mode 6 — Quick Triage.** A first look at a whole repository, with no full checklist walk. → Command `/auditor:quick-scan` (discovery → static analysis and dependency advisories → the checklist sections and known vectors `references/depth-scope.md` selects, declared first in `audit_<n>/scope.md` → findings with severity + `file:line`, stated as a triage pass that points to Mode 1 for full coverage → `audit_<n>/QUICK-SCAN.md`).
 
 ---
 
@@ -230,14 +254,35 @@ Authoritative mapping → **Scope-Gated Loading, Step 2** (scope table) above. D
 
 ## How to Use
 
-### Full repository audit
+Pick the depth first ([Audit Modes](#audit-modes)). With the plugin, run the command; with another agent, ask in plain words.
+
+### Quick — a branch, a first look, one function
+```
+/auditor:diff-audit main..HEAD
+/auditor:quick-scan
+/auditor:deep-review programs/<your_program>/src/instructions/<file>.rs <instruction>
+```
+```
+Review what this branch changes against main using the auditor-skill
+```
+
+### Standard — one program or module, every in-scope item
+```
+/auditor:audit programs/<your_program> --scope program
+```
+```
+Audit the Solana program in programs/<your_program>/ using the auditor-skill with PROGRAM scope
+```
 ```
 Audit the entire repository using the auditor-skill with FULL scope
 ```
 
-### Program-only audit
+### Full — before a release, with a client report
 ```
-Audit the Solana program in programs/<your_program>/ using the auditor-skill with PROGRAM scope
+/auditor:audit-cycle --scope full
+```
+```
+Run the auditor-skill audit cycle on this repository and write the client report
 ```
 
 ### Specific checklist

@@ -2,7 +2,7 @@
 
 All 17 commands, grouped by phase. Namespace is `auditor` → invoke as `/auditor:<name>`. Back to the [docs index](README.md).
 
-Each entry lists the argument hint from the command's own frontmatter, when to reach for it, and what it emits. For how they compose into a full engagement, see [audit-flows.md](audit-flows.md).
+Each entry lists the argument hint from the command's own frontmatter, when to reach for it, and what it emits. Which command runs at which depth (Quick, Standard, Full, CI): [Pick a depth](audit-flows.md#pick-a-depth). For how they compose into a full engagement, see [audit-flows.md](audit-flows.md).
 
 Each command starts with `preflight.sh`, which in default mode notes what strict mode would refuse and in strict mode refuses it (`--strict` in a command's arguments turns strict mode on; [OUTPUT-RULES.md Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode)). Each pre-approves, in its `allowed-tools`, the bundled steps it runs: run directories, read-only git, the Rust tools, the runners and the collectors, each checking its own arguments. Everything else asks, and a non-interactive run denies it and records the step as not run. A command that goes on after your reply invokes itself again through the Skill tool (`--resume`), which Manual mode asks about unless your user settings allow it. What runs without asking, and why that is safe: [permissions-and-isolation.md](permissions-and-isolation.md).
 
@@ -20,9 +20,9 @@ Each command starts with `preflight.sh`, which in default mode notes what strict
 ## Scoping
 
 ### `/auditor:intake`
-Alias `/scope`. **Arg:** `[path] [--auto] [--strict]`
+**Arg:** `[path] [--auto] [--strict]`
 Turns the passive `QUESTIONS.md` questionnaire into a persisted `audit_<n>/intake.md` — the durable intake artifact both `/auditor:audit-cycle` and `/auditor:audit-assist` read (fixes intake living only in conversation state). Pins the commit (`git-ro.sh rev-parse HEAD`), pre-fills languages/framework/monorepo shape from what the code shows, warms from prior audits via `audit-mem warm` if the tools are built, and captures scope, protocol class, compliance, severity calibration, and the trust-model inputs (who holds admin / upgrade authority / oracle / keeper / LP, and what the review trusts them NOT to do).
-**When:** before any serious audit. **Emits:** `audit_<n>/intake.md`.
+**When:** inside a Full run, which invokes it (`--auto` from `audit-cycle`, interactively from `audit-assist`), or alone before one; Quick and Standard need no intake. **Emits:** `audit_<n>/intake.md`.
 `--auto` records the applied default for every unanswered question (no-human pipelines); interactive mode asks sharp, answerable questions and skips what the repo already answers. It also asks once for the **execution mode** (`Q46`: native, the default / isolated / untrusted source, which turns on strict mode / none — `OUTPUT-RULES.md` Rules 11a and 11f) and writes it to `audit_<n>/exec-mode`, where the runners read it (the stricter of it, `AUDITOR_EXEC_MODE` and strict mode). Nothing asks it again later; `--auto` records native as an assumed default, and the report states it. Then it asks whether DEP-072 / DEP-073 may **probe the project's own live hosts and buckets** (`Q47`: read-only and unauthenticated, never a third-party service); `--auto`, like an unanswered Q47, records no, and those items give the owner a command to run instead.
 
 ### `/auditor:threat-model`
@@ -37,24 +37,24 @@ No verdicts, no severities — target enumeration only. `--auto` drives the `thr
 
 ### `/auditor:audit`
 **Arg:** `[path] [--scope full|program|backend|frontend] [--strict]`
-Full scope-gated audit end-to-end in one session: reads `OUTPUT-RULES.md`, follows `FULL-AUDIT.md` with scope-gated loading, spawns `context-builder` → `vuln-hunter` → `economic-analyst` → `audit-reporter`. Every in-scope item + phase-triggered vector gets `[PASS]`/`[FAIL-N]`/`[PARTIAL]`/`[N/A]`; N≥6 findings pass Rule 5b or downgrade.
-**When:** whole-repo audit where you handle triage yourself. **Emits:** `audit_<n>/REPORT.md` (internal template, numeric risk score) with executive summary, Scope Coverage table, findings, Phase 4.5 maturity scorecard, remediation roadmap.
+The Standard depth: a scope-gated, item-by-item audit end-to-end in one session. Reads `OUTPUT-RULES.md`, follows `FULL-AUDIT.md` with scope-gated loading, spawns `context-builder` → `vuln-hunter` → `economic-analyst` → `audit-reporter`. Every in-scope item + phase-triggered vector gets `[PASS]`/`[FAIL-N]`/`[PARTIAL]`/`[N/A]`; N≥6 findings pass Rule 5b or downgrade.
+**When:** a module, a program or the whole repository, every in-scope item checked once, where you handle triage yourself. **Emits:** `audit_<n>/REPORT.md` (internal template, numeric risk score) with executive summary, Scope Coverage table, findings, Phase 4.5 maturity scorecard, remediation roadmap.
 Runs SAST with `sast.sh` (semgrep) and the ToB tooling if present, else the grep scanners (noting the gap).
 
 ### `/auditor:quick-scan`
-**Arg:** `[--strict]`
-Fast triage: discovery + scope + static analysis (`sast.sh` semgrep with the rulesets in scope; ToB `static-analysis` when semgrep is missing and the plugins are present; else `discovery/grep-commands.md`) + only CRITICAL/HIGH known-vectors for the detected domains — not the full set.
-**When:** first look, CI gate (on a public repo: pass/fail only, no counts — Rule 11d). As a CI gate it runs non-interactively, so the run must be able to run its analyzers: an analyzer that did not run is reported as not run, and the gate fails. **Emits:** findings with severity + `file:line`; explicitly states it is a triage pass and points to `/auditor:audit`.
+**Arg:** `[<path>] [--ci] [--fail-on <N>] [--strict]`
+Fast triage: discovery + scope + static analysis (`sast.sh` semgrep with the rulesets in scope; ToB `static-analysis` when semgrep is missing and the plugins are present; else `discovery/grep-commands.md`) + dependency advisories (`deps.sh` cargo-audit and npm-audit) + the checklist sections and known-vector rows `references/depth-scope.md` selects for the detected domains, declared first in `audit_<n>/scope.md` — not the full checklist walk. Its scope is the path you pass, or else the whole repository; with more than two on-chain programs it scans the two largest and names a `/auditor:quick-scan <path>` for each of the others.
+**When:** a first look at a whole repository (Quick), or a scheduled scan of the default branch with `--ci`. An analyzer that did not run is reported as not run, never counted as clean. **Emits:** `audit_<n>/QUICK-SCAN.md`, from `templates/pr-report.md` with its summary block first: findings with severity + `file:line`, stated as a triage pass that points to `/auditor:audit`. `--fail-on <N>` (1 to 10, default 7) sets the summary's verdict threshold. With `--ci` it asks nothing, also writes `audit_<n>/findings.json`, names only the report in its reply, and ends with the closing line `auditor: verdict: pass|fail (threshold N, analyzers run: …)`: fail when a counted finding reaches N, when an analyzer it called for did not run, or when the run stopped early. On a public repository, CI publishes that line and notes about the tools only, never a finding or a count, and the details stay on the runner (Rule 11d). Detail: [ci.md](ci.md#what-the-verdict-means).
 
 ### `/auditor:deep-review`
 **Arg:** `<file> [function|instruction] [--strict]`
 Deep single-unit review: read the file, run Phase 0.5 context reconstruction on the target (purpose, inputs, ≥3 invariants, ≥5 assumptions, ≥3 external-interaction risks, each cited to `L#`), fill the instruction worksheet, cross-reference shared-state code, adversarially model exploitation.
-**When:** one handler/endpoint/function needs depth. **Emits:** per-item verdicts + findings for that unit only. N≥6 findings pass Rule 5b.
+**When:** one handler/endpoint/function needs depth (Quick). **Emits:** `audit_<n>/DEEP-REVIEW-<unit>.md`, from `templates/pr-report.md`, and the worksheets: per-item verdicts + findings for that unit only, in the report and in the reply. `<unit>` is the function or instruction name, else the file's name without its extension. N≥6 findings pass Rule 5b.
 
 ### `/auditor:diff-audit`
-**Arg:** `[base..head | PR number] [--strict]`
-Differential audit (Mode 4). Changed set via read-only git, `git-ro.sh diff --name-only base..head` (default `main..HEAD`); Phase 0.5 on changed functions + 1-hop callers/callees; risk-classify (auth/crypto/value-transfer/validation-removal = HIGH); git-blame removed security code (deletion in a "fix"/"CVE" commit = CRITICAL regression); run only the matching checklist items + vectors through Rule 5b. When a manifest or lockfile changed, a **dependency lane** runs checklist 11 §11.11 (the published artifact's code delta, SC-059..062) and adds a Dependency delta section.
-**When:** a PR / commit range, not the whole tree. **Emits:** `audit_<n>/PR-REPORT.md` — changed-surface verdicts only; skips whole-repo discovery.
+**Arg:** `[base..head] [--ci] [--fail-on <N>] [--over-budget fail] [--strict]`
+Differential audit (Mode 4). Changed set via read-only git, `git-ro.sh diff --name-only base..head` (default `main..HEAD`); Phase 0.5 on changed functions + 1-hop callers/callees; risk-classify (auth/crypto/value-transfer/validation-removal = HIGH); git-blame removed security code (deletion in a "fix"/"CVE" commit = CRITICAL regression); read the checklist sections and known-vector rows `references/depth-scope.md` selects for the kinds of file the change holds, declared first in `audit_<n>/scope.md`, and give their findings through Rule 5b. When a manifest or lockfile changed, a **dependency lane** runs checklist 11 §11.11's CI budget (`lock-delta.sh set` for the new versions, then `deps.sh lock-budget` for their publish ages and the published code of every key-handling package and at most 40 others) and adds a Dependency delta section. It reviews at most 5,000 changed lines, riskiest first, and counts the rest; `--over-budget fail` fails the review instead.
+**When:** a branch, a PR or another commit range, not the whole tree (Quick); in CI, the review job of `templates/ci/auditor-pr.yml` runs it with `--ci` on the pull request's two commits ([ci.md](ci.md)). It reviews commits: with no argument it compares the tip of `main` with HEAD, so rebase on `main` first. **Emits:** `audit_<n>/PR-REPORT.md`, from `templates/pr-report.md` with its summary block first — changed-surface verdicts only; skips whole-repo discovery. `--fail-on` and `--ci` work as for `quick-scan`, with `audit_<n>/findings.json` and the same closing line.
 
 ### `/auditor:spec-audit`
 **Arg:** `<spec-file> [program-path] [--strict]`
@@ -102,7 +102,7 @@ Drafts and verifies a fix: `patch-engineer` writes a **minimal idiomatic** unifi
 ### `/auditor:audit-report`
 **Arg:** `[audit-dir] [--strict]`
 Aggregates the session's checkpoints and findings into the final report: de-dup + classify by severity, assemble from `templates/report-template.md` (executive summary with safe-to-deploy verdict, Scope Coverage table, per-checklist verdicts, findings, Phase 4.5 maturity scorecard, remediation roadmap CRITICAL→INFO).
-**When:** you ran the walk in pieces and need the report assembled. **Emits:** `audit_<n>/REPORT.md`; flags any in-scope item lacking a verdict as `[INCOMPLETE — in-scope item without verdict]`. (Driven by the `audit-reporter` agent, which does assembly only — no code re-analysis.)
+**When:** you ran the walk in pieces and need the report assembled. **Emits:** `audit_<n>/REPORT.md`; flags any in-scope item lacking a verdict as `[INCOMPLETE — in-scope item without verdict]`. It assembles the report in your session: its steps spawn no agent and re-analyze no code.
 
 ---
 

@@ -1,12 +1,12 @@
 ---
 name: auditor:intake
-description: Interactive engagement intake (alias /scope). Walks QUESTIONS.md and persists the answers to audit_<n>/intake.md — the durable intake artifact both audit-cycle and audit-assist read, instead of answers living only in conversation state. Captures scope + commit pin, languages/frameworks, protocol class, compliance, severity calibration, the trust-model inputs that feed the report's Trust Model and Assumptions sections, and the execution mode for target-controlled code (OUTPUT-RULES Rule 11a). Interactive mode asks; automated mode records the applied default.
+description: Interactive engagement intake. Walks QUESTIONS.md and persists the answers to audit_<n>/intake.md — the durable intake artifact both audit-cycle and audit-assist read, instead of answers living only in conversation state. Captures scope + commit pin, languages/frameworks, protocol class, compliance, severity calibration, the trust-model inputs that feed the report's Trust Model and Assumptions sections, and the execution mode for target-controlled code (OUTPUT-RULES Rule 11a). Interactive mode asks; automated mode records the applied default.
 argument-hint: "[path] [--auto] [--strict]"
 allowed-tools:
   - Read
   - Glob
   - Grep
-  - Edit(audit_*/**)
+  - Edit(/audit_*/**)
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" *)'

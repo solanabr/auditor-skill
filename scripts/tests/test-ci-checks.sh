@@ -204,9 +204,9 @@ printf -- '---\n%s\n%s\n%s\n' "$N" "$D" "$TL" > "$T/fm/agents/no-closing.md"; fm
 # commands: the one-line form with ${CLAUDE_PLUGIN_ROOT} in a pattern, and the list form, single-quoted items
 C="description: A command."
 fm commands/one-line.md pass "name: auditor:hunt" "$C" 'argument-hint: "[<address> ...] [--logs <dir>]"' \
-  'allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**), Bash(jq *), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh *)'
+  'allowed-tools: Read, Grep, Glob, Task, Edit(/incident_*/**), Bash(jq *), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh *)'
 fm commands/list-form.md pass "$C" "allowed-tools:" "  - Read" "  - Task" \
-  "  - 'Bash(bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh\" *)'" "  - 'Bash(echo ''x'' *)'" "  - Edit(incident_*/**)"
+  "  - 'Bash(bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh\" *)'" "  - 'Bash(echo ''x'' *)'" "  - Edit(/incident_*/**)"
 fm commands/poc-unfixed.md fail "name: auditor:poc" \
   "description: Generate a PoC. Never hard-fails: on toolchain absence it downgrades." "allowed-tools: Read, Grep, Glob, Bash, Task"
 fm commands/no-allowed-tools.md fail "$C" 'argument-hint: "[path]"'
@@ -253,7 +253,7 @@ fm agents/responder.md pass "name: responder" "$D" "$TL"
 fm agents/misnamed.md pass "name: someone-else" "$D" "$TL"
 F="context: fork"; A="agent: auditor:responder"; S='description: "A forked skill."'
 fm skills/forked/SKILL.md pass "name: f" "$S" "$F" "$A" "background: false" "user-invocable: false" "allowed-tools:" \
-  "  - Read" "  - Edit(incident_*/**)" "  - 'Bash(\"\${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh\" *)'"
+  "  - Read" "  - Edit(/incident_*/**)" "  - 'Bash(\"\${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh\" *)'"
 fm skills/fork-one-line/SKILL.md pass "name: f1" "$S" "context: 'fork'" 'agent: "auditor:responder"' "background: true" \
   "user-invocable: true" 'allowed-tools: Read, Grep, Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh *)'
 fm Skills/upper-case/SKILL.md pass "name: f2" "$S" "$F" "$A"
@@ -301,7 +301,7 @@ fmroot() { # fmroot NAME WANT LINE...  — a SKILL.md of those LINEs, checked as
   else failn=$((failn + 1)); echo "FAIL frontmatter root SKILL.md, ${d##*/}: got $got, want $want"; echo "$out"; fi
 }
 TS='${CLAUDE_SKILL_DIR}/tools/auditor-tools/target/release'
-fmroot listed pass "name: r" 'description: "A skill."' "allowed-tools:" "  - Read" "  - Edit(audit_*/**)" \
+fmroot listed pass "name: r" 'description: "A skill."' "allowed-tools:" "  - Read" "  - Edit(/audit_*/**)" \
   "  - 'Bash(\"\${CLAUDE_SKILL_DIR}/scripts/preflight.sh\" *)'" "  - 'Bash(\"$TS/audit-scan\" --contract=1 *)'" \
   "  - 'Bash(\"$TS/audit-mem\" warm --contract=1 *)'" "  - 'Bash(test -x \"$TS/audit-mem\")'"
 fmroot one-line pass "name: r" 'description: "A skill."' "allowed-tools: Read, Grep"
@@ -1232,17 +1232,17 @@ eprepo() { # eprepo NAME  — a checkout whose entry points, case files and rule
     printf '%s/audit-scan\tscripts/tests/fixtures/ok/cases.txt\t--contract=1\n' "$RB"
     printf '%s/audit-mem\tscripts/tests/fixtures/ok/cases.txt\twarm|check --contract=1\n' "$RB"
     printf '%s/audit-logs\tscripts/tests/fixtures/rec/hostile-args.txt\n' "$RB"; } > "$d/scripts/entrypoints.txt"
-  { printf -- "---\ndescription: A command.\nallowed-tools:\n  - Read\n  - Edit(audit_*/**)\n  - 'Bash(\"%s/scripts/ok.sh\" *)'\n" "$PR"
+  { printf -- "---\ndescription: A command.\nallowed-tools:\n  - Read\n  - Edit(/audit_*/**)\n  - 'Bash(\"%s/scripts/ok.sh\" *)'\n" "$PR"
     printf -- "  - 'Bash(\"%s/scripts/ok.sh\")'\n  - 'Bash(\"%s/scripts/tm.sh\" --offline *)'\n" "$PR" "$PR"
     printf -- "  - 'Bash(\"%s/%s/audit-scan\" --contract=1 *)'\n  - 'Bash(\"%s/%s/audit-mem\" check --contract=1 --db x.db)'\n" \
       "$PR" "$RB" "$PR" "$RB"
-    printf -- "  - Glob\n  - Task\n  - Edit(incident_*/**)\n  - Skill(auditor:poc *)\n  - Skill(auditor:audit-report *)\n"
+    printf -- "  - Glob\n  - Task\n  - Edit(/incident_*/**)\n  - Skill(auditor:poc *)\n  - Skill(auditor:audit-report *)\n"
     printf -- "---\n\nBody.\n"; } > "$d/commands/c.md"
   printf -- "---\ndescription: A one-line command.\nallowed-tools: Read, Bash(\"%s/%s/audit-logs\" profile *), Grep\n---\n" "$PR" "$RB" \
     > "$d/commands/one.md"
   printf -- '---\nname: a\ndescription: An agent.\ntools: Read, Grep, Write, Edit, Bash\n---\n' > "$d/agents/a.md"
-  printf -- "---\nname: s\ndescription: A skill.\nallowed-tools:\n  - 'Bash(\"%s/scripts/rec.py\" *)'\n---\n" "$PR" > "$d/skills/s/SKILL.md"
-  printf -- "---\nname: r\ndescription: The root skill.\nallowed-tools:\n  - 'Bash(\"%s/scripts/ok.sh\" new *)'\n---\n" "$SD" > "$d/SKILL.md"
+  printf -- "---\nname: s\ndescription: A skill.\nallowed-tools:\n  - 'Bash(\"%s/scripts/rec.py\" *)'\n  - Edit(/incident_*/**)\n---\n" "$PR" > "$d/skills/s/SKILL.md"
+  printf -- "---\nname: r\ndescription: The root skill.\nallowed-tools:\n  - 'Bash(\"%s/scripts/ok.sh\" new *)'\n  - Edit(/audit_*/**)\n---\n" "$SD" > "$d/SKILL.md"
   git -C "$d" add -A
 }
 eprun() { # eprun NAME WANT-RC TEXT  — the check in checkout NAME exits WANT-RC and says TEXT
@@ -1335,6 +1335,20 @@ for e in WebFetch Write 'Edit(**)' 'Edit(audit_1/x.md)' Skill 'Skill(other:x *)'
   epcmd "rule-named-$(printf '%s' "$e" | tr -c 'A-Za-z0-9_-' '_')" \
     "allowed-tools entry '$e' is no read tool (Read, Grep, Glob), Task, run-directory edit" "$e"
 done
+# a run-directory edit is anchored at the folder the session started in: after a cd, the bare form matches
+# <the new folder>/audit_*, not the run directory, so it fails wherever it appears
+W="is no read tool (Read, Grep, Glob), Task, run-directory edit (Edit(/audit_*/**), Edit(/incident_*/**))"
+epcmd rule-unanchored-audit "commands/c.md:4: allowed-tools entry 'Edit(audit_*/**)' $W" 'Edit(audit_*/**)'
+epcmd rule-unanchored-incident "commands/c.md:4: allowed-tools entry 'Edit(incident_*/**)' $W" 'Edit(incident_*/**)'
+epcmd rule-edit-fs-root "allowed-tools entry 'Edit(//audit_*/**)' $W" 'Edit(//audit_*/**)'
+epcmd rule-edit-dot "allowed-tools entry 'Edit(./audit_*/**)' $W" 'Edit(./audit_*/**)'
+epcmd rule-edit-home "allowed-tools entry 'Edit(~/audit_*/**)' $W" 'Edit(~/audit_*/**)'
+epcmd rule-edit-no-depth "allowed-tools entry 'Edit(/audit_*)' $W" 'Edit(/audit_*)'
+epcmd rule-edit-one-run "allowed-tools entry 'Edit(/audit_1/**)' $W" 'Edit(/audit_1/**)'
+ep rule-unanchored-root "SKILL.md:6: allowed-tools entry 'Edit(audit_*/**)' $W" \
+  'sed "s#Edit(/audit_#Edit(audit_#" SKILL.md > s && mv s SKILL.md'
+ep rule-unanchored-skill "skills/s/SKILL.md:6: allowed-tools entry 'Edit(incident_*/**)' $W" \
+  'sed "s#Edit(/incident_#Edit(incident_#" skills/s/SKILL.md > s && mv s skills/s/SKILL.md'
 ep rule-named-root "SKILL.md:5: allowed-tools entry 'WebFetch' is no read tool" \
   'awk "{ print } /^allowed-tools:\$/ { print \"  - WebFetch\" }" SKILL.md > s && mv s SKILL.md'
 ep rule-control "holds a tab, a control character or a byte outside printable ASCII" \

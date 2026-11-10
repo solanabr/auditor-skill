@@ -1,27 +1,66 @@
 # Audit Flows
 
-Which flow to run, and the pipeline each one follows. Back to the [docs index](README.md).
+Which depth to run, and the pipeline each one follows. Back to the [docs index](README.md).
 
-auditor-skill offers a spectrum from a 5-minute grep triage to a full automated engagement that emits a client-facing report. Pick by how much rigor the moment needs.
+## Pick a depth
 
-## Decision guide
+auditor-skill has three depths and a CI mode. Pick by what you want checked: what changed, one module, or the release.
 
-| Situation | Flow | Cost |
-|-----------|------|------|
-| CI gate on every PR; first look at an unknown repo | [`/auditor:quick-scan`](#cheap-lanes) | lowest |
-| Only a PR / commit range changed | [`/auditor:diff-audit`](#cheap-lanes) | scales with the diff |
-| One handler / endpoint needs a deep look | [`/auditor:deep-review`](#one-shot-audit) | one unit |
-| Whole repo, one pass, you drive triage | [`/auditor:audit`](#one-shot-audit) | full walk |
-| Full engagement, no human, deliver a report | [`/auditor:audit-cycle`](#flow-a--auditoraudit-cycle-automated) | highest |
-| Full engagement, human resolves judgment calls | [`/auditor:audit-assist`](#flow-b--auditoraudit-assist-interactive) | high, iterative |
-| Team fixed the findings; verify the fixes | [`/auditor:re-audit`](#fix-review--re-audit) | delta only |
-| A protocol may already have been attacked | [`/auditor:hunt` · `/auditor:respond`](detection-response.md) | scales with ledger rounds |
+| Depth | When | Run | Reads | Writes | [Cost](../COSTS.md#cost-and-time-by-depth) |
+|-------|------|-----|-------|--------|------|
+| **Quick** | a branch or pull request, a first look at a repository, one function | `/auditor:diff-audit` · `/auditor:quick-scan` (whole repository) · `/auditor:deep-review <file> <fn>` | the changed code + one hop, read against the sections and vectors `references/depth-scope.md` selects · SAST, dependency advisories, and the sections and vectors `references/depth-scope.md` selects · one function | `PR-REPORT.md` · `QUICK-SCAN.md` · `DEEP-REVIEW-<unit>.md` | $2–8 · 4–23 min |
+| **Standard** | one module or program before it merges | `/auditor:audit <path> --scope …` | every in-scope item for that path | `REPORT.md`, internal: a risk score and a deploy verdict | $13–19 · 36–56 min |
+| **Full** | a release, or a report for someone outside the team | `/auditor:audit-cycle` (unattended) · `/auditor:audit-assist` (you steer) · `/auditor:re-audit` after fixes | everything in scope, a threat model, peer review (re-audit: the fix delta) | `REPORT.md`, client style: no deploy guarantee (audit-cycle adds a PDF when pandoc and a LaTeX engine are installed, and PoCs with `--with-poc`) · `RE-AUDIT.md`, with an updated deploy verdict | about $20 · about 1 h, on a 3K-line program |
+| **[CI](ci.md)** | every pull request: the analyzers on all, the review on your own branches' only | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | as Quick | `findings.json` and SARIF on the runner; in the log, pass/fail and notes about the tools, never a finding or a count | tools job $0; review about a diff-audit's cost ($2–8), capped at $15 |
 
-All three heavyweight flows run the **same lifecycle** over the same corpus. The difference is autonomy: `audit-cycle` runs it to completion, `audit-assist` pauses for you, `re-audit` runs the delta subset.
+Costs and times were measured from 2026-11-08 to 2026-11-10 with `claude-opus-5-5`, on 3K-, 7K- and 12K-line programs. Quick's range covers diff-audit runs of $1.68–8.10 and quick-scan runs of $2.84–7.14. The shipped command text was measured on the 3K-line repository, where a quick-scan cost $6.98 in 23 minutes and a diff-audit of a 7,830-line range, a lockfile change included, $8.10 in 19 minutes, and on the 12K-line program, where a diff-audit of a 1,248-line change with no lockfile cost $3.99 in 9 minutes. The other runs were on earlier drafts, and those under $3 read 16 to 55 vector files and at most one checklist. Full ran once, on the 3K-line program ([COSTS.md](../COSTS.md#cost-and-time-by-depth)). Outside the depths: `poc`, `patch`, `economic-sim` and `triage` work on one finding; `intake` and `threat-model` are Full's building blocks; `audit-report` assembles the internal report from a walk run in pieces; `spec-audit` checks code against a spec; `hunt` and `respond` are for after an incident ([detection-response.md](detection-response.md)).
 
 Every flow first runs `preflight.sh` on the working tree. Its first line names the mode: in default mode it notes what it finds and the flow goes on; in strict mode, for a repository you do not trust, it refuses project config and the rest [Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode) lists. Then the flow runs its bundled steps without asking: run directories, read-only git, the Rust tools, and the runners that build and test in the execution mode in force, native unless intake, `AUDITOR_EXEC_MODE` or strict mode says otherwise. What still asks, and how to run in strict mode, isolated or in `claude -p`: [permissions-and-isolation.md](permissions-and-isolation.md).
 
-## The lifecycle (shared spine)
+## Quick
+
+These skip the full checklist walk: inside the sections they read, every item still gets a verdict.
+
+### `/auditor:diff-audit`
+
+PR / commit-scoped. Computes the changed set with read-only git (`git-ro.sh diff --name-only base..head`, default `main..HEAD`), runs Phase 0.5 on changed functions + 1-hop callers/callees, risk-classifies changed files (auth / crypto / value-transfer / validation-removal = HIGH), git-blames removed security code (a deletion in a "fix"/"CVE" commit is a CRITICAL regression), reads the checklist sections and known-vector rows `references/depth-scope.md` selects for the kinds of file the change holds, writing that selection to `audit_<n>/scope.md` before it reads any, and gives their findings through Rule 5b. When a manifest or lockfile changed, it runs checklist 11 §11.11's CI budget: `lock-delta.sh set` finds the new package versions, and `deps.sh lock-budget` checks their publish ages and compares the published code of every key-handling package and at most 40 others. It reviews at most 5,000 changed lines, riskiest first, and counts the rest; `--over-budget fail` fails the review instead. Emits `audit_<n>/PR-REPORT.md`. It reviews commits, so commit your work first. With no argument it compares the tip of `main` with HEAD, so rebase on `main` first, or changes `main` gained since you branched show up in the review. In CI, the workflow passes the pull request's range.
+
+```
+/auditor:diff-audit                 # main..HEAD
+/auditor:diff-audit v1.2.0..HEAD
+```
+
+### `/auditor:quick-scan`
+
+A first look at a whole repository, or at the path you pass: discovery and scope, static analysis of every in-scope directory (`sast.sh` semgrep; ToB `static-analysis` when semgrep is missing and the plugins are present; else grep scanners), dependency advisories (`deps.sh` cargo-audit and npm-audit), and a reading pass over the checklist sections and known-vector rows `references/depth-scope.md` selects for the detected domains, written to `audit_<n>/scope.md` before any is read: each domain's core sections, the gated ones whose markers occur, the severity 7+ always vectors, and the 9+ marker vectors whose markers occur. In a repository with more than two on-chain programs, it scans the two largest and names a `/auditor:quick-scan <path>` for each of the others. Writes `audit_<n>/QUICK-SCAN.md`: findings with severity + `file:line`, stated plainly as a triage pass that points to `/auditor:audit` for full coverage. An analyzer that did not run is reported as not run, never counted as clean. Its scope is the path you pass, or else the whole repository. For a pull request diff-audit reads less code, but it selects more of the corpus: on the 3K-line repository its shipped text read 98 vector files and 43 sections for $8.10, where quick-scan read 38 and 49 for $6.98 ([COSTS.md](../COSTS.md#cost-and-time-by-depth)).
+
+### `/auditor:deep-review`
+
+One instruction / function, deeply. Reads the file, runs Phase 0.5 context reconstruction on the target, fills the instruction worksheet, adversarially models exploitation, and writes the verdicts for that unit only to `audit_<n>/DEEP-REVIEW-<unit>.md`.
+
+```
+/auditor:deep-review programs/vault/src/instructions/withdraw.rs withdraw
+```
+
+Quick costs less than a full walk because it reads less: diff-audit what changed and one hop around it, quick-scan the sections and vectors depth-scope.md selects, deep-review one unit.
+
+## Standard
+
+### `/auditor:audit`
+
+Runs the audit end-to-end in the current session: discover → scope-gate → spawn `context-builder`, then `vuln-hunter` for the item-by-item walk, `economic-analyst` for checklist 06 + economic vectors, `audit-reporter` for assembly. Every in-scope item gets a verdict; N≥6 findings pass Rule 5b or downgrade. Emits `audit_<n>/REPORT.md` with the internal template (numeric Repository Risk Score).
+
+```
+/auditor:audit ./programs/vault --scope program
+```
+
+Use it for a module or program that was never reviewed as a whole, before it merges: every in-scope item is checked once, and you handle triage yourself. A pull request is still Quick. `--scope` picks the part of the repository; [SKILL.md](../SKILL.md#scope-gated-loading--load-what-the-repo-needs) defines each scope.
+
+## Full
+
+The two Full flows and the fix review run the **same lifecycle** over the same corpus. The difference is autonomy: `audit-cycle` runs it to completion, `audit-assist` pauses for you, `re-audit` runs the delta subset.
+
+### The lifecycle (shared spine)
 
 Both `/auditor:audit-cycle` and `/auditor:audit-assist` execute this pipeline. It mirrors a professional firm engagement, run by mechanisms the skill already has ([`references/audit-lifecycle/methodology.md`](../references/audit-lifecycle/methodology.md)).
 
@@ -53,35 +92,7 @@ Two disciplines run through the whole spine:
 
 Agent roles and model tiers: [agents.md](agents.md).
 
-## One-shot audit
-
-### `/auditor:audit`
-
-Runs the audit end-to-end in the current session: discover → scope-gate → spawn `context-builder`, then `vuln-hunter` for the item-by-item walk, `economic-analyst` for checklist 06 + economic vectors, `audit-reporter` for assembly. Every in-scope item gets a verdict; N≥6 findings pass Rule 5b or downgrade. Emits `audit_<n>/REPORT.md` with the internal template (numeric Repository Risk Score).
-
-```
-/auditor:audit ./programs/vault --scope program
-```
-
-Use it when you want the full walk but will handle checkpoints and triage yourself, rather than the fully-orchestrated firm flow.
-
-### `/auditor:deep-review`
-
-One instruction / function, deeply. Reads the file, runs Phase 0.5 context reconstruction on the target, fills the instruction worksheet, adversarially models exploitation, reports verdicts for that unit only.
-
-```
-/auditor:deep-review programs/vault/src/instructions/withdraw.rs withdraw
-```
-
-### `/auditor:spec-audit`
-
-Code-vs-spec. Extracts a requirement list from a spec/whitepaper/RFC, then builds a Compliance Matrix mapping each requirement to `[MET]` / `[VIOLATED-N]` / `[UNIMPLEMENTED]` / `[UNDOCUMENTED-BEHAVIOR]`, cited to code. Code that does something the spec never authorizes is itself a finding.
-
-```
-/auditor:spec-audit ./SPEC.md ./programs/vault
-```
-
-## Flow A — `/auditor:audit-cycle` (automated)
+### Flow A — `/auditor:audit-cycle` (automated)
 
 The fully automated audit team. Runs the whole lifecycle above with **no human in the loop** — where a firm would ask the client, it applies the `QUESTIONS.md` defaults and records each assumption in the report's **Assumptions & Simplifications** section.
 
@@ -94,7 +105,7 @@ Delivers the **client-facing** report (`templates/audit-report.md`): executive s
 
 Use it when you want a reproducible, hands-off first-pass audit and a deliverable document.
 
-## Flow B — `/auditor:audit-assist` (interactive)
+### Flow B — `/auditor:audit-assist` (interactive)
 
 The same lifecycle, but it **stops at checkpoints** and lets you steer. At each checkpoint it surfaces:
 
@@ -110,11 +121,9 @@ Checkpoints land after scope, after context, after each review phase, after tria
 
 Use it when domain judgment matters — the agent does the mechanical review, you resolve the "is this intended?" calls. After the team changes code, do not re-run this — use `/auditor:re-audit`.
 
-## Fix-review / re-audit
+### Fix-review / re-audit
 
-### `/auditor:re-audit`
-
-Takes a prior `audit_<n>/REPORT.md` + the current tree and classifies every prior finding: **FIXED** / **PARTIALLY-FIXED** / **STILL-OPEN** / **REGRESSED** / **ACKNOWLEDGED** / **DISPUTED**. It re-runs Rule 5b on each claimed fix (a cosmetic patch is not FIXED), cites the remediation commit/PR hash, audits the changed surface for NEW findings via the diff-audit path, and runs a **sibling-patch-propagation sweep** — grep the codebase for the same anti-pattern the fix closed, so a fix applied to one call site but not its twins is caught. Where a finding has a PoC, it re-runs it against the head build and records the result per finding (`PoC re-run @ <sha>: reverts | still succeeds | inconclusive | not run`); a FIXED status with no executed revert is flagged, not downgraded. Emits `audit_<n+1>/RE-AUDIT.md`.
+`/auditor:re-audit` takes a prior `audit_<n>/REPORT.md` + the current tree and classifies every prior finding: **FIXED** / **PARTIALLY-FIXED** / **STILL-OPEN** / **REGRESSED** / **ACKNOWLEDGED** / **DISPUTED**. It re-runs Rule 5b on each claimed fix (a cosmetic patch is not FIXED), cites the remediation commit/PR hash, audits the changed surface for NEW findings via the diff-audit path, and runs a **sibling-patch-propagation sweep** — grep the codebase for the same anti-pattern the fix closed, so a fix applied to one call site but not its twins is caught. Where a finding has a PoC, it re-runs it against the head build and records the result per finding (`PoC re-run @ <sha>: reverts | still succeeds | inconclusive | not run`); a FIXED status with no executed revert is flagged, not downgraded. Emits `audit_<n+1>/RE-AUDIT.md`.
 
 ```
 /auditor:re-audit audit_1/REPORT.md main..HEAD
@@ -122,21 +131,23 @@ Takes a prior `audit_<n>/REPORT.md` + the current tree and classifies every prio
 
 Verification-verb discipline: a client's "we fixed it" is never silently promoted to FIXED — an unverified client fix is at most PARTIALLY-FIXED-pending-verification. See [commands.md](commands.md#auditorre-audit).
 
-## Cheap lanes
+## CI
 
-These skip the full item-by-item walk.
+CI runs Quick on pull requests from your own branches, with nobody at the keyboard, and the bundled analyzers on every pull request. Copy `templates/ci/auditor-pr.yml` to `.github/workflows/` and follow [ci.md](ci.md). It runs two jobs:
 
-### `/auditor:quick-scan`
+- **tools**, on every pull request, forks included: the bundled analyzers (semgrep, `cargo audit`, `npm audit`), with no model and no secrets.
+- **review**, on pull requests from your repository's own branches, other than Dependabot's: `/auditor:diff-audit --ci` on the pull request's changes, in strict mode, with nothing from the pull request built or run.
 
-Discovery + static analysis (`sast.sh` semgrep; ToB `static-analysis` when semgrep is missing and the plugins are present; else grep scanners) + only the CRITICAL/HIGH known-vectors for the detected domains. Reports findings with severity + `file:line`, and states plainly it is a triage pass. Good for a first look or a CI gate; points to `/auditor:audit` for full coverage. As a CI gate it runs non-interactively, so the run must be able to run its analyzers: an analyzer that did not run is reported as not run, and the gate fails. As a CI gate on a public repository it publishes pass/fail only — no finding counts — in comments, logs and artifacts, and sends details through a private channel, failing the job when none is available and never falling back to printing them (`OUTPUT-RULES.md` Rule 11d).
+`--ci` on `/auditor:diff-audit` and `/auditor:quick-scan` asks nothing, writes `audit_<n>/findings.json`, and ends with one line, `auditor: verdict: pass|fail (threshold N, analyzers run: …)`. The verdict is fail when a finding of severity N or more counts (`--fail-on <N>`, 7 when not given; `[UNCONFIRMED]` and `[PARTIAL]` findings do not count), when an analyzer the run called for did not run, or when the run stopped early ([What the verdict means](ci.md#what-the-verdict-means)). On a public repository the job publishes that line and notes about the tools only, never a finding or a count: the details stay on the runner, you read them by running the same command in a clone of your own, and the job never fails only because no private channel exists (`OUTPUT-RULES.md` Rule 11d; [Public repositories](ci.md#public-repositories)). For a scheduled scan of the default branch, run `/auditor:quick-scan --ci`. Give `claude -p` a `--max-budget-usd` of $15 for quick-scan and diff-audit alike: Claude Code shows the session its budget, and a cap close to a full pass's cost makes it stop reading early ([COSTS.md](../COSTS.md#cost-and-time-by-depth)).
 
-### `/auditor:diff-audit`
+## Outside the depths
 
-PR / commit-scoped. Computes the changed set with read-only git (`git-ro.sh diff --name-only base..head`, default `main..HEAD`), runs Phase 0.5 on changed functions + 1-hop callers/callees, risk-classifies changed files (auth / crypto / value-transfer / validation-removal = HIGH), git-blames removed security code (a deletion in a "fix"/"CVE" commit is a CRITICAL regression), runs only the matching checklist items + vectors through Rule 5b, and adds a dependency lane (checklist 11 §11.11 — the published code delta of each bumped package) when a manifest or lockfile changed. Emits `audit_<n>/PR-REPORT.md`.
+### `/auditor:spec-audit`
+
+Code-vs-spec. Extracts a requirement list from a spec/whitepaper/RFC, then builds a Compliance Matrix mapping each requirement to `[MET]` / `[VIOLATED-N]` / `[UNIMPLEMENTED]` / `[UNDOCUMENTED-BEHAVIOR]`, cited to code. Code that does something the spec never authorizes is itself a finding.
 
 ```
-/auditor:diff-audit main..HEAD
-/auditor:diff-audit 1234          # a PR number
+/auditor:spec-audit ./SPEC.md ./programs/vault
 ```
 
-Both lanes reuse the methodology corpus but skip whole-repo discovery, so they are dramatically cheaper than a full audit.
+The per-finding commands (`poc`, `patch`, `economic-sim`, `triage`), Full's building blocks (`intake`, `threat-model`) and `audit-report`, which assembles the internal report from a walk run in pieces, can run on their own: [commands.md](commands.md).

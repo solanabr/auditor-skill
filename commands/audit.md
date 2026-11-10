@@ -1,13 +1,13 @@
 ---
 name: auditor:audit
-description: Full scope-gated security audit of a Solana / full-stack repository — discovery, context reconstruction, per-item checklist verdicts, false-positive validation, and a severity-ranked report.
+description: Standard-depth, scope-gated security audit of a Solana / full-stack repository or one path in it — discovery, context reconstruction, per-item checklist verdicts, false-positive validation, and a severity-ranked report.
 argument-hint: "[path] [--scope full|program|backend|frontend] [--strict]"
 allowed-tools:
   - Read
   - Grep
   - Glob
   - Task
-  - Edit(audit_*/**)
+  - Edit(/audit_*/**)
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" *)'
@@ -25,7 +25,7 @@ allowed-tools:
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rpc-read.sh" *)'
 ---
 
-# auditor-skill — Full Audit
+# auditor-skill — Item-by-Item Audit (Standard)
 
 **Arguments:** $ARGUMENTS
 
@@ -36,7 +36,7 @@ Run the auditor-skill end-to-end:
 2. Follow `FULL-AUDIT.md` top to bottom, honoring **scope-gated loading** (Rule 0): discover the repo, declare scope, load only in-scope checklists/vectors on demand.
 3. Delegate: spawn `auditor:context-builder` (Phase 0.5) first, then `auditor:vuln-hunter` for the item-by-item walk, `auditor:economic-analyst` for checklist 06 + economic vectors, and `auditor:audit-reporter` to assemble the report. Hand each the run directory.
 4. Every in-scope checklist item and phase-triggered vector gets an explicit verdict (`[PASS]` / `[FAIL-N]` / `[PARTIAL]` / `[N/A]`). Findings with N≥6 must pass the Rule 5b validation gate or be downgraded to `[PARTIAL]` / `[UNCONFIRMED]`.
-5. Emit `audit_<n>/REPORT.md`: executive summary (safe-to-deploy verdict), Scope Coverage table, findings, Phase 4.5 maturity scorecard, remediation roadmap.
+5. Emit `audit_<n>/REPORT.md`: executive summary (safe-to-deploy verdict), Scope Coverage table, findings, Phase 4.5 maturity scorecard, remediation roadmap. Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
 
 If the bundled Trail of Bits tooling is present (`test -d "${CLAUDE_PLUGIN_ROOT}/vendor/trailofbits/plugins"` — the installation's copy, never a relative `vendor/` path, which would resolve inside the audited repo), use it for SAST / harnesses / coverage per `references/orchestration/boundary-map.md`; otherwise fall back to the native `discovery/grep-commands.md` scanners and note the tooling gap.
 

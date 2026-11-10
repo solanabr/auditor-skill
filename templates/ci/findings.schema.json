@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/solanabr/auditor-skill/blob/main/templates/ci/findings.schema.json",
+  "title": "auditor-skill findings.json",
+  "description": "What /auditor:diff-audit --ci and /auditor:quick-scan --ci write to audit_<n>/findings.json. The command writes it first right after it makes the run directory, with final false and verdict fail, so a run that ends early leaves a failing record, and again at its end with every finding of its report and final true. templates/ci/verdict.jq checks it against the run's result, and templates/ci/findings-to-sarif.jq turns it into SARIF 2.1.0. It stays in the run directory: in CI on a public repository nothing of it is printed or uploaded (OUTPUT-RULES.md Rule 11d).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "command", "mode", "final", "verdict", "threshold", "stopped", "run", "report", "commits", "analyzers", "findings"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "command": { "enum": ["diff-audit", "quick-scan"] },
+    "mode": {
+      "description": "The mode preflight's first line names (OUTPUT-RULES.md Rule 11f).",
+      "enum": ["default", "strict"]
+    },
+    "final": {
+      "description": "false while the run goes on; true once the command reached its last step, stopped early included. A file that stays false means the run ended before its last step.",
+      "type": "boolean"
+    },
+    "verdict": {
+      "description": "fail when a finding counts at the threshold (severity at least threshold, rule5b passed, undetermined or not-required), when an analyzer the run called for did not run, when the run stopped early, or while final is false; pass otherwise.",
+      "enum": ["pass", "fail"]
+    },
+    "threshold": {
+      "description": "--fail-on <N>, 7 when not given.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+    },
+    "stopped": {
+      "description": "none, or the step the run stopped at once its run directory existed: arguments (a --fail-on value or range the command does not take), changed-set (git-ro.sh could not give the range's changed files or pin its ends), denied (a call the run cannot do without was denied), corpus-pass (a checklist section or known-vector file that audit_<n>/scope.md lists was left unread), line-budget (with --over-budget fail, a change larger than the changed-code budget of references/depth-scope.md §6).",
+      "enum": ["none", "arguments", "changed-set", "denied", "corpus-pass", "line-budget"]
+    },
+    "run": {
+      "description": "The run directory, audit_<n>.",
+      "type": "string",
+      "pattern": "^audit_[0-9]+$"
+    },
+    "report": {
+      "description": "The run's report: audit_<n>/PR-REPORT.md for diff-audit, audit_<n>/QUICK-SCAN.md for quick-scan.",
+      "type": "string",
+      "pattern": "^audit_[0-9]+/(PR-REPORT|QUICK-SCAN)\\.md$"
+    },
+    "commits": {
+      "description": "The full commit ids git-ro.sh rev-parse pinned: base and head for diff-audit, head for quick-scan.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head"],
+      "properties": {
+        "base": { "$ref": "#/$defs/commit" },
+        "head": { "$ref": "#/$defs/commit" }
+      }
+    },
+    "analyzers": {
+      "description": "Each analyzer this run called for, once: not-run when any of its calls did not run, ran otherwise. audit-scan when the bundled tools are built (for diff-audit, when a .rs file changed); for diff-audit lock-delta and deps-artifacts when a Cargo.lock, package-lock.json, npm-shrinkwrap.json, yarn.lock or bun.lock changed (deps-artifacts is the lock-budget call: it ran on an empty budget too, and did not run when deps.sh could not start, a selected artifact still failed after one retry or passed a size bound, or an entry was not compared within the call's time), web3js-history when the command ran it; for quick-scan semgrep (or the static-analysis or grep-scanners fallback it took), cargo-audit for a Cargo.lock, npm-audit for a package.json beside a package-lock.json or npm-shrinkwrap.json.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/analyzer" }
+    },
+    "findings": {
+      "description": "Every finding of the report, in its order.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "command": { "const": "diff-audit" } } },
+      "then": { "properties": { "commits": { "required": ["base", "head"] }, "report": { "pattern": "/PR-REPORT\\.md$" } } }
+    },
+    {
+      "if": { "properties": { "command": { "const": "quick-scan" } } },
+      "then": { "properties": { "commits": { "not": { "required": ["base"] } }, "report": { "pattern": "/QUICK-SCAN\\.md$" } } }
+    },
+    {
+      "if": { "properties": { "final": { "const": false } } },
+      "then": { "properties": { "verdict": { "const": "fail" } } }
+    },
+    {
+      "if": { "properties": { "stopped": { "enum": ["arguments", "changed-set", "denied", "corpus-pass", "line-budget"] } } },
+      "then": { "properties": { "verdict": { "const": "fail" } } }
+    }
+  ],
+  "$defs": {
+    "commit": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "analyzer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status"],
+      "properties": {
+        "name": {
+          "enum": ["audit-scan", "lock-delta", "deps-artifacts", "web3js-history", "semgrep", "static-analysis", "grep-scanners", "cargo-audit", "npm-audit"]
+        },
+        "status": { "enum": ["ran", "not-run"] },
+        "reason": {
+          "description": "For not-run: why, as the tool's own refusal or blocker line, or the denial.",
+          "type": "string"
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "severity", "title", "file", "line", "rule5b", "refs"],
+      "properties": {
+        "id": {
+          "description": "The report's finding id.",
+          "type": "string",
+          "pattern": "^F-[0-9]{1,4}$"
+        },
+        "severity": {
+          "description": "OUTPUT-RULES.md Rule 1, 1 to 10: the severity the report gives it, and for an [UNCONFIRMED] or [PARTIAL] finding the one it had before the Rule 5b gate downgraded it.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "file": {
+          "description": "The file the finding cites, relative to the working directory, with no .. part.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$))[^\\u0000-\\u001f\\u007f\\\\]+$"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rule5b": {
+          "description": "The Rule 5b status (OUTPUT-RULES.md): passed (a [FAIL-N], N at least 6, whose gate blocks are filled), undetermined ([UNDETERMINED]), unconfirmed ([UNCONFIRMED]), partial ([PARTIAL]), not-required (a [FAIL-N] with N at most 5). unconfirmed and partial never count toward the verdict.",
+          "enum": ["passed", "undetermined", "unconfirmed", "partial", "not-required"]
+        },
+        "refs": {
+          "description": "The checklist item and known-vector ids the finding fails, such as AV-015 or KV-139.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Z]{2,4}-[0-9]{3}$" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "severity": { "minimum": 6 } } },
+          "then": { "properties": { "rule5b": { "not": { "const": "not-required" } } } }
+        },
+        {
+          "if": { "properties": { "severity": { "maximum": 5 } } },
+          "then": { "properties": { "rule5b": { "not": { "const": "passed" } } } }
+        }
+      ]
+    }
+  }
+}

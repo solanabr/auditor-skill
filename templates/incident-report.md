@@ -6,10 +6,11 @@
      references/detection-response/README.md. Nothing here is an action — the
      proposed response is RESPONSE-INC-<n>.<k>.md. -->
 
-**Run:** incident_{N}/ · **Date:** {ISO} · **Mode:** hunt
+**Run:** incident_{N}/ · **Mode:** hunt
+**Generated:** {the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands}
 **Corpus:** {files + line counts} · **Window:** slots {from}–{to} · **RPC provider:** {domain (the host's last two DNS labels), or user-supplied}
 **Execution mode (Rule 11a):** {isolated — which isolation | native — target code ran on the auditor's host, and which steps ran it; copied from the ledger header}
-**Outside services (Rule 11b):** {one line per row of `incident_<n>/disclosures.tsv` (tool → service → what was sent), then each contact no row holds | none}
+**Outside services (Rule 11b):** {one line per row of `incident_<n>/disclosures.tsv` (tool → service → what was sent. A tool adds its row before its first request to that service, so a row says what the tool was set to send, not that it went out. Write that it was sent only where the tool's own output names that service's address as one it reached, and otherwise that it may have been sent.), then each contact no row holds | none}
 **Verdict legs met per incident:** on-chain effect / flaw in deployed source / local PoC on real bytes.
 
 ## Executive summary

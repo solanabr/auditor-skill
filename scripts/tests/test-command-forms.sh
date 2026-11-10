@@ -73,7 +73,21 @@
 #       arrives in; wording that asked Q46 again, called isolated recommended, copied an earlier run's mode
 #       forward, wrote only native, or passed the file's mode as run.sh --mode, stays gone (the GONE list); and
 #       no body names the environment form of a PoC run (VULNERABLE_SO and the rest), which run.sh --crate does
-#       not read.
+#       not read. diff-audit and quick-scan keep their --ci and --fail-on, the findings file that starts as a
+#       failing record, the Rule 5b statuses that count, a reply without finding text, and the closing line;
+#       each of the three Quick commands names the report it writes from templates/pr-report.md, writes it in
+#       its own session (quick-scan and diff-audit start no agent at all, so their cost holds still, and
+#       deep-review leaves an agent's model to its definition), runs no cd, after which the bundled tools would
+#       look for the run directory in the wrong folder, and reads the corpus from the root, each verdict naming
+#       what it rests on: quick-scan and diff-audit the selection of references/depth-scope.md, written to
+#       audit_<n>/scope.md before any section or vector file is read, each section read by its start line and
+#       line count (diff-audit within its 5,000-line changed-code budget, with its vector floor), deep-review
+#       the checklists SKILL.md's scope table names; quick-scan's old severity-7 vector step, diff-audit's
+#       scope-table checklist reading and their cost figures stay gone; diff-audit's PR-number form,
+#       quick-scan's "fail the job" without a private channel, its vector step that named no file, the Task
+#       grant of both, and the write-rule reason for no cd stay gone (docs/ci.md). Every command, skill and the
+#       root SKILL.md grants its run-directory edit with a leading /, Edit(/audit_*/**) or
+#       Edit(/incident_*/**), and none the bare form, which a cd moves to another folder's audit_*.
 #   G   The lines agents/poc-engineer.md gives a runner it writes, run as the first lines of such a runner in a
 #       crate, from the working directory and from the crate, find <R> from the runner's path and take the
 #       stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT, or a strict entry in their
@@ -817,7 +831,7 @@ cmd() {
 }
 cmd good "'Bash(\"$R/scripts/rec.py\" *)'" "'Bash(\"$B/audit-scan\" --contract=1 *)'" \
   "'Bash(\"$B/audit-mem\" warm --contract=1 *)'" "'Bash(\"$R/templates/poc/run.sh\" *)'" \
-  "'Bash(test -x \"$B/audit-mem\")'" "Edit(audit_*/**)" -- \
+  "'Bash(test -x \"$B/audit-mem\")'" "Edit(/audit_*/**)" -- \
   "1. Run \`\"$R/scripts/ok.sh\" new audit\` and \`\"$R/scripts/rec.py\" tokens|lamports [--by owner,mint|mint] incident_<n>/corpus*/x.jsonl > incident_<n>/out.txt\`." \
   "2. When built (\`test -x \"$B/audit-scan\"\`), \`\"$B/audit-scan\" --contract=1 . --out audit_<n>/prescan.json\` and" \
   "   \`\"$B/audit-mem\" warm --contract=1 --program-id <id>\`; \`audit-mem warm --contract=1 --program-id <id>\`, \`audit-mem init\`." \
@@ -1233,6 +1247,130 @@ commands/intake.md	only into `grep`, `head`, `tail` or `wc`
 commands/patch.md	only into `grep`, `head`, `tail` or `wc`
 commands/poc.md	only into `grep`, `head`, `tail` or `wc`
 commands/quick-scan.md	only into `grep`, `head`, `tail` or `wc`
+commands/diff-audit.md	argument-hint: "[base..head] [--ci] [--fail-on <N>] [--over-budget fail] [--strict]"
+commands/quick-scan.md	argument-hint: "[<path>] [--ci] [--fail-on <N>] [--strict]"
+commands/diff-audit.md	`auditor: verdict: <pass|fail> (threshold <N>, analyzers run: <names, or none>[; not run: <names>][; stopped: <step>])`
+commands/quick-scan.md	`auditor: verdict: <pass|fail> (threshold <N>, analyzers run: <names, or none>[; not run: <names>][; stopped: <step>])`
+commands/diff-audit.md	with `"final": false` and `"verdict": "fail"`, so a run that ends early leaves a failing record
+commands/quick-scan.md	with `"final": false` and `"verdict": "fail"`, so a run that ends early leaves a failing record
+commands/diff-audit.md	(its Rule 5b status is `passed`, `undetermined` or `not-required`; an `[UNCONFIRMED]` or `[PARTIAL]` one does not)
+commands/quick-scan.md	(its Rule 5b status is `passed`, `undetermined` or `not-required`; an `[UNCONFIRMED]` or `[PARTIAL]` one does not)
+commands/diff-audit.md	Keep finding text, counts and paths out of the reply (Rule 11d)
+commands/quick-scan.md	Keep finding text, counts and paths out of the reply (Rule 11d)
+commands/diff-audit.md	Write `audit_<n>/PR-REPORT.md` from `${CLAUDE_PLUGIN_ROOT}/templates/pr-report.md`
+commands/quick-scan.md	Write `audit_<n>/QUICK-SCAN.md` from `${CLAUDE_PLUGIN_ROOT}/templates/pr-report.md`
+commands/deep-review.md	`audit_<n>/DEEP-REVIEW-<unit>.md`, from `${CLAUDE_PLUGIN_ROOT}/templates/pr-report.md`
+commands/quick-scan.md	Read `${CLAUDE_PLUGIN_ROOT}/references/depth-scope.md` and `${CLAUDE_PLUGIN_ROOT}/known-vectors/INDEX.md` with the Read tool
+commands/quick-scan.md	select the checklist sections of its §2 and the vector rows of its §3, exactly as those tables say: none is chosen by judgment
+commands/quick-scan.md	The DevOps and supply-chain rows apply to every repository.
+docs/ci.md	That is at most 62 sections, about 104 KB, for a change that touches every kind of file, and at most 39 for a change to on-chain program source alone
+commands/quick-scan.md	Write the selection to `audit_<n>/scope.md`, in the form of its §9, with the Write tool, before you read any checklist section or vector file.
+commands/quick-scan.md	each section with the Read tool from its `## ` heading to the next one: at its start line, with its line count as the limit, or, when that line is not the heading, from the line Grep finds the heading on to the next `## `; and each vector file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, whole, with no line limit
+commands/diff-audit.md	each section with the Read tool from its `## ` heading to the next one: at its start line, with its line count as the limit, or, when that line is not the heading, from the line Grep finds the heading on to the next `## `; and each vector file
+references/depth-scope.md	(when the line at Start is not the heading, Grep the file for the heading and read from there to the next `## `)
+checklists/11-supply-chain.md	> **CI budget** (`/auditor:diff-audit`, interactive and `--ci`, in place of steps 2 to 4; Standard and Full keep them).
+checklists/11-supply-chain.md	is never sent or fetched, whatever its marks: it is an SC-061 finding to grade, counted apart.
+checklists/11-supply-chain.md	The `lock-budget` call is the `deps-artifacts` analyzer: it ran when the call ends 0 or 1, an empty budget included
+checklists/11-supply-chain.md	A hit is a lead: read it at its file and line
+checklists/11-supply-chain.md	Every key handler below whose version changed is compared first, outside the budget.
+references/depth-scope.md	then every key handler and at most 40 other entries fetched old and new and swept, counts first.
+commands/diff-audit.md	on the dependency delta with its CI budget, in place of its steps 2 to 4.
+commands/diff-audit.md	with the Bash tool's timeout at 600000
+commands/diff-audit.md	`deps-artifacts` is the `lock-budget` call: it ran when the call ends 0 or 1, an empty budget included
+references/depth-scope.md	`deps-artifacts` is required when a `Cargo.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` or `bun.lock` changes.
+docs/ci.md	needs `lock-delta` and `deps-artifacts`
+OUTPUT-RULES.md	for `lock-budget`, the name of each package of the set it was given that comes from a public registry, new packages and new versions alike (a name from another source is never sent), one row per service for its whole run.
+commands/quick-scan.md	an item that needs a call this scan does not make, which gets `[N/A at this depth — needs <call>]`
+commands/diff-audit.md	an item that needs a call this review does not make, which gets `[N/A at this depth — needs <call>]`
+commands/quick-scan.md	except the items no site in scope reaches, which share the section's one N/A line, and an item
+commands/quick-scan.md	scan the two with the most source lines, and in Coverage & Limitations give each other one its own line, `/auditor:quick-scan <its path>`
+commands/quick-scan.md	A section or vector file that `audit_<n>/scope.md` lists and the run leaves unread is an early stop: give findings.json `"stopped": "corpus-pass"`
+commands/quick-scan.md	otherwise run the scanners of `${CLAUDE_PLUGIN_ROOT}/discovery/grep-commands.md`
+commands/diff-audit.md	Read `${CLAUDE_PLUGIN_ROOT}/references/depth-scope.md` and `${CLAUDE_PLUGIN_ROOT}/known-vectors/INDEX.md` first, with the Read tool
+commands/diff-audit.md	then select the checklist sections of its §4 and the vector rows of its §5, exactly as those tables say: none is chosen by judgment
+commands/diff-audit.md	The floor of §5 is min(`--fail-on`, 7) − 1, so 6 by default, and it applies to marker rows only
+commands/diff-audit.md	Write the selection to `audit_<n>/scope.md`, in the form of its §9, with the Write tool, before you read any checklist section or vector file.
+commands/diff-audit.md	A repository-level row that no changed file touches gets §5's fixed line instead.
+commands/diff-audit.md	Then apply the changed-code budget of §6 of `${CLAUDE_PLUGIN_ROOT}/references/depth-scope.md`
+commands/diff-audit.md	and the report counts the rest as "changed lines not reviewed: N of M"
+commands/diff-audit.md	With `--over-budget fail`, a change over the budget of step 1 stops the run (`"stopped": "line-budget"`)
+commands/diff-audit.md	A section or vector file that `audit_<n>/scope.md` lists and the run leaves unread is an early stop: give findings.json `"stopped": "corpus-pass"`
+commands/diff-audit.md	on the changed functions of the kept files and their direct callers and callees (1-hop) inside the changed programs
+commands/diff-audit.md	each vector file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, whole, with no line limit, several in each message
+commands/diff-audit.md	run §11.11 of `${CLAUDE_PLUGIN_ROOT}/checklists/11-supply-chain.md`
+commands/deep-review.md	reading each one's file, `${CLAUDE_PLUGIN_ROOT}/known-vectors/<its file>`, before its verdict
+commands/quick-scan.md	Steps 2 to 4 run in this session: start no agent, so a scan costs the same from one run to the next.
+commands/quick-scan.md	Write it yourself, in this session.
+commands/quick-scan.md	Run no `cd` in this session, not even before a plain `grep`
+commands/diff-audit.md	Run no `cd` in this session, not even before a plain `grep`
+commands/deep-review.md	Run no `cd` in this session, not even before a plain `grep`
+commands/deep-review.md	If you start an agent, set no model for it
+commands/quick-scan.md	Judge no vector by its index row alone
+commands/quick-scan.md	about ten in each message, and every one before you give any verdict
+commands/quick-scan.md	Before you start the report, check what you read against scope.md, and read anything it lists that you missed.
+commands/quick-scan.md	gives the lines of depth-scope.md §8 for what the selection leaves out
+commands/diff-audit.md	Read every selected file before you start the report: first check what you read against scope.md, and read anything it lists that you missed.
+commands/diff-audit.md	Coverage & Limitations gives the lines of depth-scope.md §8 for what the selection leaves out
+templates/pr-report.md	`audit_<n>/scope.md` lists, written before the reads, so a reader can check the selection against
+templates/pr-report.md	request to that service, so a row says what the tool was set to send, not that it went out
+templates/pr-report.md	sent only where the tool's own output names that service's address as one it reached, and otherwise that it
+templates/pr-report.md	`Loaded … security advisories (from <folder>)`, names a local copy and shows no request.
+commands/diff-audit.md	(`deps.sh` adds a row to `audit_<n>/disclosures.tsv` before its first request to each service)
+commands/quick-scan.md	Skip nothing scope.md lists and cut nothing short by choice, not even to save cost or time; Coverage & Limitations names only a file the Read tool could not open
+commands/diff-audit.md	Skip nothing scope.md lists and cut nothing short by choice, not even to save cost or time; name there only one the Read tool could not open.
+commands/quick-scan.md	Measured scans cost USD 2.84 to 7.14 in all; this selection cost USD 6.98 on a whole repository, reading 38 vector files and 49 sections.
+commands/diff-audit.md	Measured reviews cost USD 1.68 to 8.10 in all; this selection cost USD 3.99 on a 1,248-line change with no lockfile, and USD 8.10 on a range of 7,830 changed lines that adds a 787-package lockfile.
+docs/ci.md	On the shipped text, the selection of `references/depth-scope.md`, it cost $8.10 on the 3K-line repository, for a range of 7,830 changed lines that adds a 787-package lockfile, under a $15 cap, and $3.99 on the 12K-line program, for a 1,248-line change with no lockfile, under an $8 cap.
+docs/ci.md	Both read every file their selection lists and named no spending cap. The lower figures are earlier drafts, and the review job on the shipped text is not measured yet.
+docs/ci.md	On a fork's or Dependabot's pull request the review check shows Success with no review
+docs/ci.md	a cargo audit or npm audit advisory has no exception here, so fix or replace that dependency before you require the tools job
+docs/ci.md	Delete every `.claude/`, `.mcp.json`, `.claude.json`, `CLAUDE.md` and `CLAUDE.local.md` from that checkout, as the review job does
+docs/ci.md	the review stops at it, after the response that crosses it, so its last response can take it a little over
+templates/report-template.md	so a row says what the tool was set to send, not that it went out
+templates/audit-report.md	so a row says what the tool was set to send, not that it went out
+templates/incident-report.md	so a row says what the tool was set to send, not that it went out
+templates/pr-report.md	- diff-audit: "changed lines not reviewed: {N} of {M}" and the files they are in (`references/depth-scope.md` §6),
+docs/ci.md	`git ls-remote https://github.com/solanabr/auditor-skill refs/heads/main` prints the current one
+docs/ci.md	`git ls-remote https://github.com/solanabr/auditor-skill 'refs/tags/<tag>^{}'` prints the commit that tag names
+templates/ci/auditor-pr.yml	# auditor-skill at one commit: the full id of a commit on its main branch
+commands/diff-audit.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/quick-scan.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/deep-review.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/audit-report.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/audit-cycle.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/audit-assist.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/audit.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/re-audit.md	Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
+commands/audit-report.md	  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" *)'
+skills/dnr-analyze/SKILL.md	  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp)'
+skills/dnr-analyze/SKILL.md	its Generated field holding the line `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` prints, run as a Bash call of its own right before you write it |
+skills/dnr-analyze/SKILL.md	its Generated field holding the line `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` prints, run as a Bash call of its own right before you write it,
+OUTPUT-RULES.md	Every report carries, in its Generated field, the line `rundir.sh stamp` printed right before it was written, and claims no more review by a person than that line's statement says
+docs/ci.md	| `AUDITOR_REVIEW_STATEMENT` | empty | the statement that ends the Generated line of each review's report
+templates/report-template.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
+templates/pr-report.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
+templates/incident-report.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
+templates/audit-report.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
+templates/re-audit.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
+templates/response-plan.md	the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands
+templates/audit-report.md	AI agents ran the review, file by file, with **automated tooling**, and each finding
+templates/audit-report.md	claim no human
+templates/audit-report.md	  - Manually verified   — reasoned through by a reviewer against the source.
+docs/ci.md	Under a $10 cap, the depth-scope selection read 38 vector files and 49 checklist sections in that repository, for $6.98.
+commands/quick-scan.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
+commands/diff-audit.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
+commands/quick-scan.md	never stop reading early to save spend, and never give a budget, turn or time limit as the reason a file went unread
+commands/diff-audit.md	never stop reading early to save spend, and never give a budget, turn or time limit as the reason a file went unread
+docs/ci.md	Give a quick-scan in CI `--max-budget-usd 15`, a backstop, not a budget to plan by.
+docs/ci.md	a section or vector file its selection lists was left unread (`stopped: corpus-pass`)
+docs/ci.md	It reads the checklist sections and known-vector rows that `references/depth-scope.md` selects for the kinds of file the change holds
+commands/diff-audit.md	first, with the Read tool, before any verdict of this step, whatever the size of the change
+commands/diff-audit.md	Each verdict names the checklist item id or the vector step it rests on
+commands/deep-review.md	Each verdict names the checklist item id or the vector step it rests on
+commands/diff-audit.md	Write it yourself, in this session.
+commands/diff-audit.md	Steps 2 to 6 run in this session: start no agent, so a review of the same range costs the same from one run to the next.
+commands/deep-review.md	Write it yourself, in this session, from what any agent you started returned
+commands/quick-scan.md	but the job never fails only because none exists, and never falls back to printing findings in the log
 commands/re-audit.md	only into `grep`, `head`, `tail` or `wc`
 commands/respond.md	only into `grep`, `head`, `tail` or `wc`
 commands/spec-audit.md	only into `grep`, `head`, `tail` or `wc`
@@ -1245,7 +1383,55 @@ SKILL.md	only into `grep`, `head`, `tail` or `wc`
 agents/context-builder.md	only into `grep`, `head`, `tail` or `wc`
 agents/economic-analyst.md	only into `grep`, `head`, `tail` or `wc`
 agents/peer-reviewer.md	only into `grep`, `head`, `tail` or `wc`
+commands/audit-assist.md	  - Edit(/audit_*/**)
+commands/audit-cycle.md	  - Edit(/audit_*/**)
+commands/audit-report.md	  - Edit(/audit_*/**)
+commands/audit.md	  - Edit(/audit_*/**)
+commands/deep-review.md	  - Edit(/audit_*/**)
+commands/diff-audit.md	  - Edit(/audit_*/**)
+commands/economic-sim.md	  - Edit(/audit_*/**)
+commands/hunt.md	  - Edit(/incident_*/**)
+commands/intake.md	  - Edit(/audit_*/**)
+commands/patch.md	  - Edit(/audit_*/**)
+commands/patch.md	  - Edit(/incident_*/**)
+commands/poc.md	  - Edit(/audit_*/**)
+commands/poc.md	  - Edit(/incident_*/**)
+commands/quick-scan.md	  - Edit(/audit_*/**)
+commands/re-audit.md	  - Edit(/audit_*/**)
+commands/respond.md	  - Edit(/incident_*/**)
+commands/spec-audit.md	  - Edit(/audit_*/**)
+commands/threat-model.md	  - Edit(/audit_*/**)
+commands/triage.md	  - Edit(/audit_*/**)
+skills/dnr-analyze/SKILL.md	  - Edit(/incident_*/**)
+SKILL.md	  - Edit(/audit_*/**)
+AGENTS.md	under the command's `Edit(/audit_*/**)` or `Edit(/incident_*/**)` grant
+OUTPUT-RULES.md	the report lists each tool, the service it was set to contact, and what it was set to send
+docs/permissions-and-isolation.md	Both rules begin with a `/`, which keeps them on the folder Claude Code started in
+OUTPUT-RULES.md	A Quick or CI run (`/auditor:quick-scan`, `/auditor:diff-audit`) declares a smaller scope instead: the selection of [references/depth-scope.md](references/depth-scope.md)
+OUTPUT-RULES.md	In a Quick or CI report they render once per left-out section or row group, as Rule 4's depth exception says.
+OUTPUT-RULES.md	outside <depth>'s scope; /auditor:audit gives their verdicts
+OUTPUT-RULES.md	an item that needs a call the depth does not make gets `[N/A at this depth — needs <call>]`
+checklists/06-program-economic-logic.md	A Quick or CI run reads only the sections `references/depth-scope.md` selects
+known-vectors/INDEX.md	A Quick or CI run's declared scope (`references/depth-scope.md`) may leave an `always` row out
+known-vectors/INDEX.md	its report lists the row once, as outside that depth's scope (`OUTPUT-RULES.md` Rule 4's depth exception).
 PINS
+# Claude Code fills $ARGUMENTS and a $ followed by digits and then no letter, digit or _ (its pattern,
+# \$ARGUMENTS\[\d+\]|\$ARGUMENTS|\$\d+(?!\w)) with the invocation's arguments, in a command's or a skill's
+# body, so a cost written as $1-2 or $2.84 would print an argument; the bodies write USD 2.84.
+for f in commands/*.md skills/*/SKILL.md SKILL.md; do
+  [ -f "$f" ] || continue
+  n=$(grep -c -E '[$][0-9]+([^A-Za-z0-9_]|$)' "$f")
+  if [ "$n" = 0 ]; then ok "$f holds no \$<digits> that Claude Code would fill with an argument"
+  else bad "$f holds a \$<digits> that Claude Code fills with an argument: $(grep -n -m 1 -E '[$][0-9]+([^A-Za-z0-9_]|$)' "$f" | cut -c1-120)"; fi
+done
+# A run-directory edit stays anchored at the folder the session started in, Edit(/audit_*/**) or
+# Edit(/incident_*/**): after a cd, the bare form matches the new folder's audit_*, not the run directory.
+for f in commands/*.md skills/*/SKILL.md SKILL.md; do
+  [ -f "$f" ] || continue
+  n=$(sed -n '2,/^---$/p' "$f" | grep -c -x -e '  - Edit(audit_\*/\*\*)' -e '  - Edit(incident_\*/\*\*)')
+  if [ "$n" = 0 ]; then ok "$f grants no run-directory edit in the bare form"
+  else bad "$f grants Edit(audit_*/**) or Edit(incident_*/**): write it with a leading /, as every command does"; fi
+done
 
 # Wording that must not come back, file <TAB> text: an agent never hands run.sh the file's mode as --mode, which
 # stops every run a stricter AUDITOR_EXEC_MODE holds to isolated mode, and the older wording that copied a mode
@@ -1283,6 +1469,57 @@ commands/audit-assist.md	ask once at Checkpoint 1
 SKILL.md	isolated recommended
 QUESTIONS.md	and again before a later session uses a run directory an earlier one made
 QUESTIONS.md	**Isolated** (recommended)
+commands/diff-audit.md	PR number
+commands/quick-scan.md	If that channel is unavailable, fail the job
+commands/quick-scan.md	As a CI gate, a refusal fails the job
+commands/quick-scan.md	Evaluate only CRITICAL / HIGH known-vectors for the detected domains
+commands/quick-scan.md	run the `discovery/grep-commands.md` scanners
+commands/quick-scan.md	  - Task
+commands/quick-scan.md	spawn every agent in the foreground
+commands/diff-audit.md	  - Task
+commands/diff-audit.md	spawn every agent in the foreground
+commands/diff-audit.md	If you start an agent
+commands/quick-scan.md	no longer matches the write rule for `audit_*/`
+commands/quick-scan.md	list the kept files in a message of your own
+commands/quick-scan.md	write the kept list as text in a message
+commands/diff-audit.md	write the selected list as text in a message
+templates/pr-report.md	Outside services the run contacted
+templates/pr-report.md	that nothing went out where the output shows the tool used
+commands/diff-audit.md	records each service it contacts
+commands/quick-scan.md	so one still running has reached none
+commands/diff-audit.md	so one still running has reached none
+commands/quick-scan.md	adds about USD 1–2 to a scan, even at 80 files
+commands/quick-scan.md	take the rows whose Severity is 7 or more
+commands/diff-audit.md	the scope table of `${CLAUDE_PLUGIN_ROOT}/SKILL.md` (Scope-Gated Loading, Step 2)
+commands/diff-audit.md	Reading and checking every selected vector file added under USD 1
+commands/quick-scan.md	Reading and checking every kept file adds about USD 1–4
+commands/quick-scan.md	The high-severity vector pass
+templates/pr-report.md	quick-scan evaluates the CRITICAL and HIGH vectors only
+commands/diff-audit.md	adds about USD 1–2 at most, even at 80 files
+commands/diff-audit.md	no longer matches the write rule for `audit_*/`
+commands/deep-review.md	no longer matches the write rule for `audit_*/`
+AGENTS.md	`Edit(audit_*/**)` or `Edit(incident_*/**)` grant
+OUTPUT-RULES.md	the report lists each tool, the service it contacted, and what it sent.
+docs/ci.md	front A
+docs/ci.md	Front A
+docs/ci.md	owner switch
+docs/ci.md	named no budget
+templates/ci/auditor-pr.yml	no finding, count or path
+docs/ci.md	a change to on-chain code alone
+references/depth-scope.md	a change to on-chain code alone selects at most 46
+OUTPUT-RULES.md	the name of each new package of the set
+docs/ci.md	from the auditor-skill release you use
+docs/ci.md	the full commit id of that release's tag
+templates/ci/auditor-pr.yml	the release tag you install
+templates/ci/auditor-pr.yml	the commit of the auditor-skill release you use
+templates/pr-report.md	- **Plugin:** auditor-skill {version}
+templates/report-template.md	**Date:** <!-- YYYY-MM-DD -->
+templates/incident-report.md	**Date:** {ISO}
+templates/audit-report.md	Manual review is the primary method
+templates/audit-report.md	human-in-the-loop review
+templates/audit-report.md	All reported findings were manually verified
+templates/audit-report.md	got full line-by-line review
+templates/audit-report.md	The review combined manual analysis
 GONE
 
 # respond's step 5 and hunt's step 6 settle the mode as poc's step 5 does, each step read as one line so wording

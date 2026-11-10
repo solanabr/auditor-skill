@@ -57,7 +57,7 @@ It is a syntactic pass: it does not resolve macros, generics, or cross-crate typ
 
 ### The token win
 
-Feed `prescan.json` to the auditor at Phase 0. Two effects: (1) the instruction/constraint/PDA/arithmetic tables are already built, so Phase 0.2-0.4 cost near-zero; (2) a file with **zero** scan hits gets a spot-check instead of a full read. This collapses the mechanical multipliers (checklist cross-ref ~0.3×, discovery ~0.2×, checkpoint re-reads ~0.1×) toward ~0.1× total — on a 50K-line program roughly **200-300K fewer input tokens** (variable multiplier ~1.6× → ~1.0×; e.g. Opus ≈ $32 → ~$20 per [COSTS.md](../COSTS.md)). Used at Phase 0 of the automated flow and by `context-builder`; falls back to the grep walk when `cargo` is absent.
+Feed `prescan.json` to the auditor at Phase 0. Two effects: (1) the instruction/constraint/PDA/arithmetic tables are already built, so Phase 0.2-0.4 cost near-zero; (2) a file with **zero** scan hits gets a spot-check instead of a full read. This collapses the mechanical multipliers (checklist cross-ref ~0.3×, discovery ~0.2×, checkpoint re-reads ~0.1×) toward ~0.1× total — on a 50K-line program roughly **200-300K fewer input tokens** (variable multiplier ~1.6× → ~1.0×). Used at Phase 0 of the automated flow and by `context-builder`; falls back to the grep walk when `cargo` is absent.
 
 Reference: [`references/orchestration/pre-scan.md`](../references/orchestration/pre-scan.md).
 
@@ -325,6 +325,7 @@ A name counts as the filesystem opens it: on APFS or HFS+, which fold case and n
 "<auditor-skill root>/scripts/rundir.sh" check audit_1
 "<auditor-skill root>/scripts/rundir.sh" sub audit_1 poc/F-003
 "<auditor-skill root>/scripts/rundir.sh" store
+"<auditor-skill root>/scripts/rundir.sh" stamp
 ```
 
 Makes, checks and reuses run directories ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). A run directory is `audit_<n>` or `incident_<n>` (`<n>` of 1 to 6 digits) directly in the working directory, spelled so on disk, in lower case: a real directory, holding no symbolic link that leads out of it or to nothing (in strict mode, none at all), tracked by no repository in any letter case, whose `.gitignore` holds exactly `*`.
@@ -333,6 +334,7 @@ Makes, checks and reuses run directories ([Rule 11d](../OUTPUT-RULES.md#11d--out
 - **`check <R>`** prints `ok <R>` for a run directory that may be reused. In both modes it refuses a name the disk spells in other letters, such as `AUDIT_1` given as `audit_1`, since a `strict` file written through that name would not count. In default mode a run directory git cannot check is accepted when its `.gitignore` holds exactly `*`. Reuse one only once you have confirmed which one.
 - **`sub <R> <rel>`** makes `<R>/<rel>`, or accepts it when it exists, and prints the path: `poc/<ID>`, `patches`, `harnesses`, `bootstrap`, `corpus-<k>`, `logs` or `rpc`, where `<ID>` is `F-<1-4 digits>` or `INC-<1-6 digits>.<1-4 digits>` and `<k>` 1 to 4 digits.
 - **`store`** prints `.audit-memory/audit.db` for an in-tree store that passes the Rule 11d check, and `absent` when there is none; otherwise it refuses, and the flow uses `<R>/audit-mem.db`.
+- **`stamp`** takes no arguments and prints the line a report's Generated field holds, right before the report is written: `Generated automatically by auditor-skill <version> on <UTC time>.`, then the review statement. The statement is `AUDITOR_REVIEW_STATEMENT`, with its control characters made spaces and cut at 300 characters (a note on stderr says so), or, when that is unset or empty, `No person reviewed this report before it was written.` ([Rule 9](../OUTPUT-RULES.md#rule-9-file-naming)).
 - **Exit:** 0 done · 64 refused, with one line, `rundir: refused: <reason>`. **Network:** none. **Needs:** git and find.
 
 ### Read-only git
@@ -374,13 +376,15 @@ Both read committed content only, never the work tree, through the hardened git 
 # examples of what you type; <auditor-skill root> is where auditor-skill is installed
 "<auditor-skill root>/scripts/recipes/lock-delta.sh" cargo main..HEAD
 "<auditor-skill root>/scripts/recipes/lock-delta.sh" --git-dir audit_1/src.git npm v1.2.0..v1.3.0
+"<auditor-skill root>/scripts/recipes/lock-delta.sh" --run audit_1 set main..HEAD
 ```
 
 Each version, source and checksum line that changed in the lockfiles of one kind between two commits, with the name of its package, below each file's `+++ b/<path>` line (`+++ /dev/null` for a file the range deletes).
 
 - **`npm`:** `package-lock.json`, `npm-shrinkwrap.json` and `yarn.lock` (v1 and berry): each changed `version`, `resolved`, `resolution`, `integrity` or `checksum` line after the key of its entry, `?` for a key outside the hunk. **`bun`:** the text `bun.lock`: each changed entry as `-` or `+` and `<name>@<version>`. **`cargo`:** `Cargo.lock`: each changed `version`, `source` or `checksum` line after its package name.
-- **Arguments:** `[--repo <dir> | --git-dir <R>/src.git] npm|bun|cargo <base>..<head>`, where `<base>` and `<head>` name commits: letters, digits and `._/~^+-`, starting with a letter or a digit, with no `..`, at most 255 bytes each.
-- **Exit:** 0 done, whether or not a line printed · 64 refused, with one line, `lock-delta: refused: <reason>` · git's own status when git fails (128: a revision it cannot find). **Network:** none. **Writes:** nothing. **Needs:** git.
+- **`set`**, for checklist 11 §11.11's CI budget: the name@version set difference of every `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` (v1), `bun.lock`, `Cargo.lock`, `uv.lock` and `poetry.lock` the range changes, each read whole at both commits with the manifest beside it at `<head>`. One row per new name@version, and per version whose checksum changed, goes to `<R>/deps/lock-set-<n>.tsv`: its ecosystem, lockfile, name, old and new version, old and new source (`public`, `git`, `url`, `file`, `registry:<host>`, `unnamed` for an npm entry with no resolved URL, or `bundled`; a bun.lock entry with no registry takes the one the committed bunfig.toml or .npmrc beside it names) and its marks (`direct`, `pin`, `key`, `install`, `source-change`, `integrity`, `new-dep=<names>`, `url-mismatch`, `close=<name>`, `known-bad`); each copy of a name@version is kept apart, so a second copy from another source or with another checksum is a row. It prints a summary and the rows to read first, and the file last. A `pnpm-lock.yaml`, a yarn berry `yarn.lock`, a `bun.lockb` and a `go.sum` are named as not compared, with the reason; a lockfile of a kind it reads that it cannot compare (a link, a submodule, over 64 MiB, text it cannot read, or a manifest beside it it cannot read) is too, and `set` then exits 3 with the table kept.
+- **Arguments:** `[--repo <dir> | --git-dir <R>/src.git] npm|bun|cargo <base>..<head>`, or `[--repo <dir> | --git-dir <R>/src.git] --run <R> set <base>..<head>`, where `<base>` and `<head>` name commits: letters, digits and `._/~^+-`, starting with a letter or a digit, with no `..`, at most 255 bytes each, and `<R>` is the run directory, `audit_<n>` or `incident_<n>`.
+- **Exit:** 0 done, whether or not a line printed · 3 `set` could not compute, compare or keep its table · 64 refused, with one line, `lock-delta: refused: <reason>` · git's own status when git fails (128: a revision it cannot find). **Network:** none. **Writes:** nothing, but `set`'s table in the run directory. **Needs:** git, and python3 for `set`.
 
 #### `web3js-history.sh`
 
@@ -424,6 +428,7 @@ What this machine offers the runners. One line per tool, `<name>: <its version l
 "<auditor-skill root>/scripts/runner/deps.sh" npm-audit --run audit_1 --manifest web/package.json --manifest web/package-lock.json
 "<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_1 @solana/web3.js
 "<auditor-skill root>/scripts/runner/deps.sh" fetch-artifact --run audit_1 crates anchor-lang 0.31.1
+"<auditor-skill root>/scripts/runner/deps.sh" lock-budget --run audit_1 audit_1/deps/lock-set-1.tsv
 ```
 
 Dependency audits and registry queries (checklist 11), on copies of the manifests and lockfiles it is given. It runs no code from the working directory, so it needs no execution mode.
@@ -435,10 +440,11 @@ Dependency audits and registry queries (checklist 11), on copies of the manifest
 | `npm-audit` | `npm audit` on a copied `package.json` and lockfile, with its own `.npmrc` and empty user and global config; where `npm` is Corepack's shim, the copy's `packageManager` field does not choose the npm release (`COREPACK_ENABLE_PROJECT_SPEC=0`) |
 | `npm-view`, `npm-time`, `crate-info`, `pypi-info` | one registry record, fetched by curl from a host fixed in code |
 | `fetch-artifact` | a published `.crate`, npm tarball or PyPI sdist (else a pure-Python wheel), its digest checked against the registry's, unpacked without running anything into `<R>/deps/fetch-artifact-<n>/files/`; an entry that is not a regular file or a directory, or has an unsafe name, is left out and listed (each an SC-060 hit); a tar is read only plain or through gzip, bzip2 or xz (the xz decompressor held to 128 MiB, which every xz preset fits in), a zip's entries (a wheel, or a `.zip` sdist) only stored or deflated, and anything else (zstd), more than 50000 entries or 512 MiB, or more than 8 pax or GNU long-name headers in a row, is refused (exit 3) |
+| `lock-budget` | checklist 11 §11.11's CI budget over a set `lock-delta.sh set` wrote, in one run: one record per new public name (its publish times and publishers, at most 8 at a time, 1,000 names, each with one retry, and 300 seconds, no lookup running past them; a crate's age from the crates.io index, and its publisher from crates.io's API, one request a second, only for the crates the budget selects; `AUDITOR_PUBLISH_AGE=off` leaves it out), then every key handler and at most 40 other entries, key handlers first and the rest in the budget's order, fetched old and new as `fetch-artifact` fetches one, with one retry (none past a size bound), at most 50 MB a download and 500 MB unpacked in the call, and compared: the added lines matched against SC-059's and SC-060's patterns, counts first, into `<R>/deps/lock-budget-<n>.txt`, with the ages in `lock-budget-<n>/ages.tsv` and each request in `lock-budget-<n>/requests.txt`. A row from a source that is not public is never sent, and a scoped npm package the public registry has no record of is taken as private: never fetched, and no failure. The call ends by 540 seconds, inside a Bash tool call's 600: its work stops 10 seconds earlier, so the report is written in time. Exit 3 when a selected artifact still fails after its retry or passes a size bound, or an entry is not compared in time, once the rest are compared |
 
 - **Manifests:** each `--manifest` is a regular file of at most 50 MB inside the working directory, named as its action takes it (`Cargo.lock`, `Cargo.toml`, `package.json`, `package-lock.json`, `npm-shrinkwrap.json`), never `.npmrc`, `.yarnrc*`, `rust-toolchain*` or a file under `.cargo/`. A dependency from git or from another registry stops `cargo-outdated` and `cargo-tree`. So does a workspace member outside the workspace root's directory (one that names the root with `package.workspace`), because the rebuild writes only inside its scratch directory. For `cargo-audit`, a `Cargo.lock` that names a registry other than crates.io, holds an escape or is not UTF-8 stops the run in strict mode; in default mode `cargo audit` runs with `--no-yanked`, so no request goes to that registry, and a `>> note:` says the yanked check was not run.
-- **Exit:** 0 nothing found · 1 findings (vulnerabilities, outdated dependencies, or a package or version the registry does not have) · 3 blocker · 64 refused. **Output:** `<R>/deps/<action>-<n>.txt`, named on the last line.
-- **Network:** registry.npmjs.org, crates.io, index.crates.io, static.crates.io, pypi.org and files.pythonhosted.org, and github.com for the RustSec database, fixed in code; one row of `<R>/disclosures.tsv` before the first request to each service.
+- **Exit:** 0 nothing found · 1 findings (vulnerabilities, outdated dependencies, a package or version the registry does not have, or what `lock-budget` flags) · 3 blocker · 64 refused. **Output:** `<R>/deps/<action>-<n>.txt`, named on the last line.
+- **Network:** registry.npmjs.org, crates.io, index.crates.io, static.crates.io, pypi.org and files.pythonhosted.org, and github.com for the RustSec database, fixed in code; one row of `<R>/disclosures.tsv` before the first request to each service (for `lock-budget`, one per service for its whole run, naming the set).
 - **Needs:** python3, and cargo, cargo-audit, cargo-outdated, npm or curl as the action needs.
 
 #### `sast.sh`

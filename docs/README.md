@@ -8,19 +8,31 @@ A folder of markdown checklists, slash commands, and subagents — plus three sm
 
 Commands are namespaced `auditor`, so you invoke them as `/auditor:audit`, `/auditor:audit-cycle`, etc.
 
+## Pick a depth
+
+| Depth | When | Run | Reads | Writes | [Cost](../COSTS.md#cost-and-time-by-depth) |
+|-------|------|-----|-------|--------|------|
+| **Quick** | a branch or pull request, a first look at a repository, one function | `/auditor:diff-audit` · `/auditor:quick-scan` (whole repository) · `/auditor:deep-review <file> <fn>` | the changed code + one hop, read against the sections and vectors `references/depth-scope.md` selects · SAST, dependency advisories, and the sections and vectors `references/depth-scope.md` selects · one function | `PR-REPORT.md` · `QUICK-SCAN.md` · `DEEP-REVIEW-<unit>.md` | $2–8 · 4–23 min |
+| **Standard** | one module or program before it merges | `/auditor:audit <path> --scope …` | every in-scope item for that path | `REPORT.md`, internal: a risk score and a deploy verdict | $13–19 · 36–56 min |
+| **Full** | a release, or a report for someone outside the team | `/auditor:audit-cycle` (unattended) · `/auditor:audit-assist` (you steer) · `/auditor:re-audit` after fixes | everything in scope, a threat model, peer review (re-audit: the fix delta) | `REPORT.md`, client style: no deploy guarantee (audit-cycle adds a PDF when pandoc and a LaTeX engine are installed, and PoCs with `--with-poc`) · `RE-AUDIT.md`, with an updated deploy verdict | about $20 · about 1 h, on a 3K-line program |
+| **[CI](ci.md)** | every pull request: the analyzers on all, the review on your own branches' only | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | as Quick | `findings.json` and SARIF on the runner; in the log, pass/fail and notes about the tools, never a finding or a count | tools job $0; review about a diff-audit's cost ($2–8), capped at $15 |
+
+Costs and times were measured from 2026-11-08 to 2026-11-10 with `claude-opus-5-5`, on 3K-, 7K- and 12K-line programs. Quick's range covers diff-audit runs of $1.68–8.10 and quick-scan runs of $2.84–7.14. The shipped command text was measured on the 3K-line repository, where a quick-scan cost $6.98 in 23 minutes and a diff-audit of a 7,830-line range, a lockfile change included, $8.10 in 19 minutes, and on the 12K-line program, where a diff-audit of a 1,248-line change with no lockfile cost $3.99 in 9 minutes. The other runs were on earlier drafts, and those under $3 read 16 to 55 vector files and at most one checklist. Full ran once, on the 3K-line program ([COSTS.md](../COSTS.md#cost-and-time-by-depth)). Outside the depths: `poc`, `patch`, `economic-sim` and `triage` work on one finding; `intake` and `threat-model` are Full's building blocks; `audit-report` assembles the internal report from a walk run in pieces; `spec-audit` checks code against a spec; `hunt` and `respond` are for after an incident. More on each depth: [audit-flows.md](audit-flows.md).
+
 ## I want to… → use this
 
 | Goal | Use | Guide |
 |------|-----|-------|
-| One-shot full audit of a repo | `/auditor:audit [path] [--scope ...]` | [commands.md](commands.md#auditoraudit) |
-| Fast CI gate / first look (no full walk) | `/auditor:quick-scan` | [commands.md](commands.md#auditorquick-scan) |
-| Audit only a PR / commit range | `/auditor:diff-audit [base..head]` | [commands.md](commands.md#auditordiff-audit) |
-| Deep-dive one instruction / function | `/auditor:deep-review <file> [fn]` | [commands.md](commands.md#auditordeep-review) |
+| Quick: what a branch or PR changes (its commits) | `/auditor:diff-audit [base..head]` | [commands.md](commands.md#auditordiff-audit) |
+| Quick: a first look at a whole repo (no full checklist walk) | `/auditor:quick-scan` | [commands.md](commands.md#auditorquick-scan) |
+| Quick: one instruction / function, deeply | `/auditor:deep-review <file> [fn]` | [commands.md](commands.md#auditordeep-review) |
+| Standard: every in-scope item of a module, program or repo | `/auditor:audit [path] [--scope ...]` | [commands.md](commands.md#auditoraudit) |
+| Full: unattended engagement → client report | `/auditor:audit-cycle` | [audit-flows.md](audit-flows.md#flow-a--auditoraudit-cycle-automated) |
+| Full: you steer at checkpoints | `/auditor:audit-assist` | [audit-flows.md](audit-flows.md#flow-b--auditoraudit-assist-interactive) |
+| Full: review a fix round against a prior report | `/auditor:re-audit [prior] [base..head]` | [commands.md](commands.md#auditorre-audit) |
+| CI for pull requests | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | [ci.md](ci.md) |
 | Code-vs-spec conformance | `/auditor:spec-audit <spec> [path]` | [commands.md](commands.md#auditorspec-audit) |
-| Full automated engagement → client report | `/auditor:audit-cycle` | [audit-flows.md](audit-flows.md#flow-a--auditoraudit-cycle-automated) |
-| Human-in-the-loop engagement | `/auditor:audit-assist` | [audit-flows.md](audit-flows.md#flow-b--auditoraudit-assist-interactive) |
-| Review a fix round against a prior report | `/auditor:re-audit [prior] [base..head]` | [commands.md](commands.md#auditorre-audit) |
-| Set up scope + trust model before auditing | `/auditor:intake` (alias `/scope`) | [commands.md](commands.md#auditorintake) |
+| Set up scope + trust model before a Full run | `/auditor:intake` | [commands.md](commands.md#auditorintake) |
 | Enumerate assets / actors / trust boundaries | `/auditor:threat-model` | [commands.md](commands.md#auditorthreat-model) |
 | Threat-model a fork or inherited codebase from its history | `/auditor:threat-model --bootstrap` | [commands.md](commands.md#auditorthreat-model) |
 | Quantify an economic attack ($ P/L) | `/auditor:economic-sim <finding>` | [commands.md](commands.md#auditoreconomic-sim) |
@@ -34,12 +46,13 @@ Commands are namespaced `auditor`, so you invoke them as `/auditor:audit`, `/aud
 | Remember findings across audits | build `audit-mem` | [power-tools.md](power-tools.md#audit-mem) |
 | Run with fewer prompts, in strict mode for code you don't trust, isolated, or in `claude -p` | the user-settings rules, `templates/strict-settings.json`, `AUDITOR_STRICT`, `AUDITOR_EXEC_MODE` | [permissions-and-isolation.md](permissions-and-isolation.md) |
 
-As a CI gate, `/auditor:quick-scan` runs non-interactively, so the run must be able to run its analyzers: a gate whose analyzers did not run fails.
+In CI, `--ci` on `/auditor:diff-audit` and `/auditor:quick-scan` asks nothing, writes `audit_<n>/findings.json` and ends with one verdict line. An analyzer that did not run fails the verdict, as does a counted finding at or above `--fail-on` (7 when not given). On a public repository the job publishes pass/fail only ([ci.md](ci.md)).
 
 ## Guides
 
 - **[getting-started.md](getting-started.md)** — install, submodule, build the Rust tools, run your first audit, the adaptation note.
-- **[audit-flows.md](audit-flows.md)** — the full lifecycle; when to use one-shot vs automated vs interactive vs fix-review; the cheap lanes.
+- **[audit-flows.md](audit-flows.md)** — the three depths and CI, and the pipeline each one follows: Quick, Standard, the Full lifecycle and the fix review.
+- **[ci.md](ci.md)** — CI for pull requests: the workflow template, its two jobs, `--ci` and `--fail-on`, what the verdict means, and how to read the details of a public repository's run.
 - **[commands.md](commands.md)** — reference entry for each of the 17 commands, grouped by phase.
 - **[agents.md](agents.md)** — the 9-agent roster: role, model tier, when each fires, how they chain.
 - **[power-tools.md](power-tools.md)** — `audit-scan`, `audit-mem`, Trail of Bits plugins, Surfpool sim, the PoC/patch stack, the bundled scripts and their flags.
@@ -53,5 +66,5 @@ As a CI gate, `/auditor:quick-scan` runs non-interactively, so the run must be a
 - [`SKILL.md`](../SKILL.md) — the orchestrator the agent reads first.
 - [`OUTPUT-RULES.md`](../OUTPUT-RULES.md) — the mandatory output format, severity scale and operating-safety rules (Rule 11).
 - [`AGENTS.md`](../AGENTS.md) — agent orchestration overview.
-- [`COSTS.md`](../COSTS.md) — token/dollar estimates by model and repo size.
+- [`COSTS.md`](../COSTS.md) — measured cost and time per depth.
 - [`QUESTIONS.md`](../QUESTIONS.md) — the 47-question pre-audit questionnaire.

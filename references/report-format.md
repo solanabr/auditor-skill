@@ -15,7 +15,7 @@ Every audit output — regardless of size — MUST start with an **Executive Sum
 
 **Repository:** {org/repo}
 **Commit:** {short SHA}
-**Date:** {YYYY-MM-DD}
+**Generated:** {the line `rundir.sh stamp` printed right before this report was written}
 **Scope:** {FULL / PROGRAM / BACKEND / FRONTEND / DEVOPS}
 **Repository Risk Score:** {1-10} — {CRITICAL/HIGH/MEDIUM/LOW/MINIMAL}
 
@@ -120,6 +120,10 @@ The report MUST include computed metrics at the end of the Item Results section.
 | Output | Filename |
 |--------|----------|
 | Full audit report | `audit_{N}/REPORT.md` |
+| Quick review of a diff (`/auditor:diff-audit`) | `audit_{N}/PR-REPORT.md` |
+| Quick scan (`/auditor:quick-scan`) | `audit_{N}/QUICK-SCAN.md` |
+| Deep review of one unit (`/auditor:deep-review`) | `audit_{N}/DEEP-REVIEW-{unit}.md` (`-2`, `-3` and on when taken) |
+| CI findings (`--ci`) | `audit_{N}/findings.json` (`templates/ci/findings.schema.json`) |
 | Threat-model bootstrap evidence | `audit_{N}/bootstrap/` (working material, OUTPUT-RULES.md Rule 11d) |
 | Remediation roadmap | `audit_{N}/roadmap.md` |
 | Per-instruction worksheets | `audit_{N}/worksheets/{instruction_name}.md` |

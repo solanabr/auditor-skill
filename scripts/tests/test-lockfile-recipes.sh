@@ -7,7 +7,9 @@
 #     v1, an npm alias, yarn v1 and berry), and "?" when the key is outside the hunk, in tab-indented and CRLF
 #     lockfiles too; every hint prints the same under a checkout config that sets colour and zero context
 #     lines; the changed-files hint, which FULL-AUDIT Step 3.2 repeats, lists a go.mod change; step 4's sweep
-#     deletes every entry that is neither a regular file nor a directory, in 0555 and 0000 directories too;
+#     deletes every entry that is neither a regular file nor a directory, in 0555 and 0000 directories too; the CI
+#     budget's two calls, lock-delta.sh set as written and the set its deps.sh call takes, and its closed list of
+#     key handlers and KV-077's known-bad releases, the ones lock-delta.sh marks;
 #   - the known-bad release check for axios 1.14.1 / 0.30.4 and @solana/web3.js 1.95.6 / 1.95.7, the same
 #     commands in FULL-AUDIT Step 3.2, KV-077 Step 2 and (its tree part) discovery/grep-commands.md, its history
 #     through scripts/recipes/web3js-history.sh: the single-line shapes (resolved URLs, pnpm v5 and v9 keys, yarn
@@ -215,6 +217,49 @@ if [ -n "$sweep" ] && [ -n "$confirm" ] && [ -z "$left" ] && [ "$(wc -l < "$T/sw
    && [ -f "$A/old/pkg/a.js" ] && [ -d "$A/new/pkg/sub" ] && [ "$(ls -l "$T/linked-file" | cut -c1-10)" = -r--r--r-- ]; then
   ok "step 4 opens 0555 and 0000 directories, deletes and lists links and FIFOs, and changes no link target"
 else bad "step 4 ('$sweep', then '$confirm') left: $left"; sed 's/^/  | /' "$T/sweep.out" "$T/sweep.err"; fi
+
+# the CI budget, as §11.11 writes its two calls: lock-delta.sh set runs on a copy of the hints fixture and names
+# the set the deps.sh call takes; the closed key-handler list and KV-077's known-bad releases are the ones
+# lock-delta.sh marks
+awk '/^> \*\*CI budget\*\*/ {g = 1; next} g && /^> ```$/ {if (c) exit; c = 1; next} g && c {sub(/^> /, ""); print}' "$CL" \
+  | sed -e 's/<base>\.\.<head>/rev-base..rev-head/' -e "s#<auditor-skill root>#$ROOT#g" -e 's/audit_<n>/audit_1/g' -e 's/<k>/1/g' \
+  > "$T/budget.sh"
+CB="$T/ci-budget"
+git clone -q "$H" "$CB" && (cd "$CB" && "$ROOT/scripts/rundir.sh" new audit >/dev/null) || { bad "could not copy the hints fixture for the CI budget"; }
+if [ "$(wc -l < "$T/budget.sh" | tr -d ' ')" = 2 ]; then
+  ( cd "$CB" && bash -c "$(sed -n 1p "$T/budget.sh")" ) > "$T/budget.out" 2> "$T/budget.err"; rc=$?
+  if [ "$rc" = 0 ] && grep -qx 'lock-set: audit_1/deps/lock-set-1.tsv ([0-9]* rows)' "$T/budget.out" && [ -f "$CB/audit_1/deps/lock-set-1.tsv" ] \
+     && grep -q '^"[^"]*/scripts/runner/deps.sh" lock-budget --run audit_1 audit_1/deps/lock-set-1.tsv$' "$T/budget.sh"; then
+    ok "§11.11's CI budget: lock-delta.sh set runs as written and keeps the set its deps.sh lock-budget call takes"
+  else bad "§11.11's CI budget did not run as written (exit $rc)"; sed 's/^/  | /' "$T/budget.sh" "$T/budget.out" "$T/budget.err"; fi
+  if grep -q '	@solana/web3.js	1.95.5	1.95.6	public	public	.*key.*known-bad' "$CB/audit_1/deps/lock-set-1.tsv"; then
+    ok "§11.11's CI budget: the hints fixture's @solana/web3.js 1.95.6 is marked key and known-bad"
+  else bad "§11.11's CI budget: @solana/web3.js 1.95.6 is not marked key and known-bad"; sed 's/^/  | /' "$CB/audit_1/deps/lock-set-1.tsv"; fi
+else bad "§11.11's CI budget does not give its two calls in one code block"; sed 's/^/  | /' "$T/budget.sh"; fi
+python3 -I - "$ROOT/scripts/recipes/lock-delta.sh" "$CL" "$KV077" > "$T/lists.out" 2>&1 <<'PY'
+import ast, re, sys
+src = open(sys.argv[1]).read()
+code = re.search(r"\nSET_PY='(.*?)'\n", src, re.S).group(1)
+names = {}
+for node in ast.parse(code).body:
+    if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and node.targets[0].id in ("KEY", "KEY_PREFIX", "KNOWN_BAD"):
+        names[node.targets[0].id] = ast.literal_eval(node.value)
+cl = open(sys.argv[2]).read()
+line = re.search(r"^> - \*\*The key handlers\*\*.*$", cl, re.M).group(0)
+npm_part, crates_part = line.split("; crates ", 1)
+npm = re.findall(r"`([^`]+)`", npm_part.split(": npm ", 1)[1])
+crates = re.findall(r"`([^`]+)`", crates_part)
+want_npm = list(names["KEY"]["npm"]) + [p + "*" for p in names["KEY_PREFIX"]["npm"]]
+ok = sorted(npm) == sorted(want_npm) and sorted(crates) == sorted(names["KEY"]["crates"])
+print(("ok" if ok else "bad") + "\tthe key handlers §11.11 lists are the ones lock-delta.sh marks key: npm %s, crates %s" % (npm, crates))
+kv = open(sys.argv[3]).read()
+m = re.search(r"# Known-bad releases: axios ([0-9.]+) / ([0-9.]+) and the hijacked @solana/web3\.js ([0-9.]+) / ([0-9.]+)\.", kv)
+got = {("npm", "axios", m.group(1)), ("npm", "axios", m.group(2)), ("npm", "@solana/web3.js", m.group(3)), ("npm", "@solana/web3.js", m.group(4))} if m else set()
+print(("ok" if got and got == set(names["KNOWN_BAD"]) else "bad") + "\tthe known-bad releases lock-delta.sh marks are KV-077 Step 2's: %s" % sorted(got))
+PY
+while IFS="$(printf '\t')" read -r verdict what; do
+  case "$verdict" in ok) ok "$what" ;; *) bad "${what:-the list check could not run: $(cat "$T/lists.out")}" ;; esac
+done < "$T/lists.out"
 
 # ---- 2. the known-bad release check ---------------------------------------------------------------------
 kb_block "$FA" > "$T/kb-fa.sh"; kb_block "$KV077" > "$T/kb-kv.sh"; kb_tree "$KV077" > "$T/kbt-kv.sh"; kb_tree "$GC" > "$T/kbt-gc.sh"

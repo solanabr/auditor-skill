@@ -5,8 +5,9 @@ argument-hint: "[audit-dir] [--strict]"
 allowed-tools:
   - Read
   - Glob
-  - Edit(audit_*/**)
+  - Edit(/audit_*/**)
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" *)'
 ---
 
 # auditor-skill — Report
@@ -17,6 +18,6 @@ allowed-tools:
 1. Gather the session's checkpoints and findings.
 2. Deduplicate and classify findings by severity (1-10).
 3. Assemble the report from `templates/report-template.md` (read it, and every installation file, with the Read tool: a `grep` or `cat` outside the working directory asks): executive summary (safe-to-deploy verdict), Scope Coverage table, per-checklist verdicts, findings, Phase 4.5 maturity scorecard, remediation roadmap (CRITICAL → INFO).
-4. Write `audit_<n>/REPORT.md` with the Write tool, in the run directory the session's checkpoints are in (the `allowed-tools` above pre-approve writes under `audit_*/` only). Flag any in-scope item lacking a verdict as `[INCOMPLETE — in-scope item without verdict]`.
+4. Write `audit_<n>/REPORT.md` with the Write tool, in the run directory the session's checkpoints are in (the `allowed-tools` above pre-approve writes under `audit_*/` only). Flag any in-scope item lacking a verdict as `[INCOMPLETE — in-scope item without verdict]`. Right before you write the report, run `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp` as a Bash call of its own, and put the line it prints, as it stands, in the report's Generated field (`OUTPUT-RULES.md` Rule 9).
 
 This command's pre-approvals last for the turn that invoked it: if the user sends a message before the report is written, first invoke this command again through the Skill tool as `auditor:audit-report --resume <step> audit_<n>` (and `--strict` when the user's arguments held it), run step 0 again, and go on from that step without repeating the other finished ones. That invocation asks unless the user-level rules in `docs/permissions-and-isolation.md` (Turns and resuming) are set: the human may answer "Yes", or "Yes, and don't ask again", whose rule goes into this repository's `.claude/settings.local.json`, which step 0 no longer refuses while git does not track it (outside a git repository strict mode still refuses it, so answer "Yes" there).

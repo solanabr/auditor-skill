@@ -5,6 +5,8 @@ The finding-diff `/auditor:re-audit` writes to `audit_<n+1>/RE-AUDIT.md`. Baseli
 and PoC re-run: `{isolated | native}` (`OUTPUT-RULES.md` Rule 11a; native means target code ran on the
 auditor's machine).
 
+**Generated:** {the line `"<auditor-skill root>/scripts/rundir.sh" stamp` printed right before this report was written, as it stands}
+
 ## 1. Finding-diff
 
 | Finding | Severity | Status | Remediation commit / PR | `file:line` | PoC re-run (step 4b) | Verification verb |

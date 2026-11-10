@@ -5,6 +5,7 @@
 #   "${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check <R>            checks <R> for reuse; prints "ok <R>"
 #   "${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" sub <R> <rel>        creates one subdirectory; prints its path
 #   "${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" store                checks the in-tree audit-mem store
+#   "${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" stamp                prints the line a report's Generated field holds
 #
 # Run it directly by its quoted absolute path, with no bash in front, from the working directory under
 # audit. A refusal is one stderr line, "rundir: refused: <reason>", with exit 64.
@@ -18,7 +19,7 @@
 # new takes the highest n over real directories named <kind>_<n>, plus one, passing over a name the
 # repository tracks in any letter case. A path the repository tracks under a top-level directory named
 # audit_* or incident_* (or a submodule of that name) gets a note on stderr, since the commands'
-# Edit(audit_*/**) and Edit(incident_*/**) rules also cover it; so does a repository git cannot tell about
+# Edit(/audit_*/**) and Edit(/incident_*/**) rules also cover it; so does a repository git cannot tell about
 # (Rule 11d). In strict mode (OUTPUT-RULES.md Rule 11f; --strict turns it on) both are refused, as writes
 # into run directories could then reach tracked files. A next name that a file, a link or a folder spelled
 # in other letters holds is passed over too, with a note naming it as the disk spells it; strict mode
@@ -39,7 +40,12 @@
 # (audit-mem init creates it). Otherwise it refuses, and the flow uses <R>/audit-mem.db instead. Whether
 # you created the store yourself stays your judgement.
 #
-# Exit: 0 done · 64 refused. Needs bash >= 3.2 and git; env, find, wc, cat and mkdir.
+# stamp prints one line: "Generated automatically by auditor-skill <version> on <YYYY-MM-DDTHH:MM:SSZ>.
+# <statement>", the version from the installation's .claude-plugin/plugin.json and the time in UTC. The
+# statement is AUDITOR_REVIEW_STATEMENT, its control characters made spaces, trimmed, and cut at 300 characters
+# with a note on stderr; when that leaves nothing, "No person reviewed this report before it was written."
+#
+# Exit: 0 done · 64 refused. Needs bash >= 3.2 and git; env, find, wc, cat, mkdir and date.
 
 set -uo pipefail
 unset CDPATH
@@ -47,7 +53,7 @@ case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
 here=$(cd -P -- "$here" 2>/dev/null && pwd -P) || { printf 'rundir: refused: the installation cannot be resolved\n' >&2; exit 64; }
 . "$here/lib/confine.sh" || { printf 'rundir: refused: scripts/lib/confine.sh cannot be read\n' >&2; exit 64; }
 confine_init rundir "${here%/*}"
-confine_need env git find wc cat mkdir
+confine_need env git find wc cat mkdir date
 WT=$CONFINE_WT
 
 refuse() { confine_refuse "$1"; }
@@ -150,7 +156,7 @@ cmd_new() { # cmd_new audit|incident [--strict]
   done
   printf '%s\n' "$name"
   for path in ${notes[@]+"${notes[@]}"}; do
-    confine_note "the repository tracks $path, under a name the commands' Edit(audit_*/**) and Edit(incident_*/**) rules also cover; this run writes only in $name (Rule 11d)"
+    confine_note "the repository tracks $path, under a name the commands' Edit(/audit_*/**) and Edit(/incident_*/**) rules also cover; this run writes only in $name (Rule 11d)"
   done
   [ "$nnoted" -le 5 ] ||
     confine_note "the repository tracks paths under $((nnoted - 5)) more such names; this run writes only in $name (Rule 11d)"
@@ -225,7 +231,36 @@ cmd_store() {
   printf '%s\n' "$d/audit.db"
 }
 
-[ $# -gt 0 ] || refuse "usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store"
+cmd_stamp() {
+  local json version s rest i=0 n chars=0 cut=0
+  [ $# -eq 0 ] || refuse "stamp takes no arguments"
+  json=$(cat -- "${here%/*}/.claude-plugin/plugin.json" 2>/dev/null) || refuse ".claude-plugin/plugin.json cannot be read"
+  [[ $json =~ \"version\"[[:space:]]*:[[:space:]]*\"([0-9][0-9A-Za-z.+-]{0,63})\" ]] ||
+    refuse ".claude-plugin/plugin.json names no version"
+  version=${BASH_REMATCH[1]}
+  # LC_ALL is C here (confine_init), so a character class matches bytes: C0 controls and DEL, then the C1
+  # controls as UTF-8 writes them
+  s=${AUDITOR_REVIEW_STATEMENT-}
+  s=${s//[[:cntrl:]]/ }
+  s=${s//$'\xc2'[$'\x80'-$'\x9f']/ }
+  s=${s#"${s%%[![:space:]]*}"}
+  # at most 300 characters, counted as UTF-8 counts them: a byte from 0x80 to 0xbf continues one
+  if [ "${#s}" -gt 1200 ]; then s=${s:0:1200}; cut=1; fi
+  n=${#s}
+  while [ "$i" -lt "$n" ]; do
+    case "${s:i:1}" in
+      [$'\x80'-$'\xbf']) ;;
+      *) chars=$((chars + 1)); if [ "$chars" -gt 300 ]; then s=${s:0:i}; cut=1; break; fi ;;
+    esac
+    i=$((i + 1))
+  done
+  s=${s%"${s##*[![:space:]]}"}
+  [ "$cut" = 0 ] || printf 'rundir: note: AUDITOR_REVIEW_STATEMENT holds more than 300 characters; the stamp keeps the first 300\n' >&2
+  [ -n "$s" ] || s="No person reviewed this report before it was written."
+  printf 'Generated automatically by auditor-skill %s on %s. %s\n' "$version" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$s"
+}
+
+[ $# -gt 0 ] || refuse "usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, store, or stamp"
 verb=$1
 shift
 case "$verb" in
@@ -233,5 +268,6 @@ case "$verb" in
   check) cmd_check "$@" ;;
   sub) cmd_sub "$@" ;;
   store) cmd_store "$@" ;;
-  *) refuse "usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, or store" ;;
+  stamp) cmd_stamp "$@" ;;
+  *) refuse "usage: rundir.sh new audit|incident, check <R>, sub <R> <rel>, store, or stamp" ;;
 esac

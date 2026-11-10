@@ -361,11 +361,10 @@ Rank your top 3:
 - [ ] Operational security
 - [ ] Other: _______________
 
-### Q41. Desired audit depth
-- [ ] **Quick scan** — grep-based pattern matching, known vector check (~30 min, lowest cost)
-- [ ] **Standard** — full checklist + known vectors, file-by-file review (~1-2 hours)
-- [ ] **Deep** — standard + economic attack scenarios, cross-file analysis, formal property verification (~2-4 hours)
-- [ ] **Maximum** — deep + manual verification steps, infrastructure review, compliance check (~4-8 hours)
+### Q41. Desired audit depth (for an agent that follows this file by hand; in the plugin each depth is its own command, and intake, which runs inside Full, only records the answer)
+- [ ] **Quick** — what a branch changes, a first look, or one function, with no full checklist walk: `/auditor:diff-audit`, `/auditor:quick-scan`, `/auditor:deep-review`
+- [ ] **Standard** — every in-scope checklist item and phase-triggered vector for one module or program, file by file: `/auditor:audit <path> --scope …`
+- [ ] **Full** — Standard's walk plus a threat model, triage, peer review and a client report: `/auditor:audit-cycle` or `/auditor:audit-assist`
 
 ### Q42. Report delivery preference
 - [ ] Markdown file in repo
@@ -454,7 +453,7 @@ DEP-072 (public cloud storage buckets) and DEP-073 (a `.git/` directory a web se
 | Q32 = No tests | Auto-flags testing gaps, enables checklist 16 recommendations |
 | Q35 = MiCA/GDPR | Enables compliance checklist (18) |
 | Q39 = Specific scope | Skips irrelevant checklists, reduces cost/time |
-| Q41 = Quick scan | Uses grep + known vectors only, skips semantic analysis |
+| Q41 = Quick | For an agent that follows this file by hand: run Quick instead, with quick-scan's or diff-audit's selection from `references/depth-scope.md`, and state it as a coverage limit. The plugin's intake only records it: Quick and Standard are commands of their own, with no intake |
 | Q46 = Isolated | Builds, tests, installs and every PoC build run in a container / VM / sandbox (`OUTPUT-RULES.md` Rule 11a); a step that cannot run there keeps its source-level verdict, and a PoC records `[PoC-ATTEMPTED]` |
 | Q46 = Native, or unanswered | Target-controlled code runs on the auditor's machine; the report's Coverage & Limitations states it |
 | Q46 = Untrusted source | Strict mode (`OUTPUT-RULES.md` Rule 11f) for this and every later audit in this directory: the runners build in isolated mode only, and the bundled tools refuse what Rule 11f lists |

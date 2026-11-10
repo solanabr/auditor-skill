@@ -11,14 +11,14 @@
 auditor-skill does **not** read its whole corpus up front. It discovers the repo, declares a scope, loads only what that scope needs, and guarantees a verdict for every in-scope item.
 
 1. **Discover** (cheap, always): enumerate file extensions and markers (`Anchor.toml`, `Cargo.toml`, `package.json`, `*.py`, `.github/`). No checklists or vectors loaded yet.
-2. **Declare scope**: from detected languages + any `--scope` flag, compute the IN-SCOPE checklist set (see [SKILL.md](SKILL.md) → Scope-Gated Loading). Load this file (`OUTPUT-RULES.md`) once — it is always in scope.
+2. **Declare scope**: from detected languages + any `--scope` flag, compute the IN-SCOPE checklist set (see [SKILL.md](SKILL.md) → Scope-Gated Loading). Load this file (`OUTPUT-RULES.md`) once — it is always in scope. A Quick or CI run (`/auditor:quick-scan`, `/auditor:diff-audit`) declares a smaller scope instead: the selection of [references/depth-scope.md](references/depth-scope.md), which it writes to `audit_<n>/scope.md` before it reads a checklist section or a vector file. What that selection leaves out, a section a checklist calls baseline or an `always` row included, is out of that depth's scope.
 3. **Load on demand**: load an in-scope checklist when its phase begins; load a known-vector only when its phase + language/domain trigger reaches it. Out-of-scope checklists and vectors are **never read**.
 
 Completeness is measured **output-side**, not input-side:
 
 - The audit is COMPLETE iff every IN-SCOPE checklist item and every phase-triggered vector has an explicit verdict.
 - If any in-scope item lacks a verdict, report `[INCOMPLETE — in-scope item without verdict]` and finish it before concluding.
-- Out-of-scope items render as `[N/A — out of scope: <reason>]`, generated from the scope gate (not from reading the file).
+- Out-of-scope items render as `[N/A — out of scope: <reason>]`, generated from the scope gate (not from reading the file). In a Quick or CI report they render once per left-out section or row group, as Rule 4's depth exception says.
 
 Every full report MUST include a **Scope Coverage** table: for each of the checklists and each vector group, `IN-SCOPE` (with items evaluated / total) or `OUT-OF-SCOPE (reason)`.
 
@@ -161,7 +161,7 @@ After each chunk, save to session memory:
 
 ## Rule 4: Every Item Gets a Verdict
 
-Every single checklist item and every known attack vector MUST appear in the report output with an explicit verdict. No items are skipped silently. This is the proof that the auditor actually checked everything.
+Every single checklist item and every known attack vector MUST appear in the report output with an explicit verdict. No items are skipped silently. This is the proof that the auditor actually checked everything. **The depth exception.** A Quick or CI run takes a declared subset, the selection of `references/depth-scope.md`, and gives a verdict to every item and vector inside it. The items outside it are listed once per section or row group, as "outside <depth>'s scope; /auditor:audit gives their verdicts", with no verdict per item. Inside a read section, the items no site in scope reaches share the section's one `[N/A — no site in scope]` line, and an item that needs a call the depth does not make gets `[N/A at this depth — needs <call>]`. quick-scan's "this is the subset, not the full set" is the same rule.
 
 ### Item Verdict Format
 
@@ -328,6 +328,8 @@ If a language has no dedicated checklist (e.g., Swift, Dart, Elixir):
 
 → Report-assembly format moved to [references/report-format.md](references/report-format.md) § Rule 9 — File Naming; loaded at report time.
 
+Every report carries, in its Generated field, the line `rundir.sh stamp` printed right before it was written, and claims no more review by a person than that line's statement says (`AUDITOR_REVIEW_STATEMENT`, else none).
+
 The directories these files live in (`audit_<n>/`, `.audit-memory/`, `incident_<n>/`) follow [Rule 11d](#11d--output-hygiene).
 
 ---
@@ -401,11 +403,11 @@ The mode is recorded at intake when the human answers Q46, and `/auditor:intake 
 
 ### 11b — Outside-service disclosure
 
-Some tools send audit material to services outside the auditor's machine. There is no consent gate, but nothing goes out silently: the report lists each tool, the service it contacted, and what it sent.
+Some tools send audit material to services outside the auditor's machine. There is no consent gate, but nothing goes out silently: the report lists each tool, the service it was set to contact, and what it was set to send, and says where the tool's own output shows the request went out (`templates/pr-report.md`).
 
 **Where the list comes from.** The bundled tools that query outside services (`deps.sh`, `sast.sh`, the RPC collector, the program snapshot, `rpc-read.sh` with `--run`, and the threat-model collector in `--network`) first add a row per service, or per URL, to the run directory's `disclosures.tsv` (`audit_<n>/disclosures.tsv` or `incident_<n>/disclosures.tsv`): the time (UTC), the tool, the service (the host's last two DNS labels, as the collectors print the provider), what was sent, and how many values. Rows are only ever added, and a `disclosures.tsv` that is not a regular file with one link and the header is refused before anything is sent. The report's list is every row of the engagement's run directories, then each contact no row holds: the builds' own downloads, MCP servers, WebFetch, the Trail of Bits tools, the live probes of Q47, and anything else run by hand. `rpc-read.sh` without `--run` writes no row, and prints the service and what it received on stderr instead: copy that into the list. Typical entries:
 
-- `deps.sh` → crates.io and github.com (the RustSec database), npmjs.org, pypi.org and pythonhosted.org: package names and versions, or the manifests and lockfiles it was given (rows).
+- `deps.sh` → crates.io and github.com (the RustSec database), npmjs.org, pypi.org and pythonhosted.org: package names and versions, or the manifests and lockfiles it was given (rows); for `lock-budget`, the name of each package of the set it was given that comes from a public registry, new packages and new versions alike (a name from another source is never sent), one row per service for its whole run.
 - `sast.sh` → semgrep.dev: the ruleset ids (a row).
 - `collect.sh`, `snapshot-program.sh` and `rpc-read.sh` → the RPC provider in `RPC_URL`, or a public Solana endpoint for `rpc-read.sh --cluster`: account addresses, signatures and program IDs (rows).
 - The threat-model collector in `--network` → the host of each URL it fetched (rows).
@@ -442,7 +444,7 @@ A `.git/` directory the auditor did not create itself — a client archive, a co
 
   The other bundled tools write into a run directory only when it passes `check`, and none of them makes a run directory's `.gitignore`. The commands write files there with the Write and Edit tools, which they pre-approve for `audit_*/` and `incident_*/` only. Never write into a tracked run directory.
 - The store check: in the audited repository, `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory` must print nothing and exit 0, and you must have created `.audit-memory/` yourself, in this run or an earlier audit. `audit-mem` runs the git part itself before every use of `.audit-memory/`, with the hardened call of `scripts/lib/confine.sh`, and also requires a real directory holding no symbolic link with a `.gitignore` of exactly `*`; it refuses otherwise, or when git cannot answer. `"<auditor-skill root>/scripts/rundir.sh" store` runs the same check for any other tool: it prints `.audit-memory/audit.db` for a store that passes, `absent` when there is none, and refuses otherwise. Whether you created the store stays your judgement. When the check fails, or the store is not yours, do not use it: pass `--db audit_<n>/audit-mem.db` (a store for this run, made by `audit-mem init --contract=1 --db audit_<n>/audit-mem.db`) on every `audit-mem` call instead, and never overwrite a tracked `.audit-memory/.gitignore`. On a case-insensitive filesystem a tracked `.AUDIT-MEMORY/` is the same directory, hence `--icase-pathspecs`. A store you check by hand, for a tool other than `audit-mem`, is checked before each use: a later `git pull` can change the answer.
-- In CI on a public repository, publish pass/fail only — no finding counts, total or per severity. Treat workflow logs and uploaded artifacts as public: anyone signed in to GitHub can read them. Deliver details privately (GitHub private vulnerability reporting, a draft security advisory, or a private repository); when no private channel is available, fail the job. Never fall back to printing findings in the log.
+- In CI on a public repository, publish pass/fail only: no finding text and no finding counts, total or per severity. Treat PR comments, check annotations, job summaries, workflow logs and uploaded artifacts as public: anyone signed in to GitHub can read them. The details stay in the run directory on the runner; to read them, run the same command again on the same commits in a clone of your own. With `--ci`, `/auditor:diff-audit` and `/auditor:quick-scan` keep finding text out of their reply and end it with a closing line that names only the verdict, the threshold and the analyzers, and `templates/ci/auditor-pr.yml` prints the same line, rebuilt from the review's checked result, and none of the review's own text (`docs/ci.md`). A private channel (GitHub private vulnerability reporting, a draft security advisory, a private repository) may carry the details, but never fail the job only because none exists, and never fall back to printing findings in the log.
 
 ### 11e — Bundled paths
 
