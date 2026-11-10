@@ -20,7 +20,7 @@ Yes. CI runs Quick on pull requests from your own branches, and the bundled anal
 
 - **The tools job** runs the bundled analyzers with no model and no secrets, for fork pull requests too.
 - **The review job** runs `/auditor:diff-audit --ci` on pull requests from your own branches, other than Dependabot's, in strict mode with nothing built. It fails when a counted finding reaches `AUDITOR_FAIL_ON` (7 by default), when an analyzer did not run, or when the review stopped early ([what the verdict means](ci.md#what-the-verdict-means)).
-- **Cost.** A diff-audit cost $1.68 to $8.10 in measured runs, and $8.10 on the shipped text for a 7,830-line range. The review job on the shipped text is not measured yet, and the template caps it at $15.
+- **Cost.** A diff-audit cost $1.68 to $8.10 in measured runs, and $8.10 on the shipped text for a 7,830-line range. On that text a narrow change, 1,248 lines of the 12K-line program with no lockfile, cost $3.99. The review job on the shipped text is not measured yet, and the template caps it at $15.
 - **Public repositories.** The job posts pass/fail only — no finding text or counts: logs, job summaries and uploaded artifacts are readable by any signed-in GitHub user. So the details stay on the runner, you read them by running the same command in a clone of your own, and the job never fails only because no private channel exists (OUTPUT-RULES Rule 11d).
 - **A scheduled scan** of the default branch: run `/auditor:quick-scan --ci`, with a `--max-budget-usd` of $15. A cap close to a full pass's cost makes the session stop reading early ([COSTS.md](../COSTS.md#cost-and-time-by-depth)).
 

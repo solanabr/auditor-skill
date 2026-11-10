@@ -76,7 +76,7 @@ Each Quick command writes its report in its run directory, from `templates/pr-re
 - what was reviewed, and the analyzers that ran and those that did not;
 - preflight's mode line.
 
-Then come the command and the pinned commits, the findings (each of severity 4 or more with the full block of `OUTPUT-RULES.md` Rule 5, each of 6 or more with the Rule 5b blocks), the verdicts, diff-audit's Dependency delta, and Coverage & Limitations: preflight's notes, the analyzers that did not run, what the depth left out, and the corpus sections and vector files the run read. With `--ci`, the same verdict and findings also go to `audit_<n>/findings.json`.
+Then come the command, the pinned commits and the Generated line that `rundir.sh stamp` prints, the findings (each of severity 4 or more with the full block of `OUTPUT-RULES.md` Rule 5, each of 6 or more with the Rule 5b blocks), the verdicts, diff-audit's Dependency delta, and Coverage & Limitations: preflight's notes, the analyzers that did not run, what the depth left out, diff-audit's count of the changed lines it did not review, and the corpus sections and vector files the run read. With `--ci`, the same verdict and findings also go to `audit_<n>/findings.json`.
 
 ## Standard
 
