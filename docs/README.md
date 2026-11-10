@@ -22,16 +22,12 @@ What each release added: [changelog.md](changelog.md).
 
 auditor-skill has three depths and a CI mode. Pick by what you want checked: what changed, one module, or the release.
 
-| Depth | When | Run | Reads | Writes | [Cost](../COSTS.md#cost-and-time-by-depth) |
-|-------|------|-----|-------|--------|------|
-| **Quick** | a branch or pull request, a first look at a repository, one function | `/auditor:diff-audit` · `/auditor:quick-scan` (whole repository) · `/auditor:deep-review <file> <fn>` | the changed code + one hop, read against the sections and vectors `references/depth-scope.md` selects · SAST, dependency advisories, and the sections and vectors `references/depth-scope.md` selects · one function | `PR-REPORT.md` · `QUICK-SCAN.md` · `DEEP-REVIEW-<unit>.md` | $2–8 · 4–23 min |
-| **Standard** | one module or program before it merges | `/auditor:audit <path> --scope …` | every in-scope item for that path | `REPORT.md`, internal: a risk score and a deploy verdict | $13–19 · 36–56 min |
-| **Full** | a release, or a report for someone outside the team | `/auditor:audit-cycle` (unattended) · `/auditor:audit-assist` (you steer) · `/auditor:re-audit` after fixes | everything in scope, a threat model, peer review (re-audit: the fix delta) | `REPORT.md`, client style: no deploy guarantee (audit-cycle adds a PDF when pandoc and a LaTeX engine are installed, and PoCs with `--with-poc`) · `RE-AUDIT.md`, with an updated deploy verdict | about $20 · about 1 h, on a 3K-line program |
-| **[CI](ci.md)** | every pull request: the analyzers on all, the review on your own branches' only | `templates/ci/auditor-pr.yml`: a tools job, then `/auditor:diff-audit --ci` | as Quick | `findings.json` and SARIF on the runner; in the log, pass/fail and notes about the tools, never a finding or a count | tools job $0; review about a diff-audit's cost ($2–8), capped at $15 |
+- **Quick:** a branch or pull request, a first look at a repository, or one function. `/auditor:diff-audit`, `/auditor:quick-scan` or `/auditor:deep-review <file> <fn>`.
+- **Standard:** every in-scope item of one module or program, before it merges. `/auditor:audit <path> --scope …`.
+- **Full:** a release, or a report for someone outside the team. `/auditor:audit-cycle` (unattended) or `/auditor:audit-assist` (you steer), then `/auditor:re-audit` after the fixes.
+- **CI:** every pull request. The bundled analyzers run on all of them, and `/auditor:diff-audit --ci` on those from your own branches; on a public repository the job publishes pass or fail only ([ci.md](ci.md)).
 
-Costs and times were measured from 2026-11-08 to 2026-11-10 with `claude-opus-5-5`, on 3K-, 7K- and 12K-line programs. Quick's range covers diff-audit runs of $1.68–8.10 and quick-scan runs of $2.84–7.14. The shipped command text was measured on the 3K-line repository, where a quick-scan cost $6.98 in 23 minutes and a diff-audit of a 7,830-line range, a lockfile change included, $8.10 in 19 minutes, and on the 12K-line program, where a diff-audit of a 1,248-line change with no lockfile cost $3.99 in 9 minutes. The other runs were on earlier drafts, and those under $3 read 16 to 55 vector files and at most one checklist. Full ran once, on the 3K-line program ([COSTS.md](../COSTS.md#cost-and-time-by-depth)). Outside the depths: `poc`, `patch`, `economic-sim` and `triage` work on one finding; `intake` and `threat-model` are Full's building blocks; `audit-report` assembles the internal report from a walk run in pieces; `spec-audit` checks code against a spec; `hunt` and `respond` are for after an incident. More on each depth: [audit-flows.md](audit-flows.md).
-
-In CI, `--ci` on `/auditor:diff-audit` and `/auditor:quick-scan` asks nothing, writes `audit_<n>/findings.json` and ends with one verdict line. An analyzer that did not run fails the verdict, as does a counted finding at or above `--fail-on` (7 when not given). On a public repository the job publishes pass/fail only ([ci.md](ci.md)).
+What each depth reads and writes, and what it costs and how long it takes in the measured runs: [Pick a depth](audit-flows.md#pick-a-depth), and [COSTS.md](../COSTS.md#cost-and-time-by-depth) for the runs themselves.
 
 ## I want to… → use this
 
@@ -57,7 +53,7 @@ In CI, `--ci` on `/auditor:diff-audit` and `/auditor:quick-scan` asks nothing, w
 | Assemble a report from checkpoints | `/auditor:audit-report [dir]` | [commands.md](commands.md#auditoraudit-report) |
 | Find out whether we were attacked (no alert) | `/auditor:hunt [address…]` | [detection-response.md](detection-response.md) |
 | Work an alert or a drained protocol: outcome, damage, next steps | `/auditor:respond <signature / address / INC-n.k>` | [detection-response.md](detection-response.md) |
-| Cut audit token cost ~30-40% | build `audit-scan` | [power-tools.md](power-tools.md#audit-scan) |
+| Map the risky surface before the walk | build `audit-scan` | [power-tools.md](power-tools.md#audit-scan) |
 | Remember findings across audits | build `audit-mem` | [power-tools.md](power-tools.md#audit-mem) |
 | Check a repository's GitHub Actions workflows | `audit-scan`'s workflow pass, then pinned zizmor and CodeQL | [power-tools.md](power-tools.md#github-actions-workflow-analysis) |
 | Look up a bundled script's arguments and exits | `scripts/…` | [power-tools.md](power-tools.md#bundled-scripts) |
