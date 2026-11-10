@@ -260,5 +260,5 @@ double-count them as independent coverage. Severities are aligned to the higher 
 
 **Total vector files:** 141 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1 + 6 in v6.0 + 3 in v6.1 + 2 in v6.2 + 3 in v7.2 + 2 in v7.3 + 1 in v7.4 + 1 in v7.5 + 2 in v7.6 + 1 in v7.7)
 **Distinct concepts:** 135 (after consolidating 6 duplicate pairs)
-**Categories:** 6 (crypto, backend, frontend, devops, ai-agent, off-chain-rust)
+**Categories:** 6 (crypto, backend, frontend, devops, ai-agent, dos)
 **Severity range:** 3-10
