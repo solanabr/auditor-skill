@@ -6,7 +6,7 @@
 
 Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{severity}]`, `[PARTIAL]`, or `[N/A]`.
 
-This checklist is NET-NEW: it covers the seam where an AI agent (autonomous trading bot, MCP-driven assistant, or AI coding agent in CI) is given the ability to act on Solana. An agent is *any* non-human actor that can select and submit instructions on behalf of a principal. If the codebase has no such actor, mark §19.1–19.5 `[N/A]`; §19.6 (tracked AI-tooling artifacts) applies to any repository that commits assistant configuration, agent or not.
+This checklist covers the seam where an AI agent (autonomous trading bot, MCP-driven assistant, or AI coding agent in CI) is given the ability to act on Solana. An agent is *any* non-human actor that can select and submit instructions on behalf of a principal. If the codebase has no such actor, mark §19.1–19.5 `[N/A]`; §19.6 (tracked AI-tooling artifacts) applies to any repository that commits assistant configuration, agent or not.
 
 ---
 

@@ -138,7 +138,7 @@ Every row carries a **Load when (markers)** cell: the grep/prescan markers that 
 
 ### On-Chain — Modern Surface (101-109)
 
-> Added in v4.4. Focus: sysvars, precompiles, lookup tables, PDA bump canonicalization, Token-2022 extensions, account revival, ATA assumptions, token decimals, and native/Pinocchio (p-token) programs.
+> Focus: sysvars, precompiles, lookup tables, PDA bump canonicalization, Token-2022 extensions, account revival, ATA assumptions, token decimals, and native/Pinocchio (p-token) programs.
 
 | # | Vector | Severity | Load when (markers) |
 |---|--------|----------|---------------------|
@@ -223,7 +223,7 @@ Every row carries a **Load when (markers)** cell: the grep/prescan markers that 
 
 ### CI/CD Trigger Trust — GitHub Actions (139-140)
 
-> Added in v7.6. Who can start a privileged workflow job, and which fork-controlled code, artifacts or caches it runs or trusts. Playbook: `references/vuln-classes/github-actions.md`.
+> Who can start a privileged workflow job, and which fork-controlled code, artifacts or caches it runs or trusts. Playbook: `references/vuln-classes/github-actions.md`.
 
 | # | Vector | Severity | Load when (markers) |
 |---|--------|----------|---------------------|

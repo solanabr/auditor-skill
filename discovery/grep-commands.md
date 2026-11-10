@@ -687,7 +687,7 @@ grep_search: "approval|deploy.*gate|manual.*trigger"   isRegexp: true   includeP
 
 ---
 
-## Token, Sysvar & Modern On-Chain (v4.4 — KV-101..108)
+## Token, Sysvar & Modern On-Chain (KV-101..109)
 
 ### SPL Token & Token-2022 extensions (KV-105, KV-107, KV-108)
 ```
@@ -752,7 +752,7 @@ grep_search: "unsafe|get_unchecked|from_raw_parts|\\.add\\(|unsafe-account-resiz
 
 ---
 
-## v5.0 — Solana × AI + Off-Chain Rust (KV-110..117, checklists 19-20)
+## Solana × AI + Off-Chain Rust (KV-110..117, checklists 19-20)
 
 ### MCP server configuration (KV-114)
 ```
