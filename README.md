@@ -193,6 +193,8 @@ Without the submodule the corpus falls back to grep-based checks and notes where
 cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked
 ```
 
+The build needs Rust 1.89 or newer.
+
 ### Permissions and isolation
 
 The commands run their bundled steps without asking, each checking its own arguments and writing only into the auditor's own directories; other calls ask. By default what strict mode would refuse is a note in the report, apart from the few shapes Rules 11e and 11f list. For code you don't trust, start Claude Code with the strict launch line, which loads none of your own settings or plugins, refuses what default mode only notes, and builds only in isolated mode ([docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#default-and-strict-mode)):
@@ -322,7 +324,7 @@ What remains a risk: [docs/permissions-and-isolation.md](docs/permissions-and-is
 
 ## Upgrading
 
-Plugin users get each change, a new Trail of Bits pin included, when they update the plugin, and an `install.sh` install on its next run. Rebuild the Rust tools after every update.
+Plugin users get each change, a new Trail of Bits pin included, when they update the plugin, and an `install.sh` install on its next run. Rebuild the Rust tools after every update; since 7.7.4 the build needs Rust 1.89 or newer.
 
 ### Upgrading from 7.6.0 or earlier
 

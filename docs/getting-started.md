@@ -81,6 +81,8 @@ cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked
 cargo test --locked   # optional: the tests of both packages
 ```
 
+The build needs Rust 1.89 or newer.
+
 The agents run them by absolute path from the installation, never from your project ([`OUTPUT-RULES.md` Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)). If auditor-skill sits inside the repository you will audit anyway (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6.0), this build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside the repository (the plugin, or `install.sh ~/.claude/skills/auditor-skill`) and build that one. Never move or update a copy you find inside a repository ([section 1](#1-install)).
 
 Build them again after every update of auditor-skill, with `cargo build --release --locked` in the same directory. The flows call them with a contract marker (`--contract=1`) that an older build refuses, and until you rebuild they go on as if the tools were absent. A plugin update installs auditor-skill into a new versioned directory, so the tools need a build there too.
