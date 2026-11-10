@@ -38,7 +38,7 @@ threat-modeler (opus)      assets · actor×capability · trust boundaries · at
 vuln-hunter (opus)  ∥  economic-analyst (opus)     domain-partitioned, DISJOINT surfaces
         │                  each self-triages every candidate through Rule 5b at the leaf
         ▼
-   /triage           de-dup by root cause, batch Rule 5b, split findings vs Notes & Nitpicks
+   /auditor:triage   de-dup by root cause, batch Rule 5b, split findings vs Notes & Nitpicks
         ▼
 peer-reviewer (opus)       re-derives top-severity survivors FROM THE CODE
         │                  N≥8 + contested N≥7 → CONFIRM / DISPUTE / DOWNGRADE
@@ -48,7 +48,7 @@ audit-reporter (sonnet)    dedup by root cause, order by severity/importance →
         └── (opt --with-poc) poc-engineer → patch-engineer  on confirmed N≥7
 ```
 
-The fan-out is **domain-partitioned, not N identical clones** — naive N-way fan-out of the same prompt produces ~87% false positives, so each reviewer owns a distinct surface.
+The fan-out is **partitioned by domain**: each reviewer owns a distinct surface, so no two reviewers walk the same code.
 
 ## The agents
 
@@ -61,7 +61,7 @@ The fan-out is **domain-partitioned, not N identical clones** — naive N-way fa
 ### threat-modeler
 **Role:** enumerate what an attacker would *want* and *where they could push*, before any bug is judged. No severities, no verdicts.
 **Produces:** `audit_<n>/threat-model.md` — asset inventory, actor × capability table (the "must NOT" column is the security property later phases test), trust-boundary map (each crossing marked validated or `✗`), and **attacker goals to test** mapped to checklists/vectors.
-**Inputs:** the code, the context worksheets, `intake.md` §6 (the trust-model actor list), `audit-mem warm` if built, and in bootstrap mode the collector's `audit_<n>/bootstrap/` output (git history, fork-parent hints, prior audits, post-mortems, allowlisted incident fields). It stays `Read, Grep, Glob`: the bundled `<auditor-skill root>/scripts/threat-model/collect.sh` runs the git.
+**Inputs:** the code, the context worksheets, `intake.md` §6 (the trust-model actor list), `audit-mem warm` if built, and in bootstrap mode the collector's `audit_<n>/bootstrap/` output (git history, fork-parent hints, prior audits, post-mortems, allowlisted incident fields). It has no Bash: the bundled `<auditor-skill root>/scripts/threat-model/collect.sh` runs the git.
 **Downstream:** seeds report §4.4/§4.6/§4.7 and hands the reviewers concrete goals to falsify. A goal that turns out reachable becomes a finding downstream — through the Rule 5b gate, not here.
 
 ### vuln-hunter
@@ -76,7 +76,7 @@ The fan-out is **domain-partitioned, not N identical clones** — naive N-way fa
 **Tooling:** drives `/auditor:economic-sim` (Surfpool mainnet-fork) to reproduce deposit→manipulate→withdraw against forked state for a real net P/L — the PoC Rule 5b requires for High/Critical economic findings. The fork's RPC datasource receives the addresses it reads, so the report names that provider's domain ([Rule 11b](../OUTPUT-RULES.md#11b--outside-service-disclosure)). Runs the **design pass** (economic architecture, incentives) alongside `context-builder` before the line-by-line walk.
 
 ### peer-reviewer
-**Role:** the independent second pass (Neodyme dual-review, bounded to control cost). Keeps the primary reviewers honest on the findings that gate a deploy.
+**Role:** the independent second pass (Neodyme dual-review, bounded to control cost). It checks the primary reviewers' work on the findings that gate a deploy.
 **The one rule:** **re-derive each finding from the code** — start from the cited `file:line`, read the code and its call chain, form an independent verdict *before* comparing to the primary's. Reading the primary's conclusion and checking it "sounds right" is rubber-stamping and defeats the purpose.
 **Scope:** top-severity survivors only — every confirmed **N≥8**, plus any contested **N≥7** the primary could not PoC. Not the whole checklist.
 **Produces:** per-finding **CONFIRM** (cite the traced path) / **DISPUTE** (forces the finding back through Rule 5b or to `[UNCONFIRMED]`) / **DOWNGRADE** (corrected severity + why). Delegates to ToB `fp-check` (local) and `second-opinion` when present — `second-opinion` sends the selected code to an external LLM CLI (OpenAI Codex or Google Antigravity / Gemini), which the report discloses ([Rule 11b](../OUTPUT-RULES.md#rule-11-operating-safety)); tool output is evidence, never the verdict. Disagreement forces re-examination before anything ships.
@@ -95,7 +95,7 @@ It assembles; it does not re-judge — de-dup and severity classification only.
 ### patch-engineer
 **Role:** draft and verify a fix *proposal* — never writes to the client's real tree.
 **Produces:** `audit_<n>/patches/F-xxx.patch` — a **minimal, idiomatic** unified diff against the pinned commit that closes *exactly* the cited bound (checked arithmetic, stored bumps, `transfer_checked`, no `unwrap()`/`expect()`, validated CPI targets), plus `VERIFICATION.md`. Emits exactly one `[FIX-*]` tier.
-**Verify by execution:** applies the diff to a **scratch worktree**, rebuilds, re-runs the finding's PoC — which must now **revert**. `[FIX-VERIFIED]` requires that executed revert; no executable PoC → `[FIX-PROPOSED]` ceiling. `--verify-with-mutation` adds `mewt` mutation + a blast-radius check. `--post-patch-validation` (opt-in, isolated mode only) runs Trail of Bits `post-patch-validation` on a disposable clone; a finding in its result turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`, or is recorded under Residual on any other tier, and nothing else in it changes a tier. A cosmetic patch ≠ FIXED. Full detail: [poc-and-patches.md](poc-and-patches.md).
+**Verify by execution:** applies the diff to a **scratch clone**, rebuilds, re-runs the finding's PoC — which must now **revert**. `[FIX-VERIFIED]` requires that executed revert; no executable PoC → `[FIX-PROPOSED]` ceiling. `--verify-with-mutation` adds `mewt` mutation + a blast-radius check. `--post-patch-validation` (opt-in, isolated mode only) runs Trail of Bits `post-patch-validation` on a disposable clone; a finding in its result turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`, or is recorded under Residual on any other tier, and nothing else in it changes a tier. A cosmetic patch ≠ FIXED. Full detail: [poc-and-patches.md](poc-and-patches.md).
 **Rule 11:** the builds (`target.sh build-sbf`, as it is and with `--patch`) and the PoC re-run (`run.sh --crate`) run in the run's execution mode, and never natively for an incident whose root cause is supply chain or CI ([11a](../OUTPUT-RULES.md#11a--execution-mode)); `target.sh` clones the checkout into a scratch directory outside the tree, with no hooks, and never builds in a client-supplied `.git/` ([11c](../OUTPUT-RULES.md#11c--untrusted-git-checkouts)).
 
 ### incident-responder
