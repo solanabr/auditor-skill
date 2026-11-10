@@ -1330,6 +1330,9 @@ templates/report-template.md	so a row says what the tool was set to send, not th
 templates/audit-report.md	so a row says what the tool was set to send, not that it went out
 templates/incident-report.md	so a row says what the tool was set to send, not that it went out
 templates/pr-report.md	- diff-audit: "changed lines not reviewed: {N} of {M}" and the files they are in (`references/depth-scope.md` §6),
+docs/ci.md	`git ls-remote https://github.com/solanabr/auditor-skill refs/heads/main` prints the current one
+docs/ci.md	`git ls-remote https://github.com/solanabr/auditor-skill 'refs/tags/<tag>^{}'` prints the commit that tag names
+templates/ci/auditor-pr.yml	# auditor-skill at one commit: the full id of a commit on its main branch
 docs/ci.md	Under a $10 cap, the depth-scope selection read 38 vector files and 49 checklist sections in that repository, for $6.98.
 commands/quick-scan.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
 commands/diff-audit.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
@@ -1482,6 +1485,10 @@ templates/ci/auditor-pr.yml	no finding, count or path
 docs/ci.md	a change to on-chain code alone
 references/depth-scope.md	a change to on-chain code alone selects at most 46
 OUTPUT-RULES.md	the name of each new package of the set
+docs/ci.md	from the auditor-skill release you use
+docs/ci.md	the full commit id of that release's tag
+templates/ci/auditor-pr.yml	the release tag you install
+templates/ci/auditor-pr.yml	the commit of the auditor-skill release you use
 GONE
 
 # respond's step 5 and hunt's step 6 settle the mode as poc's step 5 does, each step read as one line so wording

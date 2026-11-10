@@ -33,7 +33,9 @@ env:
   # A pull request's content is an untrusted source: strict mode (Rule 11f), and no build or test of it.
   AUDITOR_STRICT: "1"
   AUDITOR_EXEC_MODE: none
-  # auditor-skill at one commit: the full commit id of the release tag you install (docs/ci.md, Setup).
+  # auditor-skill at one commit: the full id of a commit on its main branch, such as the merge commit that shipped
+  # the release you use; `git ls-remote https://github.com/solanabr/auditor-skill refs/heads/main` prints the current
+  # one (docs/ci.md, Setup). The jobs fetch exactly this commit, so a branch or tag that moves changes nothing.
   AUDITOR_SKILL_COMMIT: "0000000000000000000000000000000000000000"
   # The review fails on a finding of this severity or more, 1 to 10.
   AUDITOR_FAIL_ON: "7"
@@ -71,7 +73,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$AUDITOR_SKILL_COMMIT" = 0000000000000000000000000000000000000000 ]; then
-            echo "::error::set AUDITOR_SKILL_COMMIT to the commit of the auditor-skill release you use (docs/ci.md)"; exit 1
+            echo "::error::set AUDITOR_SKILL_COMMIT to the full id of the auditor-skill commit you pin (docs/ci.md, Setup)"; exit 1
           fi
           [[ $AUDITOR_SKILL_COMMIT =~ ^[0-9a-f]{40}$ ]] || { echo "::error::AUDITOR_SKILL_COMMIT is not a full commit id"; exit 1; }
           A="$RUNNER_TEMP/auditor-skill"
@@ -186,7 +188,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$AUDITOR_SKILL_COMMIT" = 0000000000000000000000000000000000000000 ]; then
-            echo "::error::set AUDITOR_SKILL_COMMIT to the commit of the auditor-skill release you use (docs/ci.md)"; exit 1
+            echo "::error::set AUDITOR_SKILL_COMMIT to the full id of the auditor-skill commit you pin (docs/ci.md, Setup)"; exit 1
           fi
           [[ $AUDITOR_SKILL_COMMIT =~ ^[0-9a-f]{40}$ ]] || { echo "::error::AUDITOR_SKILL_COMMIT is not a full commit id"; exit 1; }
           A="$RUNNER_TEMP/auditor-skill"
