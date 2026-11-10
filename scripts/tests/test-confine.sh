@@ -66,7 +66,8 @@ put()    { mkdir -p "$(dirname "$1/$2")" && printf '%s\n' "$3" > "$1/$2" && git 
 commit() { git -C "$1" commit -q "${@:2}"; }
 
 # bounded gives a run 10 s (or BOUND tenths of a second), then reads 142 and opens the named pipe it was
-# given for writing, so a git still waiting there (as before the checks below existed) goes on and ends.
+# given for writing, so a git still waiting there, as it would be without the checks below, goes on and
+# ends.
 # script runs one of the entry points that start git, from a directory, under the first shell.
 script() { # script <dir> <script> <arg>...: scripts/<script>, with its output in $T/out and $T/err and its status in RC
   local dir=$1 s=$2
@@ -658,7 +659,7 @@ AUDITOR_STRICT=1 lib "$RW/plain" 'confine_repo . R'
 check "... in strict mode too" refused "$NOTHING"
 mkdir -p "$T/norepo/e"
 lib "$T/norepo/e" 'confine_repo . R'
-check "... while one with no repository above it gets the reason it has today" \
+check "... while one with no repository above it gets the not-a-repository reason" \
   refused 'R is not a git repository that git can read (none there, or another user owns it: audit a copy): .'
 lib "$RW" 'confine_repo_top "$CONFINE_WT" && printf top; confine_repo_top "$CONFINE_WT/programs" || printf " not-top"; confine_repo_top "$CONFINE_WT/copy.git" && printf " bare-top"'
 check "confine_repo_top: a top level, a subdirectory, a bare repository" out_is 'top not-top bare-top'
@@ -846,8 +847,8 @@ fi
 # =================================================================================================
 # shown <s>: <s> as a refusal line shows it, cut after 200 bytes
 shown() { if [ "${#1}" -gt 200 ]; then printf '%s...' "${1:0:200}"; else printf '%s' "$1"; fi; }
-# A core.worktree holding a line end: git prints the top level across two lines, and the old split read
-# the alternates and grafts of a directory the repository chose instead of its own.
+# A core.worktree holding a line end: git prints the top level across two lines, and a split at the first
+# line end would read the alternates and grafts of a directory the repository chose instead of its own.
 mkrepo "$RW/wtnl"; put "$RW/wtnl" f wtnl; commit "$RW/wtnl" -m wtnl
 printf '%s/.git/objects\n' "$O" > "$RW/wtnl/.git/objects/info/alternates"
 if mkdir -p "$RW/wtnl/z"$'\n'"$RW/wtnl" "$RW/wtnl/.git"$'\n'"$RW/wtnl/z" 2>/dev/null; then

@@ -937,7 +937,7 @@ run "$G" blame '^HEAD' -- keys/id.txt
 check "blame ^HEAD never reads a file through a linked directory" sh -c "[ '$RC' = 64 ] && ! grep -q OUTSIDE-KEY-MATERIAL '$T/out'"
 check "no case of this section ran a configured program" nomarks
 # grep decides from its words. A git directory named after git's own message and a corrupt blob made git
-# grep --cached fail with that text, which the old fallback took for "trees are given".
+# grep --cached fail with that text, which a check of the message alone would take for "trees are given".
 GM="$T/grep-message"; MSG='gd both --cached and trees are given'
 mkdir -p "$GM"
 git init -q --separate-git-dir="$GM/$MSG" "$GM"

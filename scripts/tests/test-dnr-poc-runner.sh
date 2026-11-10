@@ -132,7 +132,8 @@
 #     call, no build script and no test binary; HOME is a throwaway one with a fresh
 #     Solana keypair, but for cargo build-sbf --install-only; only cargo fetch, cargo
 #     update and that install see the proxy, and every build and test after them runs
-#     offline (a cargo build-sbf without those options builds as before, and says so);
+#     offline (a cargo build-sbf without those options builds each arm with the real
+#     HOME and the proxy, and says so);
 #   * the resolved Cargo.lock comes back into the crate in place of a regular file only;
 #   * scripts/runner/probe.sh: fixed version queries from a scratch directory in the
 #     cleaned environment, each killed when it gives no answer in PROBE_WAIT seconds,
@@ -2731,7 +2732,7 @@ fi
 rm -rf "$WT/.bin"
 
 # A cargo build-sbf whose --help lists none of --install-only, --skip-tools-install and --offline builds
-# each arm as before, with the real HOME and the proxy, and says so; an install or a fetch that fails is a
+# each arm with the real HOME and the proxy, and says so; an install or a fetch that fails is a
 # blocker before any arm builds.
 SHIM_EXTRA=(SHIM_SBF_HELP=old)
 code="$(ngate HTTPS_PROXY=http://proxy.invalid:3128 -- --crate audit_1/poc/F-1)"
@@ -2739,7 +2740,7 @@ SHIM_EXTRA=()
 [ "$code" = 0 ] && grep -qxF ">> this cargo build-sbf has no --install-only, --skip-tools-install or --offline: each arm builds with the real HOME and the proxy variables" "$T/out" \
   && in_blocks '^== cargo build-sbf --tools-version' "^HOME=$CLEANHOME\$" && in_blocks '^== cargo build-sbf --tools-version' '^HTTPS_PROXY=http://proxy.invalid:3128$' \
   && ! awk -F'\t' '$6 ~ /^build-sbf --install-only/ { f = 1 } END { exit !f }' "$T/calls" \
-  && ok "a cargo build-sbf without --install-only and --skip-tools-install -> each arm builds as before, and run.sh says so" || { bad "an older cargo build-sbf: exit $code"; cat "$T/out" >&2; }
+  && ok "a cargo build-sbf without --install-only and --skip-tools-install -> each arm builds with the real HOME and the proxy, and run.sh says so" || { bad "an older cargo build-sbf: exit $code"; cat "$T/out" >&2; }
 # The README every PoC crate carries says so too, next to the cleaning it describes.
 python3 -I -c 'import re, sys; text = re.sub(r"\s+", " ", open(sys.argv[1], encoding="utf-8").read()); sys.exit(sys.argv[2] not in text)' "$ROOT/templates/poc/README.md" \
   'A `cargo build-sbf` that lacks any of `--install-only`, `--skip-tools-install` and `--offline` (an older Agave release) cannot split the install from the build: with it, each arm builds with the real `HOME` and the proxy variables, and `run.sh` prints a line saying so' \

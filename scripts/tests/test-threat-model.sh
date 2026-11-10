@@ -643,8 +643,8 @@ check "T-j: a local --parent inside another repository is not used" \
 collect --offline --repo fork-hist --parent no-such-parent
 check "T-j: a --parent that does not exist is not used" \
   has "$OUT/history.md" "NOT FOUND (parent $W/no-such-parent: not a git repository (or not its top level))"
-# Large input: classify_source used to pipe the argument into grep -q, whose early exit under pipefail
-# could turn "rejected" into "path". A long scp-style value must still be rejected.
+# Large input: grep -q can stop reading a pipe early, and under pipefail that would turn classify_source's
+# "rejected" into "path". A long scp-style value must still be rejected.
 LONG=$(i=0; while [ $i -lt 3000 ]; do printf 'padding-%s-' "$i"; i=$((i + 1)); done)
 check "large input: a long scp-style --parent is still rejected (exit 2)" \
   test "$(rc --offline --repo tgt --out "$RUN_J/bootstrap" --parent "git@example.invalid:o/p.git/${LONG:0:990}")" = 2
@@ -1129,7 +1129,7 @@ else
   PRUN=$(newrun)
   check "T-p (strict): a partial clone is refused in --detect (exit 3)" test "$(AUDITOR_STRICT=1 rc --detect --repo partial --out audit_900/bootstrap)" = 3
   check "T-p (strict): ... and in a full run (exit 3)" test "$(AUDITOR_STRICT=1 rc --offline --repo partial --out "$PRUN/bootstrap")" = 3
-  check "T-p (strict): ... with today's line, naming the promisor remote" test "$(cat "$T/rc.err")" = \
+  check "T-p (strict): ... with the partial-clone line, naming the promisor remote" test "$(cat "$T/rc.err")" = \
     "collect.sh: the target is a partial clone: reading missing objects would fetch from its promisor remote. Make a full copy you control first (OUTPUT-RULES Rule 11c)."
   check "T-p (strict): the promisor remote is never contacted" test ! -e "$T/marks/promisor-fetch"
   check "T-p (strict): nothing is written for a refused target" test ! -e "$W/$PRUN/bootstrap"

@@ -1699,7 +1699,7 @@ fn refuses_a_journal_that_names_a_super_journal_and_deletes_nothing() {
             fs::remove_file(wt.path(&journal)).expect("rm");
         }
     }
-    // A journal of one name that names no super-journal is rolled back as before.
+    // A journal of one name that names no super-journal is rolled back.
     wt.write(".audit-memory/audit.db-journal", &[b'X'; 600]);
     ok(&mem(&wt, &["profile", "--program-id", P, "--notes", "n"]));
     assert!(canary.exists());
