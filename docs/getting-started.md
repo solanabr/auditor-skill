@@ -109,7 +109,7 @@ Audit the Solana program in programs/my-program/ using the auditor-skill with PR
 
 The report lands at `audit_<n>/REPORT.md`, in a run directory that `rundir.sh new audit` makes: `<n>` is the next number whose name the repository tracks nothing under, and the directory is created with `mkdir` (not `-p`), stopping if it already exists. An existing `audit_<n>/` is reused only when git does not track it and it holds no symbolic link that leads out of it (in strict mode, none at all), after you confirm which one; nothing is written into a tracked run directory ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). Review [COSTS.md](../COSTS.md) first: a Full run cost about $20 and an hour on a 3K-line program.
 
-**CI** — to run Quick on every pull request, copy `templates/ci/auditor-pr.yml` into `.github/workflows/` and follow [ci.md](ci.md). A CI run asks nothing and denies every call that would ask ([section 6](#6-prompts-and-isolation)); an analyzer that did not run fails its verdict.
+**CI** — to run the analyzers on every pull request and Quick on those from your own branches, copy `templates/ci/auditor-pr.yml` into `.github/workflows/` and follow [ci.md](ci.md). A CI run asks nothing and denies every call that would ask ([section 6](#6-prompts-and-isolation)); an analyzer that did not run fails its verdict.
 
 ## 6. Prompts and isolation
 
@@ -130,7 +130,7 @@ Scope is enforced by *scope-gated loading*: out-of-scope checklists are never re
 ## Next
 
 - The depths and their flows: [audit-flows.md](audit-flows.md)
-- Quick on every pull request: [ci.md](ci.md)
+- CI for pull requests: [ci.md](ci.md)
 - Command reference: [commands.md](commands.md)
 - What the report guarantees: [output-and-rigor.md](output-and-rigor.md)
 - Prompts, isolation and `claude -p`: [permissions-and-isolation.md](permissions-and-isolation.md)
