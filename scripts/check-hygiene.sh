@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # check-hygiene.sh — fail if the repository tracks files that must never be committed:
-# environment files with secrets, Terraform state / plans, per-user assistant settings, OS junk.
+# environment files with secrets, Terraform state / plans, per-user assistant settings, OS junk,
+# assistant instructions and memory (a CLAUDE.md or CLAUDE.local.md at any depth, or a path in a .memsearch/
+# directory, in any letter case), and the sh-thd-* temp files bash 3.2 leaves for here-documents. None of
+# these is looked for under vendor/.
 # It also fails on a top-level directory named commands, agents, skills, hooks, bin, monitors or .claude-plugin
 # in another letter case: a case-insensitive file system, macOS's default, loads it under the lowercase name,
 # while on Linux no check reads it. And it fails when the plugin root gains a load surface beyond the
@@ -86,9 +89,12 @@ while IFS= read -r -d '' f <&3 && IFS= read -r -d '' low <&4; do
     settings.local.json)    flag "$f" ;;
     .DS_Store|Thumbs.db)    flag "$f" ;;
     id.json)                flag "$f (looks like a Solana keypair)" ;;
+    sh-thd-*)               flag "$f (a temp file bash 3.2 leaves for a here-document)" ;;
   esac
   case "$low" in
     .claude/*|.cursor/*|.agents/*) flag "$f (per-user assistant configuration)" ;;
+    .memsearch/*|*/.memsearch/*)   flag "$f (an assistant's memory store)" ;;
+    claude.md|*/claude.md|claude.local.md|*/claude.local.md) flag "$f (assistant instructions Claude Code loads)" ;;
   esac
 done 3< <(git ls-files -z) 4< <(git ls-files -z | LC_ALL=C tr 'A-Z' 'a-z')
 

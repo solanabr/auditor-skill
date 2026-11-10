@@ -1138,6 +1138,16 @@ for d in Agents COMMANDS Skills Hooks BIN Monitors .Claude-Plugin; do hy "case-$
 hy case-both fail agents/a.md Agents/b.md; hysaid "Agents/: name it agents/"
 hy env fail .env; hy env-example pass .env.example; hy ds-store fail docs/.DS_Store; hy vendor-env pass vendor/x/.env
 hy per-user fail .claude/settings.json; hy per-user-case fail .Claude/settings.json; hy cursor-case fail .CURSOR/rules
+# assistant instructions and memory, at any depth and in any letter case, and bash 3.2's here-document files
+hy claude-md fail docs/a/CLAUDE.md; hysaid "docs/a/CLAUDE.md (assistant instructions Claude Code loads)"
+hy claude-local-md fail CLAUDE.local.md; hysaid "CLAUDE.local.md (assistant instructions Claude Code loads)"
+hy memsearch fail .memsearch/memory/m.md; hysaid ".memsearch/memory/m.md (an assistant's memory store)"
+hy sh-thd fail sh-thd-1792768409; hysaid "sh-thd-1792768409 (a temp file bash 3.2 leaves for a here-document)"
+for p in CLAUDE.md docs/Claude.md scripts/claude.LOCAL.md tools/x/.MemSearch/index scripts/tests/sh-thd-42; do
+  hy "kept-out-$(printf '%s' "$p" | tr '/' '_')" fail "$p"
+done
+hy kept-out-near pass AGENTS.md docs/CLAUDE.md.txt docs/claude-md.md docs/memsearch/m.md docs/x.memsearch docs/sh-thd.md \
+  vendor/x/CLAUDE.md vendor/x/.memsearch/m vendor/x/sh-thd-1
 mkdir -p "$T/hy-nogit/scripts" && cp "$HYG" "$T/hy-nogit/scripts/"
 expect "hygiene: outside a checkout fails" 2 bash "$T/hy-nogit/scripts/check-hygiene.sh"
 # large input: 3,000 tracked paths, over 64 KiB of names, with a top-level directory in another letter case last
