@@ -30,6 +30,8 @@ cargo build --release --locked
 cargo test --locked          # the tests of both packages
 ```
 
+The build needs Rust 1.89 or newer.
+
 The `rusqlite` dependency uses the `bundled` feature — it compiles SQLite from
 source (`cc` required), so there is no system-library dependency.
 `cargo build --release --locked -p audit-logs` builds `audit-logs` alone: it
