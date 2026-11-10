@@ -388,7 +388,7 @@ scopes the assurance the client should take away. Cover:
   portions unbuildable, closed-source components, or the engagement time box.}
 - **Operating mode** — {default | strict (<what turned it on>)}, as preflight's first line names it; the execution mode the runners' `>> execution mode:` lines printed; and each distinct `note:` line a bundled tool printed, once, as it stands, or "working tree not checked by preflight" for an agent started without a command (OUTPUT-RULES Rule 11f).
 - **Execution mode** — {isolated: <container / VM / sandbox> | native: target-controlled code (builds, tests, PoCs) ran on the auditor's machine — steps: …} (OUTPUT-RULES Rule 11a).
-- **Outside services** — {one line per row of the engagement's `disclosures.tsv` files (tool → service → what was sent), then one per contact no row holds: the builds' own downloads, an MCP server, WebFetch, a Trail of Bits tool or anything run by hand (tool → service → what was sent), and per live probe of DEP-072 / DEP-073 (QUESTIONS.md Q47) → host or bucket → the request | none} (OUTPUT-RULES Rule 11b).
+- **Outside services** — {one line per row of the engagement's `disclosures.tsv` files (tool → service → what was sent. A tool adds its row before its first request to that service, so a row says what the tool was set to send, not that it went out. Write that it was sent only where the tool's own output names that service's address as one it reached, and otherwise that it may have been sent.), then one per contact no row holds: the builds' own downloads, an MCP server, WebFetch, a Trail of Bits tool or anything run by hand (tool → service → what was sent), and per live probe of DEP-072 / DEP-073 (QUESTIONS.md Q47) → host or bucket → the request | none} (OUTPUT-RULES Rule 11b).
 
 ---
 

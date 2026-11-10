@@ -498,7 +498,7 @@ OS:
 Cluster tested: devnet / mainnet-beta
 RPC Provider: 
 Execution mode: isolated (<how>) / native   (OUTPUT-RULES Rule 11a)
-Outside services: <each disclosures.tsv row, then each contact no row holds: tool → service → data sent; each live probe (Q47) → host or bucket → request> / none   (Rule 11b)
+Outside services: <each disclosures.tsv row, then each contact no row holds: tool → service → data sent; each live probe (Q47) → host or bucket → request. A tool adds its row before its first request to that service, so a row says what the tool was set to send, not that it went out. Write that it was sent only where the tool's own output names that service's address as one it reached, and otherwise that it may have been sent.> / none   (Rule 11b)
 ```
 
 ### C. Disclaimer

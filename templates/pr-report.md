@@ -55,6 +55,8 @@ public, publish ages not checked. Otherwise drop this section.}
 - What the command does not cover: quick-scan and diff-audit, what `references/depth-scope.md` leaves out, as
   its §8 renders it; diff-audit, also the code beyond the changed files and their 1-hop neighbours; deep-review,
   one unit.
+- diff-audit: "changed lines not reviewed: {N} of {M}" and the files they are in (`references/depth-scope.md` §6),
+  or "changed lines not reviewed: none".
 - The corpus this run read, by checklist section and vector id, and any selected file the Read tool could not
   open, so a reader can tell what each verdict rests on. For quick-scan and diff-audit that is what
   `audit_<n>/scope.md` lists, written before the reads, so a reader can check the selection against

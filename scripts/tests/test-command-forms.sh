@@ -1326,6 +1326,10 @@ docs/ci.md	On a fork's or Dependabot's pull request the review check shows Succe
 docs/ci.md	a cargo audit or npm audit advisory has no exception here, so fix or replace that dependency before you require the tools job
 docs/ci.md	Delete every `.claude/`, `.mcp.json`, `.claude.json`, `CLAUDE.md` and `CLAUDE.local.md` from that checkout, as the review job does
 docs/ci.md	the review stops at it, after the response that crosses it, so its last response can take it a little over
+templates/report-template.md	so a row says what the tool was set to send, not that it went out
+templates/audit-report.md	so a row says what the tool was set to send, not that it went out
+templates/incident-report.md	so a row says what the tool was set to send, not that it went out
+templates/pr-report.md	- diff-audit: "changed lines not reviewed: {N} of {M}" and the files they are in (`references/depth-scope.md` §6),
 docs/ci.md	Under a $10 cap, the depth-scope selection read 38 vector files and 49 checklist sections in that repository, for $6.98.
 commands/quick-scan.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
 commands/diff-audit.md	A USD budget Claude Code shows you is a backstop, not a plan: Claude Code ends the session itself at the cap, and a CI run it ends fails anyway.
