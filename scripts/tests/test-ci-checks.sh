@@ -1293,7 +1293,7 @@ ep cases-empty "the case file scripts/tests/fixtures/rec/hostile-args.txt holds 
   'printf "# only comments\n\n" > scripts/tests/fixtures/rec/hostile-args.txt'
 ep cases-no-status "the case file scripts/tests/fixtures/ok/cases.txt: line 3 does not start with an exit status and a tab" \
   'printf "an option\t--x\n" >> scripts/tests/fixtures/ok/cases.txt'
-# a status may end in one mode letter, s, g or u (spec §6.2), and in nothing else
+# a status may end in one mode letter, s, g or u (check-entrypoints.sh says what each means), and in nothing else
 ep cases-status-letter "the case file scripts/tests/fixtures/ok/cases.txt: line 3 does not start with an exit status and a tab" \
   'printf "64x\tan option\t--x\n" >> scripts/tests/fixtures/ok/cases.txt'
 ep cases-status-letters "the case file scripts/tests/fixtures/ok/cases.txt: line 3 does not start with an exit status and a tab" \

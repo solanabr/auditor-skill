@@ -24,7 +24,7 @@
 #   8. templates/strict-settings.json parses, its sandbox block and permissions are the ones
 #      docs/permissions-and-isolation.md shows, its allow list is the resume rules shown there and in the
 #      README's and getting-started's "once, after installing" blocks, and its env turns strict mode on, holds
-#      the runners to isolated mode (spec §5.7) and keeps a command's agents in the foreground.
+#      the runners to isolated mode (Rule 11f) and keeps a command's agents in the foreground.
 # Each detector is first run against known-good and known-bad lines and a file of 1 MiB, so a broken pattern
 # fails the test.
 # Usage (from the repo root): bash scripts/tests/test-bundled-paths.sh   (VERBOSE=1 lists every check)

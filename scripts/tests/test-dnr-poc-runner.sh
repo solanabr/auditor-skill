@@ -2907,7 +2907,7 @@ rm -f "$T/ij-empty.json"
 # natively, an audit's crate included, since any PoC can build the target's crates. A run directory without
 # that file, or whose file records no incident, counts for nothing, and one that cannot be searched is read.
 # Any other incident_* folder (another name, no such .gitignore, a link) is the repository's or a client's: it
-# is passed over, and a note names it (addendum K). Isolated mode reads none of them.
+# is passed over, and a note names it (Rule 11a). Isolated mode reads none of them.
 ( cd "$WT" && "$ROOT/scripts/rundir.sh" new incident ) >/dev/null || bad "rundir.sh could not make incident_2"
 IJ2="$WT/incident_2/INCIDENTS.json"
 want_sc="records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."

@@ -755,7 +755,7 @@ for v in 2.39.3 2.40.1 2.41.0 2.42.1 2.43.3 2.44.0 2.45.0 2.38.9 1.9.9 'garbage'
   check "in strict mode copy with git $v: exit 69 and nothing copied" \
     sh -c "[ '$RC' = 69 ] && [ \"\$(cat '$T/err')\" = '$OLD' ] && [ \"\$(ls '$WT/audit_1' | tr '\n' ' ')\" = '$before' ]"
 done
-# In default mode (addendum H) such a git clones nothing: copy makes the bare copy with git's plumbing,
+# In default mode such a git clones nothing (Rule 11c): copy makes the bare copy with git's plumbing,
 # with a note, and the copy holds what a clone would: every branch and tag, HEAD, the same objects.
 : > "$T/oldgit/calls"
 for v in 2.39.3 2.43.0 2.34.1 'garbage'; do
@@ -1068,9 +1068,10 @@ check "... and its history stops at the boundary" test "$(wc -l < "$T/out" | tr 
 rm "$SH/.git/shallow"
 
 # =================================================================================================
-# A session started in a subdirectory of a repository (spec §4.2): in default mode git-ro reads the
-# repository from its top level, and every read prints what plain git prints in that subdirectory; git
-# runs in <empty>/<prefix>, made and removed with each read. Strict mode refuses (above, with TRK).
+# A session started in a subdirectory of a repository (Rule 11c, a session below the top level): in default
+# mode git-ro reads the repository from its top level, and every read prints what plain git prints in that
+# subdirectory; git runs in <empty>/<prefix>, made and removed with each read. Strict mode refuses (above,
+# with TRK).
 # =================================================================================================
 SUB="$T/mono"; mkrepo "$SUB"
 put "$SUB" programs/foo/src/lib.rs "$(printf 'fn a() {}\nlet x = 1;')"
@@ -1148,7 +1149,7 @@ for a in 'log -p -1' 'show HEAD' 'grep -n -e has_one HEAD' 'diff HEAD~3 HEAD' 'l
 done
 
 # =================================================================================================
-# blame where the repository's config sets blame.ignoreRevsFile (GIT-06). In default mode git-ro copies
+# blame where the repository's config sets blame.ignoreRevsFile. In default mode git-ro copies
 # the file it names into git's empty work tree, where git looks for a relative one, when that is a
 # regular file of one link and at most 1 MiB in the work tree; anything else, and strict mode, refuse.
 # =================================================================================================
@@ -1192,9 +1193,9 @@ git -C "$BI" config blame.ignoreRevsFile .git-blame-ignore-revs
 check "the blame cases ran nothing a config names" nomarks
 
 # =================================================================================================
-# A checkout another user owns (CONF-05; git's own test knob stands for the other user, and the suite's
+# A checkout another user owns (git's own test knob stands for the other user, and the suite's
 # git sees no system or global config, as on CI): default mode reads it through the safe-directory file,
-# strict mode refuses it. A linked worktree whose main checkout lies outside (spec §4.5, addendum I):
+# strict mode refuses it. A linked worktree whose main checkout lies outside (Rule 11c):
 # default mode reads it, strict mode refuses it.
 # =================================================================================================
 mkdir -p "$T/other"

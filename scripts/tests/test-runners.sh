@@ -369,8 +369,8 @@ printf 'key\n' > "$CREDHOME/.ssh/id_rsa"
 run "$TARGET" "$WT" HOME="$CREDHOME" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
 check "isolated mode with a readable SSH key: exit 3, nothing copied, the kinds named and no path" \
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: isolated mode, but these are readable here: SSH keys (1)' '$T/err' && grep -q 'this is not the isolated runner (Rule 11a)' '$T/err' && ! grep -q 'id_rsa' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
-# That blocker says what the human changes to build natively instead: what recorded isolated (Addendum L). In
-# strict mode isolated is the only way, and the blocker says so.
+# That blocker says what the human changes to build natively instead: what recorded isolated (Rule 11a, the
+# isolation self-check). In strict mode isolated is the only way, and the blocker says so.
 LISTS=', and scripts/runner/probe.sh --only isolation lists them'
 NATIVE='. To build natively instead, on this machine, the human'
 check "... and says how to build natively instead: the human unsets AUDITOR_EXEC_MODE" \

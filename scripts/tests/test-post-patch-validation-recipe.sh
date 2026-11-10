@@ -250,7 +250,7 @@ if client "$CA" && git -c init.defaultBranch=main init -q "$OTHER" \
   notrun "isolated, strict mode, a checkout that borrows objects" isolated "" "$OKLINE" "$T/root" "git-ro.sh copy refused the checkout" "" "$CA" \
     "git-ro: refused: copy's repository borrows objects from another repository (objects/info/alternates); audit a full copy: ."
   STRICT_ENV=
-  # default mode copies such a checkout, with a note, and the recipe goes on (CONF-08, Rule 11c)
+  # default mode copies such a checkout, with a note, and the recipe goes on (Rule 11c)
   if [ "$copy_ok" = 1 ]; then
     rm -f "$T/uv.log"; : > "$T/clone.log"
     printf 'a signer check the withdraw path skips\n' > "$CA/audit_1/patches/F-1.summary"

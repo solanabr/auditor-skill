@@ -600,10 +600,10 @@ xtransport lock-delta "$H" "$LD" npm t-base..t-head
 xtransport web3js-history "$X" "$WH"
 
 # =================================================================================================
-# A session started in a subdirectory of the repository (spec §4.2). In default mode the recipes read the
-# repository from its top level, the lockfiles and manifests of all of it, as a workspace keeps them at
-# its top: the output is the one at the top level, byte for byte, and git's empty work tree is gone after.
-# Strict mode refuses the subdirectory.
+# A session started in a subdirectory of the repository (Rule 11c, a session below the top level). In default
+# mode the recipes read the repository from its top level, the lockfiles and manifests of all of it, as a
+# workspace keeps them at its top: the output is the one at the top level, byte for byte, and git's empty work
+# tree is gone after. Strict mode refuses the subdirectory.
 # =================================================================================================
 mkdir -p "$T/subtmp"
 run "$H" "$LD" cargo t-base..t-head; cp "$T/out" "$T/cargo.top"

@@ -1435,10 +1435,10 @@ done
 
 # Wording that must not come back, file <TAB> text: an agent never hands run.sh the file's mode as --mode, which
 # stops every run a stricter AUDITOR_EXEC_MODE holds to isolated mode, and the older wording that copied a mode
-# forward, wrote only native, or let a non-interactive run loosen a recorded mode stays gone. Since 7.7.2 nothing
-# asks Q46 after intake, for a run directory an earlier session made or mid-run (spec §4.7, CMD-03): the runners
-# take the stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode, so a native there loosens nothing, and
-# isolated is no longer the recommended answer.
+# forward, wrote only native, or let a non-interactive run loosen a recorded mode stays gone. Nothing asks Q46
+# after intake, for a run directory an earlier session made or mid-run (Rule 11a): the runners take the stricter
+# of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode, so a native there loosens nothing, and no wording
+# recommends isolated.
 while IFS='	' read -r f gone; do
   [ -n "$f" ] || continue
   if [ -f "$f" ] && ! grep -qF -- "$gone" "$f"; then ok "gone from $f: $gone"; else bad "P $f says: $gone"; fi
@@ -1551,9 +1551,9 @@ for fs in 'commands/respond.md|5' 'commands/hunt.md|6'; do
 done
 
 # Each command's resume text, and the root SKILL.md's, says what stops the prompt its re-invocation brings (the
-# user-level rules), and that "Yes, and don't ask again" no longer breaks the resumed invocation, whose step 0 runs
-# again: preflight takes an untracked .claude/settings.local.json for the user's own (spec §4.8, Rule 11e). The old
-# advice, which told the human to avoid that answer because step 0 refused the file, stays gone.
+# user-level rules), and that "Yes, and don't ask again" does not break the resumed invocation, whose step 0 runs
+# again: preflight takes an untracked .claude/settings.local.json for the user's own (Rule 11e). Advice to avoid
+# that answer stays gone.
 for f in commands/*.md SKILL.md; do
   if grep -qiF -- 'That invocation asks unless the user-level rules in' "$f"; then ok "$f: the resume text names the rules that stop its prompt"
   else bad "P $f: the resume text does not name the user-level rules that stop its prompt"; fi
@@ -1646,7 +1646,7 @@ else bad "the python3 -I check could not read the tree"; fi
 # the crate itself, with a stand-in installation whose probe.sh prints the isolation line FAKE_ISOLATION holds:
 # like run.sh --crate, they take the stricter of <R>/exec-mode, AUDITOR_EXEC_MODE and strict mode (AUDITOR_STRICT,
 # read as Rule 11f reads it, with a note for a value that is no word for on or off, or a strict entry of any kind
-# in their own <R>, not in another run directory), native when none of them says anything (spec §4.7); they stop
+# in their own <R>, not in another run directory), native when none of them says anything (Rule 11a); they stop
 # on none, on an exec-mode that is not a regular file holding one word and at most one newline (run.sh's
 # mode_file reads it so), and on an AUDITOR_EXEC_MODE that names no mode, and in isolated mode unless the
 # self-check finds nothing readable. poc-harness.md §1 shows the same lines, with the corpus's name for the root.

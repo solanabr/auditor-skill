@@ -211,7 +211,7 @@ AUDITOR_STRICT=1 run "$W" check audit_2
 check "... in strict mode too" refused 'the run directory holds a symbolic link: audit_2'
 mkdir -p "$W/audit_9/poc/a"; printf '*\n' > "$W/audit_9/.gitignore"; ln -s a "$W/audit_9/poc/latest"
 run "$W" check audit_9
-check "check takes a run directory whose link resolves inside it in default mode (CONF-15)" out_is 'ok audit_9'
+check "check takes a run directory whose link resolves inside it in default mode" out_is 'ok audit_9'
 AUDITOR_STRICT=1 run "$W" check audit_9
 check "... and strict mode refuses it" refused 'the run directory holds a symbolic link: audit_9'
 rm -r "$W/audit_9"
@@ -275,7 +275,7 @@ check "new in a repository whose config names programs ran none of them" nomarks
 R1="$T/r1"; mkrepo "$R1"; put "$R1" audit_notes.md 'notes'; commit "$R1" -m notes
 run_once "$R1" new audit
 check "new accepts a repository that tracks a top-level file named audit_*" out_is audit_1
-# A path the repository tracks under a top-level audit_* or incident_* directory (RD-02): strict mode
+# A path the repository tracks under a top-level audit_* or incident_* directory: strict mode
 # refuses; default mode takes the next number whose name the repository tracks in no letter case, and
 # notes each such top-level name (the first 5, then a count), with stdout the name alone.
 tnote() { # tnote <tracked top-level name> <run directory made>: the note new prints
@@ -316,7 +316,7 @@ check "in strict mode new asks the repository above the working directory" \
   refused 'the repository tracks audit_3/x, so writes into a run directory could reach tracked files; audit a copy'
 run_once "$R/inner" new audit
 check "... and default mode makes audit_4 there" test "$RC|$(cat "$T/out")|$(cat "$T/err")" = "0|audit_4|$(tnote audit_3 audit_4)"
-# When git cannot tell whether the repository tracks a run directory (RD-03): default mode goes on with a
+# When git cannot tell whether the repository tracks a run directory: default mode goes on with a
 # note, strict mode refuses. A git that fails with no answer stands for that.
 mkdir -p "$T/cantell"
 printf '#!/bin/sh\necho "fatal: something else" >&2\nexit 1\n' > "$T/cantell/git"
@@ -328,10 +328,10 @@ check "in default mode new goes on when git cannot tell, with a note" \
 AUDITOR_STRICT=1 PATH="$T/cantell:$PATH" run "$P5" new audit
 check "... and strict mode refuses" refused 'git cannot tell whether the repository tracks a run directory'
 PATH="$T/cantell:$PATH" run "$P5" check audit_1
-check "check takes a run directory git cannot tell about in default mode (CONF-16)" out_is 'ok audit_1'
+check "check takes a run directory git cannot tell about in default mode" out_is 'ok audit_1'
 AUDITOR_STRICT=1 PATH="$T/cantell:$PATH" run "$P5" check audit_1
 check "... and strict mode refuses it" refused 'git cannot tell whether the run directory is tracked: audit_1'
-# A checkout another user owns (CONF-05; git's own test knob stands for the other user).
+# A checkout another user owns (git's own test knob stands for the other user).
 mkdir -p "$T/other"
 printf '#!/bin/sh\nGIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec "%s" "$@"\n' "$(command -v git)" > "$T/other/git"
 chmod +x "$T/other/git"
