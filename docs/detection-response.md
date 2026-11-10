@@ -57,13 +57,20 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
   at: a non-integer amount, for example, is never rounded.
 - **Collected from RPC** (gated): with no `--logs`, the command shows you the
   addresses, window, caps and estimated call count and asks before the one shipped
-  collector runs. Set `RPC_URL` in the environment (never on the command line);
+  collector runs. `--window <fromUnix>..<toUnix>` sets the window, on block
+  time. Set `RPC_URL` in the environment (never on the command line);
   the collector finalizes and passes `maxSupportedTransactionVersion: 1`, which is
   mandatory now that v1 transactions are live on mainnet. Non-interactive runs
   collect only with `--collect`, which stands in for your yes to the addresses,
   window and caps. The commands pre-approve the snapshot and the collector, so in
   `claude -p` they run too, within the caps your environment sets; the `--logs`
-  copy is refused there (above). The collection runs in the foreground, with a
+  copy is refused there (above). Those caps are `AUDITOR_RPC_MAX_PAGES` (pages
+  of up to 1,000 signatures per address, default 100), `AUDITOR_RPC_MAX_TX`
+  (`getTransaction` calls in all, default 10,000) and `AUDITOR_RPC_MAX_ADDRESSES`
+  (default 25). No command line can raise them: a request over one is refused,
+  naming the variable to raise, and a run's own defaults are 20 pages per
+  address and 2,000 transactions
+  ([`collect.sh`](scripts-incident.md#collectsh)). The collection runs in the foreground, with a
   timeout sized from its call count; one that outlasts it moves to the background,
   and the turn its completion starts has none of the command's pre-approvals, so
   the command first invokes itself again, which asks unless your settings allow it
@@ -78,7 +85,9 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
 Everything lands in a per-run `incident_<n>/` directory whose first file is a
 `.gitignore` of `*` — raw corpora and off-chain logs carry PII and are never
 committed. Each run makes a new one; an existing one is reused only when git does
-not track it, it holds no symbolic links, and you confirm it:
+not track it, it holds no symbolic links, and you confirm it. `--fresh`, and a
+run with no one to confirm, always make a new one, and `/auditor:respond` on an
+`INC-<n>.<k>` lead works in that incident's own directory:
 
 - `bin/` — the step-1 snapshot of each implicated program (`<id>.so` plus its
   `solana program show` output), taken before anything else so a mid-investigation
@@ -126,45 +135,54 @@ captured.
 - **A clean working directory.** Both commands start with
   `"<auditor-skill root>/scripts/preflight.sh"`, which looks for Claude Code
   project config anywhere in the working tree or in a parent up to the
-  repository root: a `.claude` link, a `.claude/` with skills, commands, agents,
-  hooks, output styles or workflows in it or a `scheduled_tasks.json`, a
-  `.claude/settings.json` (or a tracked `settings.local.json`) with any key
-  beyond `$schema`, `model`, `cleanupPeriodDays` and `includeCoAuthoredBy`, or a
-  `.mcp.json`, and for a linked git worktree, whose main checkout's
-  `.claude/settings.local.json` Claude Code loads too, and that checkout's
-  project skills when the worktree has none. Claude Code loads the config in
-  the working directory and its parents beside the plugin's, and a
-  `.claude/skills` below it, in a folder git does not ignore, once the session
-  reads a file there, so a
-  repository's own skill or agent could take the place of one of ours, or its
-  config could carry hooks and MCP servers. In default
-  mode each one is a note, which the report lists; in strict mode it is a
-  refusal ([Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode)). The
-  commands need no repository, so an incident workspace of their own is the
-  cleanest place to run them. For a repository you do not trust, start Claude
-  Code with the strict launch line, under which the repository's own config
-  does not load. Strict mode still refuses a tree that ships it, because
-  preflight cannot see how Claude Code was started: for such a repository,
-  clone it to a new directory, delete every `.claude/` and `.mcp.json` in the
-  copy, and start there. `CLAUDE.md` and
+  repository root:
+  - a `.claude` link, a `.claude/` with skills, commands, agents, hooks, output
+    styles or workflows in it, or a `scheduled_tasks.json`;
+  - a `.claude/settings.json` (or a tracked `settings.local.json`) with any key
+    beyond `$schema`, `model`, `cleanupPeriodDays` and `includeCoAuthoredBy`;
+  - a `.mcp.json`;
+  - a linked git worktree, whose main checkout's `.claude/settings.local.json`
+    Claude Code loads too, and that checkout's project skills when the worktree
+    has none.
+
+  Claude Code loads the config in the working directory and its parents beside
+  the plugin's, and a `.claude/skills` below it, in a folder git does not
+  ignore, once the session reads a file there, so a repository's own skill or
+  agent could take the place of one of ours, or its config could carry hooks and
+  MCP servers. In default mode each one is a note, which the report lists; in
+  strict mode it is a refusal
+  ([Rule 11f](../OUTPUT-RULES.md#11f--default-and-strict-mode)). `CLAUDE.md` and
   `AGENTS.md` files are listed, not refused; their text is the repository's,
   never instructions.
 
+  The commands need no repository, so an incident workspace of their own is the
+  cleanest place to run them. For a repository you do not trust, start Claude
+  Code with the strict launch line, under which the repository's own config does
+  not load, and run in a clean copy of a repository that ships such config:
+  strict mode still refuses it
+  ([Default and strict mode](permissions-and-isolation.md#default-and-strict-mode)
+  says why, and how to make the copy).
+
 ## Prompts and pre-approvals
 
-**What runs without asking.** The commands pre-approve reading, `Task`, edits
-under `incident_*/`, invoking themselves again and the `auditor:dnr-analyze`
-skill, and these bundled tools by their paths: the checks `preflight.sh` and
-`rundir.sh`, the program snapshot and the collector (your `RPC_URL` only, within
-the caps your environment sets, after your yes), `rpc-read.sh`, `git-ro.sh`, and
-the runners `probe.sh`, `target.sh` and `run.sh` (in the recorded execution
-mode). Inside the skill's fork, the offline analysis tools
-run without a prompt: `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` (jq over
-run-directory files, with an empty environment) and `audit-logs`, each run
-directly by its path in the installation and reading only files inside a run
-directory. `jq` itself, a line through `redact.sh`, the `--logs` copy, the
-`solana` CLI and anything else that executes code still ask. Pre-approval is
-not a sandbox: real confinement is an isolated run mode
+**What runs without asking.** The commands pre-approve:
+
+- reading, `Task`, edits under `incident_*/`, invoking themselves again and the
+  `auditor:dnr-analyze` skill;
+- these bundled tools by their paths: the checks `preflight.sh` and
+  `rundir.sh`, the program snapshot and the collector (your `RPC_URL` only,
+  within the caps your environment sets, after your yes), `rpc-read.sh`,
+  `git-ro.sh`, and the runners `probe.sh`, `target.sh` and `run.sh` (in the
+  recorded execution mode).
+
+Inside the skill's fork, the offline analysis tools run without a prompt:
+`profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` (jq over run-directory files,
+with an empty environment) and `audit-logs`, each run directly by its path in the
+installation and reading only files inside a run directory. `jq` itself, a line
+through `redact.sh`, the `--logs` copy, the `solana` CLI and anything else that
+executes code still ask.
+
+Pre-approval is not a sandbox: real confinement is an isolated run mode
 ([`OUTPUT-RULES.md` Rule 11](../OUTPUT-RULES.md#rule-11-operating-safety)); the
 RPC provider that received your addresses is disclosed under Rule 11b, from the
 rows the snapshot and the collector add to `incident_<n>/disclosures.tsv`.
