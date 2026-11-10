@@ -1,8 +1,6 @@
 # Output Rules — auditor-skill
 
-> This document defines the **mandatory output format** for all audit reports.  
-> Every audit — full, targeted, or single-instruction — MUST follow these rules.  
-> No exceptions.
+> Every audit follows these rules, whether full, targeted or single-instruction.
 
 ---
 
@@ -26,7 +24,7 @@ Every full report MUST include a **Scope Coverage** table: for each of the check
 
 ## Rule 1: Severity Scale (1–10)
 
-All findings use a **numeric severity from 1 to 10**. The old letter scale (C/H/M/L/I) is replaced.
+All findings use a **numeric severity from 1 to 10**, never a letter grade (C/H/M/L/I).
 
 | Score | Label | Color | Meaning | Action Required |
 |-------|-------|-------|---------|-----------------|
@@ -97,7 +95,7 @@ If highest finding ≤ 2: REPO SCORE = max(finding) (MINIMAL — clean)
 
 ## Rule 2: Executive Summary First
 
-→ Report-assembly format moved to [references/report-format.md](references/report-format.md) § Rule 2 — Executive Summary (template + Severity Distribution + Items Verified tables); loaded at report time.
+→ The report-assembly format is in [references/report-format.md](references/report-format.md) § Rule 2 — Executive Summary (template + Severity Distribution + Items Verified tables); loaded at report time.
 
 ---
 
@@ -161,7 +159,9 @@ After each chunk, save to session memory:
 
 ## Rule 4: Every Item Gets a Verdict
 
-Every single checklist item and every known attack vector MUST appear in the report output with an explicit verdict. No items are skipped silently. This is the proof that the auditor actually checked everything. **The depth exception.** A Quick or CI run takes a declared subset, the selection of `references/depth-scope.md`, and gives a verdict to every item and vector inside it. The items outside it are listed once per section or row group, as "outside <depth>'s scope; /auditor:audit gives their verdicts", with no verdict per item. Inside a read section, the items no site in scope reaches share the section's one `[N/A — no site in scope]` line, and an item that needs a call the depth does not make gets `[N/A at this depth — needs <call>]`. quick-scan's "this is the subset, not the full set" is the same rule.
+Every single checklist item and every known attack vector MUST appear in the report output with an explicit verdict. No items are skipped silently. This is the proof that the auditor actually checked everything.
+
+**The depth exception.** A Quick or CI run takes a declared subset, the selection of `references/depth-scope.md`, and gives a verdict to every item and vector inside it. The items outside it are listed once per section or row group, as "outside <depth>'s scope; /auditor:audit gives their verdicts", with no verdict per item. Inside a read section, the items no site in scope reaches share the section's one `[N/A — no site in scope]` line, and an item that needs a call the depth does not make gets `[N/A at this depth — needs <call>]`. quick-scan's "this is the subset, not the full set" is the same rule.
 
 ### Item Verdict Format
 
@@ -228,7 +228,7 @@ Every finding (any item that is `[FAIL-N]` with severity ≥ 4) gets a **full fi
 ```
 ```
 
-### Findings with severity 1-3 are **not required** to have a full block — the inline verdict line is sufficient. But they CAN have one if the auditor judges it useful.
+Findings with severity 1-3 need no full block: the inline verdict line is enough, though the auditor may add one where it helps.
 
 ---
 
@@ -275,29 +275,29 @@ The gate blocks are reproduced in the finding's full block (Rule 5) and summariz
 
 A *rejected* finding looks like this: "input ≥ 16 and header = 8 ⟹ input − header ≥ 8, so the subtraction cannot underflow. Downgraded `[FAIL-7]` → `[UNCONFIRMED]`."
 
-**Two honest outcomes when you cannot fully prove it:**
+**When you cannot fully prove it:**
 - `[UNCONFIRMED]` — the gate failed on **reachability or bounds** (unreachable / unbounded as written). Reported for manual follow-up; not a confirmed FAIL.
 - `[UNDETERMINED]` — the path **is reachable** but its full impact could not be quantified within scope. Carry the line "extent not determined within this assessment" and report it at its likely severity band, flagged. Reachable-but-unquantified ≠ unreachable.
 
-**Accepted PoC forms.** A runnable exploit is ideal but not the only proof. For access-control / logic findings a **structured attacker-narrative** is a first-class PoC: *actor → capability → numbered steps → guard bypassed → quantified outcome* (e.g. Alice deposits; Eve substitutes her key at `L88`; drains ~$X). And when the **missing check is provable at `file:line`** but the full exploit math can't be confirmed in the engagement window, you MAY still report at severity **provided** the finding carries explicit uncertainty phrasing and states exactly what remains unproven — do not mechanically bury a real syntactic gap as `[UNCONFIRMED]`.
+**Accepted PoC forms.** A runnable exploit is ideal but not the only proof. For access-control / logic findings a **structured attacker-narrative** counts as a full PoC: *actor → capability → numbered steps → guard bypassed → quantified outcome* (e.g. Alice deposits; Eve substitutes her key at `L88`; drains ~$X). And when the **missing check is provable at `file:line`** but the full exploit math can't be confirmed in the engagement window, you MAY still report at severity **provided** the finding carries explicit uncertainty phrasing and states exactly what remains unproven — do not mechanically bury a real syntactic gap as `[UNCONFIRMED]`.
 
 **PoC-evidence tier (tag the proof, orthogonal to severity).** When an executable PoC is built (via `/auditor:poc` → [references/orchestration/poc-harness.md](references/orchestration/poc-harness.md)), tag the finding with the strongest tier achieved. Executable **outranks** prose, but prose is **never removed** — an unbuildable target still yields a full finding:
 
 | Tier | Meaning |
 |------|---------|
-| `[PoC-REPRODUCED]` | Executable harness in `poc/F-xxx/` runs (Mollusk/LiteSVM): exploit **succeeds on the `vulnerable` arm and is rejected on `fixed`**. Gold standard. |
+| `[PoC-REPRODUCED]` | Executable harness in `poc/F-xxx/` runs (Mollusk/LiteSVM): exploit **succeeds on the `vulnerable` arm and is rejected on `fixed`**. |
 | `[PoC-SIM-REPRODUCED]` | Reproduced on a Surfpool mainnet-fork with a **quantified net P/L** (economic/oracle/MEV). |
 | `[PoC-FUZZ-REPRODUCED]` | A fuzzer (Trident/cargo-fuzz) produced a committed **crash/invariant-breaking artifact** that deterministically triggers it. |
 | `[PoC-ATTEMPTED]` | Harness generated but could not confirm (toolchain absent, could not minimize, fork state unavailable, or any other `run.sh` exit 3). Blocker named verbatim; every `run.sh` exit 3 also carries the flag **"PoC re-run needed"**, with that line as its reason; only a harness error gets a repair pass, on the harness setup alone, never on the assertions or the target; **prose PoC retained**; severity unchanged. |
 | `[PoC-PROSE]` | Structured attacker-narrative only — the accepted default for access-control/logic findings and whenever a harness is impractical. |
 
-**Fix-evidence tier (the patch side).** When `/auditor:patch` proposes a remediation diff, tag its verification (feeds the report's **Auditor Verification** field): `[FIX-VERIFIED]` (patch applied to a scratch worktree; the finding's PoC now reverts — optionally a mutant on the patched line is caught) > `[FIX-INSUFFICIENT]` (residual path still reproduces → mirrors `/re-audit` PARTIALLY-FIXED) > `[FIX-PROPOSED]` (diff is idiomatic and closes the cited bound, but no executable PoC was available to run the revert). Never claim `[FIX-VERIFIED]` without an executed revert. Opt-in Trail of Bits `post-patch-validation` (`/auditor:patch --post-patch-validation`, isolated mode only, on a disposable clone) is optional evidence that can only lower a tier: a finding in its result turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`, with that check as the reason; a `[FIX-PROPOSED]` or `[FIX-INSUFFICIENT]` patch keeps its tier and records the finding under Residual, and nothing else in its result changes a tier.
+**Fix-evidence tier (the patch side).** When `/auditor:patch` proposes a remediation diff, tag its verification (feeds the report's **Auditor Verification** field): `[FIX-VERIFIED]` (patch applied to a scratch clone; the finding's PoC now reverts — optionally a mutant on the patched line is caught) > `[FIX-INSUFFICIENT]` (residual path still reproduces → mirrors `/auditor:re-audit` PARTIALLY-FIXED) > `[FIX-PROPOSED]` (diff is idiomatic and closes the cited bound, but no executable PoC was available to run the revert). Never claim `[FIX-VERIFIED]` without an executed revert. Opt-in Trail of Bits `post-patch-validation` (`/auditor:patch --post-patch-validation`, isolated mode only, on a disposable clone) is optional evidence that can only lower a tier: a finding in its result turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`, with that check as the reason; a `[FIX-PROPOSED]` or `[FIX-INSUFFICIENT]` patch keeps its tier and records the finding under Residual, and nothing else in its result changes a tier.
 
 ---
 
 ## Rule 6: Report Sections Order
 
-→ Report-assembly format moved to [references/report-format.md](references/report-format.md) § Rule 6 — Report Sections Order; loaded at report time.
+→ The report-assembly format is in [references/report-format.md](references/report-format.md) § Rule 6 — Report Sections Order; loaded at report time.
 
 ---
 
@@ -320,13 +320,13 @@ If a language has no dedicated checklist (e.g., Swift, Dart, Elixir):
 
 ## Rule 8: Metric Computation
 
-→ Report-assembly format moved to [references/report-format.md](references/report-format.md) § Rule 8 — Metric Computation (Audit Metrics / Known Vector Metrics / Per-Checklist Summary tables); loaded at report time.
+→ The report-assembly format is in [references/report-format.md](references/report-format.md) § Rule 8 — Metric Computation (Audit Metrics / Known Vector Metrics / Per-Checklist Summary tables); loaded at report time.
 
 ---
 
 ## Rule 9: File Naming
 
-→ Report-assembly format moved to [references/report-format.md](references/report-format.md) § Rule 9 — File Naming; loaded at report time.
+→ The report-assembly format is in [references/report-format.md](references/report-format.md) § Rule 9 — File Naming; loaded at report time.
 
 Every report carries, in its Generated field, the line `rundir.sh stamp` printed right before it was written, and claims no more review by a person than that line's statement says (`AUDITOR_REVIEW_STATEMENT`, else none).
 
@@ -341,7 +341,7 @@ The directories these files live in (`audit_<n>/`, `.audit-memory/`, `incident_<
 - If context was lost mid-audit, say so: `[INCOMPLETE — context lost, needs re-review]`
 - If a file was too large to fully read, say so: `[PARTIAL — file truncated at line X, remaining unreviewed]`
 - If the repo uses a pattern the auditor doesn't recognize, say so: `[UNKNOWN — unfamiliar pattern, manual review recommended]`
-- The Executive Summary must honestly state if the audit is partial
+- The Executive Summary must state whether the audit is partial
 
 ### Confidence Tagging
 
@@ -362,7 +362,7 @@ Both tokens are defined in Rule 5b. Recap: `[UNCONFIRMED]` = the gate failed on 
 
 ## Rule 11: Operating Safety
 
-An audit handles hostile material: code that may get built or run, git metadata that may carry commands, and findings that must not leak before they are fixed. These six rules bind every command and agent; other files point here instead of restating them. Rule 11f sets which checks are on by default and which only strict mode adds.
+An audit handles hostile material: code that may get built or run, git metadata that may carry commands, and findings that must not leak before they are fixed. These six rules bind every command and agent; where another file summarizes them, this one wins. Rule 11f sets which checks are on by default and which only strict mode adds.
 
 The bundled tools these rules name are the steps the commands run without a prompt. Each one runs from the installation by its quoted path, checks every argument before it acts, takes only paths inside the working directory (the PoC runner's build cache aside), writes only into run directories, the `audit-mem` store and scratch directories outside the tree, and refuses anything else with one line that names the tool and the reason. In default mode a check on what the repository holds prints a note instead and the tool goes on (11f). The runners' downloads also fill the toolchain's own caches (`CARGO_HOME`, the Solana platform tools). Any other step asks first, unless it is one of Claude Code's own read-only commands (plain read-only git among them), and a non-interactive run denies what asks (11a).
 
@@ -433,7 +433,7 @@ A `.git/` directory the auditor did not create itself — a client archive, a co
 
 **A session below the top level.** When Claude Code starts in a subdirectory of a repository, and the repository tracks at least one file in that subdirectory, `git-ro.sh`, the two recipes and the threat-model collector read that repository's history, paths above the working directory included; `git-ro.sh` and the recipes reach its committed files there too, while the collector leaves out changes outside the working directory. The paths you give them stay relative to the working directory, as plain git's do there. Preflight's note names the subdirectory and the repository (11e). Where the repository tracks no file in that subdirectory, they do not take it for the target, so a home folder kept in git is never audited in place of an archive unpacked below it: in both modes they refuse, with a reason that says to start Claude Code at the repository's top level or in a folder it tracks (the collector exits 3), and preflight prints no such note. An explicit `--repo <dir>` must still be the top level of a repository. In strict mode a repository is read only from its top level, and `git-ro.sh` refuses from below it: start Claude Code there.
 
-**What default mode reads that strict mode refuses.** In default mode `git-ro.sh` also reads a checkout that another user owns: git's ownership check adds nothing to the hardened call, whose pins already switch off every key known to run a program (`copy` of such a checkout goes through plumbing instead, above). It accepts a symbolic link in a hooks directory, whether the hooks directory is a link or holds one, since no hook runs. Any other link in a git directory is refused in both modes, since git reads through it, and `git-ro.sh config --list` must never print a credentials file a link brings in. It reads a checkout whose git directory lies outside the working directory in a layout that ties it back to the tree: a linked worktree, whose `gitdir` file names this `.git`; a git directory whose `core.worktree` names the tree; or a submodule inside its superproject's top level, which tracks it as a gitlink. git's own `--separate-git-dir` layout, which `git init` and `git clone` make with that option, writes no `core.worktree`, so it does not tie back, though git itself takes that git directory for the tree's: its history is not read, a known limit. Audit a clone of it instead. A git directory outside the working directory in any other layout is noted, not refused: `git-ro.sh` and the recipes read no history from that repository, and the note says why; `git-ro.sh copy`, the threat-model collector and `target.sh` refuse it in both modes, since no copy of it can be made. It reads a checkout that borrows objects (alternates) or rewrites commit parents (grafts), with a `git-ro: note:` line that says so, and every read-only call on a git whose version is older than its line's May-2024 fixed release prints a note that names both (`this git reports 2.43.0, older than 2.43.4, that line's May-2024 fixed release`). The check reads only `git --version`, so a distribution build that backports the fixes under an older number counts as old. `blame` honours a `blame.ignoreRevsFile` the repository holds. In strict mode each of these is refused, as before (11f).
+**What default mode reads that strict mode refuses.** In default mode `git-ro.sh` also reads a checkout that another user owns: git's ownership check adds nothing to the hardened call, whose pins already switch off every key known to run a program (`copy` of such a checkout goes through plumbing instead, above). It accepts a symbolic link in a hooks directory, whether the hooks directory is a link or holds one, since no hook runs. Any other link in a git directory is refused in both modes, since git reads through it, and `git-ro.sh config --list` must never print a credentials file a link brings in. It reads a checkout whose git directory lies outside the working directory in a layout that ties it back to the tree: a linked worktree, whose `gitdir` file names this `.git`; a git directory whose `core.worktree` names the tree; or a submodule inside its superproject's top level, which tracks it as a gitlink. git's own `--separate-git-dir` layout, which `git init` and `git clone` make with that option, writes no `core.worktree`, so it does not tie back, though git itself takes that git directory for the tree's: its history is not read, a known limit. Audit a clone of it instead. A git directory outside the working directory in any other layout is noted, not refused: `git-ro.sh` and the recipes read no history from that repository, and the note says why; `git-ro.sh copy`, the threat-model collector and `target.sh` refuse it in both modes, since no copy of it can be made. It reads a checkout that borrows objects (alternates) or rewrites commit parents (grafts), with a `git-ro: note:` line that says so, and every read-only call on a git whose version is older than its line's May-2024 fixed release prints a note that names both (`this git reports 2.43.0, older than 2.43.4, that line's May-2024 fixed release`). The check reads only `git --version`, so a distribution build that backports the fixes under an older number counts as old. `blame` honours a `blame.ignoreRevsFile` the repository holds. In strict mode each of these is refused (11f).
 
 ### 11d — Output hygiene
 
@@ -476,7 +476,7 @@ By default the auditor refuses no repository for what it contains. Where a check
 
 What the auditor itself may do is limited in both modes: git only reads and runs no program the repository names, writes go only into run directories, the `audit-mem` store and scratch directories, no credential of the user's is used, and every pre-approved tool checks its arguments and refuses what its grammar does not take. So do the checks that keep a tool from hanging or from misreading git's answers, such as a named pipe or device where git would open a file and git's 10-second limit on a question: 11e lists them all. The incident rule of 11a holds in both modes, and so does the isolation self-check in isolated mode. The threat-model collector refuses a local file outside the working directory in `--offline` and `--detect` in both modes too: a pre-approved read must not copy a file such as a key from outside the tree into the run folder.
 
-**Strict mode** is for a source you do not trust. It keeps the checks that refuse, minus a few false refusals, and makes the execution mode isolated at least. It is on when any of these holds:
+**Strict mode** is for a source you do not trust. It keeps the checks that refuse, and makes the execution mode isolated at least. It is on when any of these holds:
 
 1. `AUDITOR_STRICT` is set to `1`, `true`, `yes` or `on`, in any letter case, in the environment Claude Code runs in. `0`, `false`, `no`, `off`, an empty value and no value leave it off; any other value turns it on, with a note that names the value.
 2. The user's arguments to a command hold `--strict`: the command passes it to `preflight.sh` and to `rundir.sh new`, and when it reuses a run directory instead, it writes `<R>/strict` there with the Write tool, holding the word `strict`, before any later step. A resumed invocation (`--resume`) keeps `--strict` when the invocation it resumes held it.
@@ -504,7 +504,7 @@ claude --setting-sources "" --strict-mcp-config --plugin-dir "<auditor-skill roo
 - `<auditor-skill root>` is the folder that holds auditor-skill's `.claude-plugin/plugin.json`. For a clone or an `install.sh` install, it is that folder (`~/.claude/skills/auditor-skill` in the README's examples, and `install.sh`'s default). For the plugin installed from the marketplace, it is the plugin's folder in Claude Code's cache, `~/.claude/plugins/cache/auditor/auditor/<version>`: `~/.claude/plugins/installed_plugins.json` records it as the `installPath` of `auditor@auditor`, and it changes with each update.
 - `--setting-sources ""` reads no settings file. Claude Code's [CLI reference](https://code.claude.com/docs/en/cli-reference) lists only `user`, `project` and `local`; the empty value was checked on Claude Code 2.1.304, which then loads only managed settings and the `--settings` file. So the repository's own config stays out: its `.claude/settings.json` and `.claude/settings.local.json`, with their hooks, `env` and permissions, its skills, commands and agents (a command file that would replace one of the plugin's included), and its `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` and `.claude/rules/` ([Claude Code's features in the Agent SDK](https://code.claude.com/docs/en/agent-sdk/claude-code-features), [debug your config](https://code.claude.com/docs/en/debug-your-config)). The user's settings stay out too: their hooks, their allow rules and every plugin the user enabled. That is why the line passes `""` and not `user`: under `user`, the plugins enabled at user scope load, with their hooks and language servers, and a language-server plugin such as `rust-analyzer-lsp` runs the repository's build scripts and proc-macros on the user's machine, outside the runners and the execution mode. Someone who keeps `user` can still switch such a plugin off for the session with a `--settings` file that holds `"enabledPlugins": {"rust-analyzer-lsp@claude-plugins-official": false}` ([plugins](https://code.claude.com/docs/en/plugins/loading)).
 - `--plugin-dir` loads auditor-skill itself, which `""` leaves out with the other plugins. Its root skill is then `auditor:auditor-skill`, in the `install.sh` layout too.
-- `--settings` loads the template, which still applies under `--setting-sources ""` (measured with Claude Code 2.1.304: preflight printed `mode: strict (AUDITOR_STRICT=1)` with the variable set only in that file). It holds `AUDITOR_STRICT=1`, `AUDITOR_EXEC_MODE=isolated`, the Claude Code sandbox block of `docs/permissions-and-isolation.md`, and what the user's settings no longer supply: the rules that let a flow resume without a prompt, and `CLAUDE_CODE_FORK_SUBAGENT=0`, which keeps a command's agents in the foreground, under its pre-approvals. Command-line settings outrank the repository's settings.
+- `--settings` loads the template, which still applies under `--setting-sources ""` (tested with Claude Code 2.1.304). It holds `AUDITOR_STRICT=1`, `AUDITOR_EXEC_MODE=isolated`, the Claude Code sandbox block of `docs/permissions-and-isolation.md`, and what the user's settings no longer supply: the rules that let a flow resume without a prompt, and `CLAUDE_CODE_FORK_SUBAGENT=0`, which keeps a command's agents in the foreground, under its pre-approvals. Command-line settings outrank the repository's settings.
 - `--strict-mcp-config` uses only the MCP servers `--mcp-config` names, so the servers of the repository's `.mcp.json` stay out. With no `--mcp-config` beside it, it drops your own MCP servers too, such as the Surfpool server `/auditor:economic-sim` looks for; where an organization deploys a `managed-mcp.json`, Claude Code does not start with this flag.
 
 Under the launch line the repository's own config does not load. Strict mode still refuses a tree that ships it, because preflight cannot see how Claude Code was started: for such a repository, audit a copy with every `.claude/` and `.mcp.json` deleted (clone it to a new directory, delete them in the copy, and start Claude Code there with the launch line). For a repository that ships none, that copy is an optional extra. An archive, or any copy without its `.git`, is a clean copy only once you have deleted every `.claude/` and `.mcp.json` in it, and any `audit_*/strict` or `incident_*/strict` it came with that you do not want.
@@ -544,7 +544,7 @@ Under `claude -p` and in CI, export `AUDITOR_STRICT=1` in the job's environment 
 | `target.sh`: `.npmrc` registry lines | `https` registry lines kept, every other line dropped, with a note | every line dropped |
 | `target.sh`, `run.sh`: an `Incident*` folder that is not the auditor's own | passed over by the incident rule, with a note | not reached: the rule stops native builds, and strict mode builds isolated |
 | `deps.sh cargo-audit`: a lockfile that names another registry | runs with `--no-yanked`, with a note | blocker |
-| `sast.sh`: a link that resolves outside the working directory; more than 500,000 entries | left out, with a note; the check stops there, with a note, and the scan goes on | today's rule: a link that resolves outside `--path`, and a `--path` past 500,000 entries or that cannot be read in full, are refused |
+| `sast.sh`: a link that resolves outside the working directory; more than 500,000 entries | left out, with a note; the check stops there, with a note, and the scan goes on | a link that resolves outside `--path`, and a `--path` past 500,000 entries or that cannot be read in full, are refused |
 | `collect.sh`: a partial clone, or a target whose config git cannot read | read, with a note | stops (exit 3) |
 | `audit-scan`: a missing `--workflows` directory; a file with a second name | that pass is skipped; the file is scanned once, under its first name | refused; both names skipped |
 | `audit-scan`, `audit-mem`: a link inside a run directory or the store that resolves inside it; git cannot answer | accepted; a run directory whose `.gitignore` is `*` is accepted | refused |
