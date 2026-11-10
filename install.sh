@@ -163,11 +163,11 @@ Next steps:
   • For a repository you do not trust, start Claude Code in strict mode (OUTPUT-RULES.md Rule 11f):
       claude --setting-sources "" --strict-mcp-config --plugin-dir "$DEST" --settings "$DEST/templates/strict-settings.json"
     It loads none of your settings or plugins; the template carries the resume rules it needs.
-  • Optional token-efficiency tools (Rust):
-      cd "$DEST/tools/auditor-tools" && cargo build --release
+  • Optional token-efficiency tools, which need Rust 1.89 or newer:
+      cd "$DEST/tools/auditor-tools" && cargo build --release --locked
     Build them only from an install outside any repository you audit, or under
     OUTPUT-RULES.md Rule 11a isolated mode: cargo reads config from every parent directory.
-  • Review estimated costs before a full run: $DEST/COSTS.md
+  • Review the measured costs before a full run: $DEST/COSTS.md
 EOF
 }
 
