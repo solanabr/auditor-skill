@@ -1,6 +1,6 @@
 # Core scripts: preflight, run directories and read-only git
 
-The three scripts every flow runs: `preflight.sh` checks the working tree before anything reads it, `rundir.sh` makes and checks the run directories, and `git-ro.sh` reads git history without letting the checkout's own config run anything. This page gives their arguments, exit codes, network use and outputs, for anyone who runs them by hand or reviews what the commands pre-approve. Back to the [docs index](README.md).
+The three scripts the flows rest on: `preflight.sh`, the first step of every command, checks the working tree before anything reads it; `rundir.sh` makes and checks the run directories; and `git-ro.sh` reads git history without letting the checkout's own config run anything. This page gives their arguments, exit codes, network use and outputs, for anyone who runs them by hand or reviews what the commands pre-approve. Back to the [docs index](README.md).
 
 How every bundled script is run and checked, and the other script pages: [Bundled scripts](power-tools.md#bundled-scripts). Which of them run without asking, and why that is safe: [permissions-and-isolation.md](permissions-and-isolation.md#what-runs-without-asking).
 
