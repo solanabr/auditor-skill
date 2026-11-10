@@ -1,6 +1,6 @@
 ---
 name: auditor:triage
-description: Re-runnable batch triage checkpoint over the candidate finding set (fixes triage being diffused across agents). Dedups by root-cause signature (reusing /re-audit's signature idea; audit-mem auto-suppresses prior-ruled false positives and flags regressions when built), enforces Rule 5b calibration (every N≥6 carries its validation block or is downgraded to [UNCONFIRMED]/[UNDETERMINED], with any economic/reachability downgrade quantified per the false-positives "quantify the barrier" rule), and splits real security findings (severity 1–10) from the Notes & Nitpicks list. Emits a triaged finding set plus a suppression appendix recording what was withheld and why.
+description: Re-runnable batch triage checkpoint over the candidate finding set, in one place rather than spread across the agents. Dedups by root-cause signature (reusing /auditor:re-audit's signature idea; audit-mem auto-suppresses prior-ruled false positives and flags regressions when built), enforces Rule 5b calibration (every N≥6 carries its validation block or is downgraded to [UNCONFIRMED]/[UNDETERMINED], with any economic/reachability downgrade quantified per the false-positives "quantify the barrier" rule), and splits real security findings (severity 1–10) from the Notes & Nitpicks list. Emits a triaged finding set plus a suppression appendix recording what was withheld and why.
 argument-hint: "[audit_<n>] [--program-id <id>] [--strict]"
 allowed-tools:
   - Read

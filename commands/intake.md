@@ -1,6 +1,6 @@
 ---
 name: auditor:intake
-description: Interactive engagement intake. Walks QUESTIONS.md and persists the answers to audit_<n>/intake.md — the durable intake artifact both audit-cycle and audit-assist read, instead of answers living only in conversation state. Captures scope + commit pin, languages/frameworks, protocol class, compliance, severity calibration, the trust-model inputs that feed the report's Trust Model and Assumptions sections, and the execution mode for target-controlled code (OUTPUT-RULES Rule 11a). Interactive mode asks; automated mode records the applied default.
+description: Interactive engagement intake. Walks QUESTIONS.md and persists the answers to audit_<n>/intake.md — the durable intake artifact both audit-cycle and audit-assist read. Captures scope + commit pin, languages/frameworks, protocol class, compliance, severity calibration, the trust-model inputs that feed the report's Trust Model and Assumptions sections, and the execution mode for target-controlled code (OUTPUT-RULES Rule 11a). Interactive mode asks; automated mode records the applied default.
 argument-hint: "[path] [--auto] [--strict]"
 allowed-tools:
   - Read
@@ -19,7 +19,7 @@ allowed-tools:
 
 **Arguments:** $ARGUMENTS
 
-Turn the passive `QUESTIONS.md` questionnaire into a **persisted** `audit_<n>/intake.md`. Read `QUESTIONS.md` first (the source questions + the "How Answers Affect the Audit" table) and `templates/intake.md` (the artifact you fill). This fixes the gap where intake answers lived only in conversation state — both `/auditor:audit-cycle` and `/auditor:audit-assist` read the file you write here.
+Turn the passive `QUESTIONS.md` questionnaire into a **persisted** `audit_<n>/intake.md`. Read `QUESTIONS.md` first (the source questions + the "How Answers Affect the Audit" table) and `templates/intake.md` (the artifact you fill). Both `/auditor:audit-cycle` and `/auditor:audit-assist` read the file you write here.
 
 ## Mode
 

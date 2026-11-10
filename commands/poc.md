@@ -71,4 +71,4 @@ This command's pre-approvals last for the turn that invoked it: Claude Code clea
 
 ## Never hard-fail
 
-On any toolchain absence or minimization failure, emit `[PoC-ATTEMPTED]` with the named blocker and **preserve the finding's existing structured attacker-narrative PoC** — a prose PoC is a first-class Rule 5b proof form. Downgrading the evidence tier never downgrades the finding's severity. Do **not** fabricate a passing test to reach `[PoC-REPRODUCED]`; an asserted-only-in-prose finding is honest, a faked green test is not.
+On any toolchain absence or minimization failure, emit `[PoC-ATTEMPTED]` with the named blocker and **preserve the finding's existing structured attacker-narrative PoC** — a prose PoC is a full Rule 5b proof form. Downgrading the evidence tier never downgrades the finding's severity. Do **not** fabricate a passing test to reach `[PoC-REPRODUCED]`: a finding argued only in prose stands, and a faked green test is a false claim.
