@@ -43,39 +43,40 @@
 #                   more than 16 MiB or with an entry compressed with anything but deflate, are refused.
 #   lock-budget     <R>/deps/lock-set-<n>.tsv: the CI budget of checklist 11 §11.11 over a set that
 #                   scripts/recipes/lock-delta.sh set wrote, in one run. First the publish age: one request
-#                   for each distinct name of the set from a public registry (the npm registry's record of
-#                   the package, the crate's entry in the crates.io index at index.crates.io, PyPI's record
-#                   of the project), in the budget's order,
-#                   at most 8 at a time, 1000 requests and 300 seconds; a
-#                   lookup that still fails after one retry, the rest past those bounds and a version with
-#                   no publish time are "not checked", which fails nothing. For each new version: its
-#                   publish time, its publisher (for a crate, from crates.io's record, one request a second,
-#                   asked only for the crates the budget selects) and the publishers of
-#                   earlier versions, flagging one under 14 days old, a first release under 14 days old, a
-#                   publisher that published no earlier version (a person to "GitHub Actions", trusted
-#                   publishing, apart, at low severity), a yanked version and one the registry does not list
-#                   (a package it has no record of included).
-#                   AUDITOR_PUBLISH_AGE=off (the default is on) leaves this out. Then the budget: each key
-#                   handler (lock-delta.sh's key mark) whose version changed, first and outside the budget,
-#                   then at most 40 of the other npm and crates rows whose version changed, in this order:
-#                   direct dependencies, pins, install scripts, versions under 14 days, sources now on the
-#                   public registry; PyPI rows and the rest are metadata only. Each entry's new and
-#                   old artifacts are fetched as fetch-artifact fetches one, its digest checked before it is
-#                   kept, with one retry, at most 50 MB a download and 500 MB unpacked in the whole call (one
-#                   past either counts as failed), into <R>/deps/lock-budget-<n>/<k>/new and old, and compared: the files added, changed and
+#                   for each distinct name of the set from a public registry (the npm registry's record of the
+#                   package, the crate's entry in the crates.io index at index.crates.io, PyPI's record of the
+#                   project), in the budget's order, at most 8 at a time, 1000 requests and 300 seconds; a
+#                   lookup that still fails after one retry, the rest past those bounds and a version with no
+#                   publish time are "not checked", which fails nothing. For each new version: its publish
+#                   time, its publisher (for a crate, from crates.io's record, one request a second, asked
+#                   only for the crates the budget selects) and the publishers of earlier versions, flagging
+#                   one under 14 days old, a first release under 14 days old, a publisher that published no
+#                   earlier version (a person to "GitHub Actions", trusted publishing, apart, at low
+#                   severity), a yanked version and one the registry does not list (a package it has no record
+#                   of included). AUDITOR_PUBLISH_AGE=off (the default is on) leaves this out. Then the
+#                   budget: each key handler (lock-delta.sh's key mark) whose version changed, first and
+#                   outside the budget, then at most 40 of the other npm and crates rows whose version
+#                   changed, in this order: direct dependencies, pins, install scripts, versions under 14
+#                   days, sources now on the public registry; PyPI rows and the rest are metadata only. Each
+#                   entry's new and old artifacts are fetched as fetch-artifact fetches one, its digest
+#                   checked before it is kept, with one retry (none for an artifact past a bound), at most 50
+#                   MB a download and 500 MB unpacked in the whole call (one past either counts as failed, and
+#                   once the 500 MB is spent no later artifact is asked for), into
+#                   <R>/deps/lock-budget-<n>/<k>/new and old, and compared: the files added, changed and
 #                   removed, the added lines matched against SC-059's and SC-060's patterns, binary files and
 #                   entries left out of the unpacked files, counts first. The sweep reads a line at a time and
 #                   keeps an old file's lines as hashes when it is at most 2 MB; in a newer copy of a larger
-#                   one every line counts as added. A row from a source that is not
-#                   public is never sent or fetched, and a scoped npm package the public registry does not
-#                   list (a 404) is taken as private: never fetched, reported, and no failure; a registry set
-#                   outside the repository is not seen, as the output says. The report goes to
-#                   <R>/deps/lock-budget-<n>.txt, the
-#                   publish ages to lock-budget-<n>/ages.tsv and each request to lock-budget-<n>/requests.txt.
-#                   Exit 1 when anything is flagged; 3 when an artifact the budget selects still fails after
-#                   its retry, once the rest are compared, the last line giving the count. The whole call
-#                   stops at 540 seconds, or AUDITOR_RUN_TIMEOUT when that is less, inside the 600 a Bash tool
-#                   call may take: what it did not fetch by then counts as failed.
+#                   one every line counts as added. A row from a source that is not public is never sent or
+#                   fetched, and a scoped npm package the public registry does not list (a 404) is taken as
+#                   private: never fetched, reported, and no failure; a registry set outside the repository is
+#                   not seen, as the output says. The report goes to <R>/deps/lock-budget-<n>.txt, the publish
+#                   ages to lock-budget-<n>/ages.tsv and each request to lock-budget-<n>/requests.txt. Exit 1
+#                   when anything is flagged; 3 when an artifact the budget selects is not fetched, or an
+#                   entry is not compared in time, once the rest are compared, the last line giving the
+#                   counts. The whole call ends by 540 seconds, or AUDITOR_RUN_TIMEOUT when that is less,
+#                   inside the 600 a Bash tool call may take: its requests, unpacking and sweep stop 10
+#                   seconds before that end, so its report is written in time, and an entry it has not
+#                   compared by then counts as failed.
 #
 # Manifests. Each --manifest is a confined regular file of at most 50 MB under the working directory, named
 # as its action takes it: Cargo.lock, Cargo.toml, package.json, package-lock.json or npm-shrinkwrap.json,
@@ -809,7 +810,7 @@ cargo_py() { (cd / && exec python3 -I -c "$CARGO_PY" "$@"); }
 # <file name> <algo> <digest> <dir>": verify, then unpack the regular files and directories into <dir>, as
 # a zip for a .whl or .zip name and as a tar otherwise (exit 3 with the reason); prints what it did and
 # what it left out.
-REGISTRY_PY='import base64, hashlib, io, json, os, re, stat, sys, tarfile, zipfile
+REGISTRY_PY='import base64, hashlib, io, json, os, re, stat, sys, tarfile, time, zipfile
 
 try:
     import lzma
@@ -819,6 +820,12 @@ except ImportError:
 FILES, BYTES = 50000, 512 * 1024 * 1024
 # What an unpack may take, and what it says past that: BYTES, or for lock-budget what its call has left.
 CAP = [BYTES, "the artifact unpacks to more than 512 MiB"]
+# When lock-budget must stop starting work (a time.time() value), or None: unpack checks it before each entry.
+STOP = [None]
+LATE = "the call reached its time limit"
+# A failure a retry cannot change: a bound the artifact passes, or the time limit of the call.
+FINAL = re.compile(r"^the call reached its time limit|is larger than [0-9]+ MB|unpacks? to more than|holds? more than|takes more than|needs more than")
+ROOM = "the artifacts of this call would unpack to more than %d MB"
 # What a tar may hold in pax and GNU long-name headers in all, and in global pax headers; what a zip
 # central directory may take.
 EXTENDED, GLOBAL, CENTRAL = 4 * 1024 * 1024, 128, 16 * 1024 * 1024
@@ -1114,6 +1121,8 @@ def unpack(archive, filename, algo, expected, dest):
         entries.append((name, kind, declared_size if kind == "file" else 0, ref))
     files = dirs = size = 0
     for e in entries:
+        if STOP[0] is not None and time.time() > STOP[0]:
+            fail(LATE)
         name, kind = e[0], e[1]
         parts = [p for p in name.split("/") if p not in ("", ".")]
         if name.startswith("/") or ".." in parts or not parts or re.search(r"[\x00-\x1f\x7f\\\\]", name):
@@ -1173,8 +1182,10 @@ PEP440 = r"^[0-9][0-9A-Za-z.!+_-]{0,63}$"
 CATEGORY = (("direct", 1), ("pin", 2), ("install", 3), ("young", 4), ("source-change", 5))
 MARKS = (("key", 0),) + CATEGORY
 # One call stays inside the 600 seconds a Bash tool call may take: the publish ages stop at 300 seconds, and the
-# whole call at 540.
+# whole call at 540. Its work stops MARGIN seconds before that end: no request, unpack or sweep runs past it, and
+# what is left is not compared, so the report is written in time.
 BUDGET, ASK_CAP, ASK_SECONDS, CALL_SECONDS, CRATES_GAP, QUARANTINE = 40, 1000, 300, 540, 1.0, 14
+MARGIN = 10
 # At most this many publish-age requests in flight. The crates.io API, asked only for the publishers of the
 # crates the budget selects, takes one request a second.
 IN_FLIGHT = 8
@@ -1571,11 +1582,15 @@ def line_counts(path):
     return counts
 
 
-def sweep(old_top, new_top, left_out, first):
+class Late(Exception):
+    pass
+
+
+def sweep(old_top, new_top, left_out, first, stop=None):
     # the files added, changed and removed between two unpacked artifacts, by the path the package manager
     # gives each, and the added lines that match SC-059 or SC-060. <first> is the folder the registry puts
     # every entry under: an entry elsewhere, or two entries on one path, is an SC-060 hit, and every copy on a
-    # shared path is read whole.
+    # shared path is read whole. Past <stop>, a time.time() value, it raises Late.
     old, new = {}, {}
     for p, rel, full in tree_files(old_top) if old_top else []:
         old.setdefault(p, []).append(full)
@@ -1595,6 +1610,8 @@ def sweep(old_top, new_top, left_out, first):
             hit("SC-060", p, 0, "%d entries of the artifact unpack to this path, and the package manager keeps one: %s"
                 % (len(copies), ", ".join(rel for rel, _ in copies[:5])))
         for rel, full in copies:
+            if stop is not None and time.time() > stop:
+                raise Late()
             if rel.split("/")[0] != first:
                 hit("SC-060", rel, 0, "an entry outside the %s/ folder the registry puts every entry under" % first)
             before = old.get(p, [])
@@ -1614,6 +1631,8 @@ def sweep(old_top, new_top, left_out, first):
                 binary.append(rel)
                 continue
             for n, raw in pieces(full):
+                if stop is not None and (n % 1000 == 0 or len(raw) > 65536) and time.time() > stop:
+                    raise Late()
                 if counts:
                     key = hashlib.blake2b(raw, digest_size=8).digest()
                     if counts[key] > 0:
@@ -1631,8 +1650,11 @@ def sweep(old_top, new_top, left_out, first):
 
 
 def fetch_one(fetcher, eco, name, version, records, dest):
-    # the record (from the publish-age answer when there is one), the artifact, its digest, the unpacked files
+    # the record (from the publish-age answer when there is one), the artifact, its digest, the unpacked files;
+    # nothing is asked once the call has unpacked all it may
     import contextlib, shutil
+    if fetcher.unpacked >= CALL_UNPACKED:
+        return False, ROOM % (CALL_UNPACKED // 1000000), []
     rec = records.get((eco, name, version))
     recfile = os.path.join(fetcher.scratch, "record.json")
     if rec is not None:
@@ -1676,12 +1698,16 @@ def fetch_one(fetcher, eco, name, version, records, dest):
     shutil.copyfile(got, os.path.join(dest, filename))
     os.mkdir(os.path.join(dest, "files"), 0o700)
     room = CALL_UNPACKED - fetcher.unpacked
-    CAP[:] = [min(BYTES, room), "the artifact unpacks to more than 512 MiB" if room >= BYTES
-              else "the artifacts of this call would unpack to more than %d MB" % (CALL_UNPACKED // 1000000)]
+    CAP[:] = [min(BYTES, room), "the artifact unpacks to more than 512 MiB" if room >= BYTES else ROOM % (CALL_UNPACKED // 1000000)]
+    STOP[0] = fetcher.deadline
     try:
-        ok, _, said = quiet(unpack, got, filename, algo, digest, os.path.join(dest, "files"))
+        if time.time() > STOP[0]:
+            ok, said = False, LATE
+        else:
+            ok, _, said = quiet(unpack, got, filename, algo, digest, os.path.join(dest, "files"))
     finally:
         CAP[:] = [BYTES, "the artifact unpacks to more than 512 MiB"]
+        STOP[0] = None
         os.remove(got)
     if not ok:
         shutil.rmtree(dest, ignore_errors=True)
@@ -1697,7 +1723,7 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
     now = time.time()
     rows, odd = set_rows(setfile)
     log = open(os.path.join(outdir, "requests.txt"), "w", encoding="utf-8", errors="backslashreplace")
-    fetcher = Fetcher(scratch, min(float(deadline), now + CALL_SECONDS), int(maxsize), agent, log)
+    fetcher = Fetcher(scratch, min(float(deadline), now + CALL_SECONDS) - MARGIN, int(maxsize), agent, log)
     out, summary = [], []
     out.append("lock-budget: %s: %d rows%s" % (setname, len(rows), "; %d lines that are not a row of the set, never sent" % odd if odd else ""))
     ages, records, asked, took, not_checked = {}, {}, 0, 0.0, {}
@@ -1776,46 +1802,61 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
     out.append(line)
     summary.append(line)
     fetched = failed = 0
-    failures, results, privates = [], [], []
+    failures, results, privates, late, why_not = [], [], [], [], {}
     for k, r in enumerate(chosen, 1):
+        if time.time() > fetcher.deadline:
+            late.append(r)
+            why_not[k] = LATE
+            results.append((k, r, None))
+            continue
         sides = [("new", r["new"])] + ([("old", r["old"])] if r["old"] != "-" and r["oldsource"] == "public" else [])
         got = {}
         os.mkdir(os.path.join(outdir, str(k)), 0o700)
         for side, version in sides:
             dest = os.path.join(outdir, str(k), side)
             ok, said, left = fetch_one(fetcher, r["eco"], r["name"], version, records, dest)
-            if ok is None:
-                break
-            if not ok and fetcher.deadline - time.time() > 10:
+            if ok is False and not FINAL.search(said) and fetcher.deadline - time.time() > 10:
                 time.sleep(2)
                 if os.path.exists(dest):
                     shutil_rm(dest)
                 ok, said, left = fetch_one(fetcher, r["eco"], r["name"], version, records, dest)
+            if ok is None or (not ok and said.startswith(LATE)):
+                break
             if ok:
                 fetched += 1
                 got[side] = (os.path.join(dest, "files"), left)
             else:
                 failed += 1
                 failures.append("%s %s %s: %s" % (r["eco"], r["name"], version, said))
+        s = None
         if ok is None:
             privates.append(r)
-            results.append((k, r, None))
-            continue
-        if "new" in got and ("old" in got or len(sides) == 1):
-            s = sweep(got["old"][0] if "old" in got else None, got["new"][0], got["new"][1],
-                      "package" if r["eco"] == "npm" else "%s-%s" % (r["name"], r["new"]))
-        else:
-            s = None
+            why_not[k] = PRIVATE
+        elif not ok and said.startswith(LATE):
+            why_not[k] = LATE
+        elif "new" in got and ("old" in got or len(sides) == 1):
+            try:
+                if time.time() > fetcher.deadline:
+                    raise Late()
+                s = sweep(got["old"][0] if "old" in got else None, got["new"][0], got["new"][1],
+                          "package" if r["eco"] == "npm" else "%s-%s" % (r["name"], r["new"]), fetcher.deadline)
+            except Late:
+                why_not[k] = LATE
+        if why_not.get(k) == LATE:
+            late.append(r)
         results.append((k, r, s))
-    line = "artifacts: %d entries, %d artifacts fetched, %d failed after one retry" % (len(chosen), fetched, failed)
+    line = "artifacts: %d entries, %d artifacts fetched, %d failed" % (len(chosen), fetched, failed)
+    if late:
+        line += "; %d entries not compared: %s" % (len(late), LATE)
     if privates:
         line += "; %d scoped packages the public registry does not list, maybe private, never fetched" % len(privates)
     out.append(line)
     summary.append(line)
     for f in failures:
         out.append("  not fetched: %s" % f)
-    for r in privates:
-        out.append("  not fetched: %s %s %s: %s" % (r["eco"], r["name"], r["new"], PRIVATE))
+    for k, r, s in results:
+        if k in why_not:
+            out.append("  not %s: %s %s %s: %s" % ("fetched" if why_not[k] == PRIVATE else "compared", r["eco"], r["name"], r["new"], why_not[k]))
     tot59 = sum(s["count"]["SC-059"] for _, _, s in results if s)
     tot60 = sum(s["count"]["SC-060"] for _, _, s in results if s)
     totbin = sum(len(s["binary"]) for _, _, s in results if s)
@@ -1830,7 +1871,8 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
     for k, r, s in results:
         cats = ",".join(m for m, _ in MARKS if m in r["marks"])
         if s is None:
-            out.append("%d. %s %s %s -> %s [%s] not compared: an artifact was not fetched" % (k, r["eco"], r["name"], r["old"], r["new"], cats))
+            out.append("%d. %s %s %s -> %s [%s] not compared: %s" % (k, r["eco"], r["name"], r["old"], r["new"], cats,
+                                                                     why_not.get(k, "an artifact was not fetched")))
             continue
         out.append("%d. %s %s %s -> %s [%s] SC-059 %d, SC-060 %d, binary %d; files +%d ~%d -%d%s"
                    % (k, r["eco"], r["name"], r["old"], r["new"], cats, s["count"]["SC-059"],
@@ -1861,10 +1903,13 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
         f.write("\n".join(clean(x) if x else "" for x in out) + "\n")
     for line in summary:
         print(">> " + clean(line))
-    if failed:
-        late = any("reached its time limit" in f for f in failures)
-        print("%d of %d selected artifacts could not be fetched after one retry%s" % (failed, failed + fetched,
-              ", the call having reached its time limit" if late else ""))
+    if late or failed:
+        said = []
+        if late:
+            said.append("%d of %d selected entries were not compared: %s" % (len(late), len(chosen), LATE))
+        if failed:
+            said.append("%d of %d selected artifacts could not be fetched" % (failed, failed + fetched))
+        print("; ".join(said))
         sys.exit(3)
     flags = tot59 + tot60 + totbin + sum(len(v) for v in flagged.values())
     sys.exit(1 if flags else 0)

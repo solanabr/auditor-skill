@@ -2277,7 +2277,7 @@ check "... the publish ages: three under 14 days, two first releases, a publishe
 check "... the budget: direct, pin, then the young version; the old package metadata only, the git row never fetched" \
   sh -c "grep -qxF '>> budget: 0 key handlers to compare, outside the 40-entry budget; 3 entries to compare (direct 1, pin 1, install 0, young 1, source-change 0); over the 40-entry budget: 0; metadata only: 1; PyPI rows, metadata only: 1; same version with a new checksum: 0; not public, never fetched (SC-061): 1; a version outside its registry grammar, never sent: 0' '$T/out' && ! grep -q 'lb-meta/-/' '$T/calls'"
 check "... old and new fetched from the URLs the records give (the npm record from the age answer, the crate's from the index, neither asked again), and compared" \
-  sh -c "grep -qxF '>> artifacts: 3 entries, 5 artifacts fetched, 0 failed after one retry' '$T/out' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-direct/1.1.0\$' '$T/calls') = 0 ] && ! grep -q '^url: https://crates.io/api/v1/crates/lb_crate/' '$T/calls' && [ -f '$LB/1/new/files/package/index.js' ] && [ -f '$LB/1/old/files/package/index.js' ] && [ -f '$LB/2/new/files/lb_crate-0.2.0/build.rs' ]"
+  sh -c "grep -qxF '>> artifacts: 3 entries, 5 artifacts fetched, 0 failed' '$T/out' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-direct/1.1.0\$' '$T/calls') = 0 ] && ! grep -q '^url: https://crates.io/api/v1/crates/lb_crate/' '$T/calls' && [ -f '$LB/1/new/files/package/index.js' ] && [ -f '$LB/1/old/files/package/index.js' ] && [ -f '$LB/2/new/files/lb_crate-0.2.0/build.rs' ]"
 check "... the sweep, counts first: the new postinstall and build.rs (SC-059), the new fetch (SC-060)" \
   sh -c "grep -qxF '>> sweep: SC-059 2 hits in 2 entries, SC-060 1 hits in 1 entries, binary files added or changed 0 in 0 entries; the hits are in the report' '$T/out' && grep -q '^1. npm lb-direct 1.0.0 -> 1.1.0 \[direct,young\] SC-059 1, SC-060 1, binary 0; files +0 ~2 -0\$' '$LB.txt' && grep -qF 'SC-060 package/index.js:2: fetch(\"https://collector.invalid/k\");' '$LB.txt' && grep -q '^SC-059 lb_crate-0.2.0/build.rs:0: a build.rs file added\$' '$LB.txt'"
 check "... one disclosure row per service for the whole run, each naming the set" \
@@ -2294,7 +2294,7 @@ lb_set "$LBN" 'npm	package-lock.json	lb-fail	-	1.0.0	-	public	install' 'npm	pack
 run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 n=$(sed -n 's/.*; output audit_1\/deps\/lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/err")
 check "lock-budget: an artifact that still fails after one retry: exit 3 with the count, once the rest are compared" \
-  sh -c "[ '$RC' = 3 ] && grep -qxF 'deps: blocker: 1 of 3 selected artifacts could not be fetched after one retry; output audit_1/deps/lock-budget-$n.txt' '$T/err' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-fail/-/lb-fail-1.0.0.tgz\$' '$T/calls') = 2 ] && grep -q '^1. npm lb-direct 1.0.0 -> 1.1.0 \[direct,young\] SC-059 1' '$WT/audit_1/deps/lock-budget-$n.txt' && grep -q '^  not fetched: npm lb-fail 1.0.0: HTTP 500 from ' '$WT/audit_1/deps/lock-budget-$n.txt'"
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'deps: blocker: 1 of 3 selected artifacts could not be fetched; output audit_1/deps/lock-budget-$n.txt' '$T/err' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-fail/-/lb-fail-1.0.0.tgz\$' '$T/calls') = 2 ] && grep -q '^1. npm lb-direct 1.0.0 -> 1.1.0 \[direct,young\] SC-059 1' '$WT/audit_1/deps/lock-budget-$n.txt' && grep -q '^  not fetched: npm lb-fail 1.0.0: HTTP 500 from ' '$WT/audit_1/deps/lock-budget-$n.txt'"
 LBN=103
 rowsfile=()
 for i in $(seq 1 45); do rowsfile+=("npm	package-lock.json	lb-many-$i	-	1.0.0	-	public	direct"); done
@@ -2302,7 +2302,7 @@ lb_set "$LBN" "${rowsfile[@]}"
 run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
 check "lock-budget over 45 direct entries: the first 40 compared, 5 counted over the budget and never fetched" \
-  sh -c "[ '$RC' = 0 ] && grep -q '^>> budget: 0 key handlers to compare, outside the 40-entry budget; 40 entries to compare (direct 40, .*); over the 40-entry budget: 5; ' '$T/out' && grep -qxF '>> artifacts: 40 entries, 40 artifacts fetched, 0 failed after one retry' '$T/out' && grep -qxF 'url: https://registry.npmjs.org/lb-many-40/-/lb-many-40-1.0.0.tgz' '$T/calls' && ! grep -q 'lb-many-4[1-5]' '$T/calls' && grep -qxF '  npm lb-many-45 - -> 1.0.0 [direct]' '$WT/audit_1/deps/lock-budget-$n.txt'"
+  sh -c "[ '$RC' = 0 ] && grep -q '^>> budget: 0 key handlers to compare, outside the 40-entry budget; 40 entries to compare (direct 40, .*); over the 40-entry budget: 5; ' '$T/out' && grep -qxF '>> artifacts: 40 entries, 40 artifacts fetched, 0 failed' '$T/out' && grep -qxF 'url: https://registry.npmjs.org/lb-many-40/-/lb-many-40-1.0.0.tgz' '$T/calls' && ! grep -q 'lb-many-4[1-5]' '$T/calls' && grep -qxF '  npm lb-many-45 - -> 1.0.0 [direct]' '$WT/audit_1/deps/lock-budget-$n.txt'"
 LBN=108
 rowsfile=()
 for i in $(seq 1 45); do rowsfile+=("npm	package-lock.json	lb-many-$i	-	1.0.0	-	public	direct"); done
@@ -2311,7 +2311,7 @@ lb_set "$LBN" "${rowsfile[@]}"
 run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
 check "lock-budget: a key handler listed after 45 direct entries is compared first, outside the 40" \
-  sh -c "[ '$RC' = 0 ] && grep -q '^>> budget: 1 key handlers to compare, outside the 40-entry budget; 40 entries to compare (direct 40, .*); over the 40-entry budget: 5; ' '$T/out' && [ \"\$(sed -n 's/^url: \(.*[.]tgz\)\$/\1/p' '$T/calls' | sed -n 1p)\" = 'https://registry.npmjs.org/lb-keyed/-/lb-keyed-1.0.0.tgz' ] && grep -qxF '1. npm lb-keyed - -> 1.0.0 [key] SC-059 0, SC-060 0, binary 0; files +2 ~0 -0; no earlier public version: every file is new' '$WT/audit_1/deps/lock-budget-$n.txt' && grep -qxF '>> artifacts: 41 entries, 41 artifacts fetched, 0 failed after one retry' '$T/out'"
+  sh -c "[ '$RC' = 0 ] && grep -q '^>> budget: 1 key handlers to compare, outside the 40-entry budget; 40 entries to compare (direct 40, .*); over the 40-entry budget: 5; ' '$T/out' && [ \"\$(sed -n 's/^url: \(.*[.]tgz\)\$/\1/p' '$T/calls' | sed -n 1p)\" = 'https://registry.npmjs.org/lb-keyed/-/lb-keyed-1.0.0.tgz' ] && grep -qxF '1. npm lb-keyed - -> 1.0.0 [key] SC-059 0, SC-060 0, binary 0; files +2 ~0 -0; no earlier public version: every file is new' '$WT/audit_1/deps/lock-budget-$n.txt' && grep -qxF '>> artifacts: 41 entries, 41 artifacts fetched, 0 failed' '$T/out'"
 LBN=110
 lb_set "$LBN" 'npm	package-lock.json	lb-ci	1.0.0	1.1.0	public	public	-'
 run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
@@ -2336,12 +2336,12 @@ check "... and the output says once that a registry set outside the repository i
   sh -c "[ \$(grep -c '^>> note: a registry set outside the repository (the environment, user or global npm or bun config) is not seen\$' '$T/out') = 1 ]"
 run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 check "lock-budget with AUDITOR_PUBLISH_AGE=off: a scoped package whose version record is 404 is maybe private, no failure" \
-  sh -c "[ '$RC' = 0 ] && grep -qxF '>> artifacts: 1 entries, 0 artifacts fetched, 0 failed after one retry; 1 scoped packages the public registry does not list, maybe private, never fetched' '$T/out' && [ \$(grep -c '^url: ' '$T/calls') = 1 ]"
+  sh -c "[ '$RC' = 0 ] && grep -qxF '>> artifacts: 1 entries, 0 artifacts fetched, 0 failed; 1 scoped packages the public registry does not list, maybe private, never fetched' '$T/out' && [ \$(grep -c '^url: ' '$T/calls') = 1 ]"
 LBN=118
 lb_set "$LBN" 'npm	package-lock.json	lb-nowhere	-	1.0.0	-	public	direct'
 run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 check "lock-budget: an unscoped package the registry does not list stays a failure when selected" \
-  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 1 of 1 selected artifacts could not be fetched after one retry' '$T/err'"
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 1 of 1 selected artifacts could not be fetched; output ' '$T/err'"
 LBN=104
 lb_set "$LBN"
 r0=$(rows)
@@ -2425,6 +2425,25 @@ with tarfile.open(fileobj=buf, mode="w:gz") as t:
     ti.size = len(big)
     t.addfile(ti, io.BytesIO(big))
 record("lb-mem", buf.getvalue())
+class Repeat:
+    # <size> bytes of <unit> over and over, for tarfile to read a piece at a time
+    def __init__(self, unit, size):
+        self.unit, self.left, self.at = unit, size, 0
+    def read(self, n=-1):
+        n = self.left if n < 0 else min(n, self.left)
+        out = (self.unit * ((self.at + n) // len(self.unit) + 1))[self.at:self.at + n]
+        self.at, self.left = (self.at + n) % len(self.unit), self.left - n
+        return out
+# a call out of time while it sweeps; a call whose first artifact fills its 500 MB exactly
+for name, file, unit, size, level in (("lb-slow", "slow", (b"A" * 119 + b" ") * 10 + b"\n", 200000000, 9),
+                                      ("lb-fill", "zero", b"\0", 500000000, 1)):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", compresslevel=level) as t:
+        ti = tarfile.TarInfo("package/" + file)
+        ti.size = size
+        t.addfile(ti, Repeat(unit, size))
+    record(name, buf.getvalue())
+record("lb-after", b"never asked")
 PY
 LBN=106
 lb_set "$LBN" 'npm	package-lock.json	lb-twotop	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-gone	-	3.0.0	-	public	-'
@@ -2448,7 +2467,9 @@ run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/d
 n=$(sed -n 's/.*; output audit_1\/deps\/lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/err")
 LBR=$WT/audit_1/deps/lock-budget-$n.txt
 check "lock-budget: a download over 50 MB, more than the call's 500 MB unpacked and a digest that does not match each fail, exit 3" \
-  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 3 of 3 selected artifacts could not be fetched after one retry; output ' '$T/err' && grep -qxF '  not fetched: npm lb-big 1.0.0: the artifact at https://registry.npmjs.org/lb-big/-/lb-big-1.0.0.tgz is larger than 50 MB' '$LBR' && grep -qxF '  not fetched: npm lb-huge 1.0.0: the artifacts of this call would unpack to more than 500 MB' '$LBR' && grep -q '^  not fetched: npm lb-baddigest 1.0.0: the digest does not match: ' '$LBR'"
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 3 of 3 selected artifacts could not be fetched; output ' '$T/err' && grep -qxF '  not fetched: npm lb-big 1.0.0: the artifact at https://registry.npmjs.org/lb-big/-/lb-big-1.0.0.tgz is larger than 50 MB' '$LBR' && grep -qxF '  not fetched: npm lb-huge 1.0.0: the artifacts of this call would unpack to more than 500 MB' '$LBR' && grep -q '^  not fetched: npm lb-baddigest 1.0.0: the digest does not match: ' '$LBR'"
+check "... a size failure is not retried, a digest that does not match is" \
+  sh -c "[ \$(grep -c '^url: https://registry.npmjs.org/lb-big/-/lb-big-1.0.0.tgz\$' '$T/calls') = 1 ] && [ \$(grep -c '^url: https://registry.npmjs.org/lb-huge/-/lb-huge-1.0.0.tgz\$' '$T/calls') = 1 ] && [ \$(grep -c '^url: https://registry.npmjs.org/lb-baddigest/-/lb-baddigest-1.0.0.tgz\$' '$T/calls') = 2 ]"
 check "... none of the three is kept or unpacked" sh -c "[ -d '$WT/audit_1/deps/lock-budget-$n/3' ] && [ -z \"\$(find '$WT/audit_1/deps/lock-budget-$n' -mindepth 2 -print)\" ]"
 LBN=112
 lb_set "$LBN" 'npm	package-lock.json	lb-unsafe	-	1.0.0	-	public	direct'
@@ -2491,13 +2512,36 @@ subprocess.run(sys.argv[1:], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL
 r = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
 print(int(r / (1 << 20) if sys.platform == "darwin" else r / 1024))' env -i HOME="$CLEANHOME" PATH="$FPATH" TMPDIR="$NT" AUDITOR_PUBLISH_AGE=off \
   "${SHELLS[0]}" "$DEPS" lock-budget --run audit_1 "audit_1/deps/lock-set-$LBN.tsv")
+LBR=$(ls -t "$WT"/audit_1/deps/lock-budget-*.txt | sed -n 1p)
 check "lock-budget: the sweep of 120 MB of short lines peaks at ${peak:-?} MB, under half what it unpacks" \
-  sh -c "[ '${peak:-999}' -lt 60 ] && grep -qx '1. npm lb-mem - -> 1.0.0 \[direct\] SC-059 0, SC-060 0, binary 0; files +1 ~0 -0; no earlier public version: every file is new' \"\$(ls -t '$WT'/audit_1/deps/lock-budget-*.txt | sed -n 1p)\""
+  sh -c "[ '${peak:-999}' -lt 60 ] && grep -qx '1. npm lb-mem - -> 1.0.0 \[direct\] SC-059 0, SC-060 0, binary 0; files +1 ~0 -0; no earlier public version: every file is new' '$LBR'"
+rm -rf "${LBR%.txt}"
 LBN=107
 lb_set "$LBN" 'npm	package-lock.json	lb-young	-	0.1.0	-	public	direct'
 run "$DEPS" "$WT" AUDITOR_RUN_TIMEOUT=3 -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 check "lock-budget out of time: no request, exit 3, the count and the reason given" \
-  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 1 of 1 selected artifacts could not be fetched after one retry, the call having reached its time limit; output ' '$T/err' && ! grep -q '^== curl' '$T/calls'"
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 1 of 1 selected entries were not compared: the call reached its time limit; output ' '$T/err' && ! grep -q '^== curl' '$T/calls'"
+# the work of a call stops ten seconds before its end, so its report is written in time: 200 MB of 119-character
+# runs, one short of SC-060's 120, take far longer to sweep than AUDITOR_RUN_TIMEOUT=20 leaves
+LBN=120
+lb_set "$LBN" 'npm	package-lock.json	lb-slow	-	1.0.0	-	public	direct'
+t0=$(date +%s)
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off AUDITOR_RUN_TIMEOUT=20 -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+took=$(( $(date +%s) - t0 ))
+n=$(sed -n 's/.*; output audit_1\/deps\/lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/err")
+LBR=$WT/audit_1/deps/lock-budget-$n.txt
+check "lock-budget: a sweep still running at the time limit stops, its entry not compared: exit 3 after $took s, the report written" \
+  sh -c "[ '$RC' = 3 ] && [ '$took' -lt 18 ] && grep -qxF 'deps: blocker: 1 of 1 selected entries were not compared: the call reached its time limit; output audit_1/deps/lock-budget-$n.txt' '$T/err' && grep -qxF '1. npm lb-slow - -> 1.0.0 [direct] not compared: the call reached its time limit' '$LBR' && grep -qxF '>> artifacts: 1 entries, 1 artifacts fetched, 0 failed; 1 entries not compared: the call reached its time limit' '$T/out' && [ -f '$WT/audit_1/deps/lock-budget-$n/1/new/files/package/slow' ]"
+rm -rf "$WT/audit_1/deps/lock-budget-$n"
+# once the call has unpacked its 500 MB, a later selected artifact fails at once, with no request
+LBN=121
+lb_set "$LBN" 'npm	package-lock.json	lb-fill	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-after	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/.*; output audit_1\/deps\/lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/err")
+LBR=$WT/audit_1/deps/lock-budget-$n.txt
+check "lock-budget: once the call has unpacked its 500 MB, a later selected artifact fails at once, with no request" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF '  not fetched: npm lb-after 1.0.0: the artifacts of this call would unpack to more than 500 MB' '$LBR' && ! grep -q 'lb-after' '$T/calls' && grep -qxF '1. npm lb-fill - -> 1.0.0 [direct] SC-059 0, SC-060 0, binary 1; files +1 ~0 -0; no earlier public version: every file is new' '$LBR'"
+rm -rf "$WT/audit_1/deps/lock-budget-$n"
 
 # =================================================================================================
 # sast.sh: semgrep with allowlisted rulesets, its SARIF in R/sast.
