@@ -23,7 +23,7 @@ It covers the on-chain programs (Anchor, native and Pinocchio) and the rest of t
 > [!WARNING]
 > **It is a first pass, not a professional audit.** An AI auditor cannot do everything a human can: social engineering assessment, business-logic review that needs domain expertise, legal compliance opinions. Run it first, and before a mainnet launch pair it with a human audit of the business logic, the economic model and legal compliance. Like a firm's, its client report gives no "safe to deploy" guarantee.
 >
-> **By default it builds and tests the project on your machine.** In native mode, the default, the project's builds and tests run without a prompt for each run, and a build runs the project's own build scripts, proc-macros and tests. For code you don't trust, use strict mode, which is opt-in: start Claude Code with the [strict launch line](#permissions-and-isolation). It also keeps your own plugins out: a language-server plugin such as `rust-analyzer-lsp` would otherwise run the project's build scripts outside the auditor's runners.
+> **By default it builds and tests the project on your machine.** In native mode, the default, the project's builds and tests run without a prompt for each run, and building and testing a project runs its own code: build scripts, proc-macros and tests. For code you don't trust, use strict mode, which is opt-in: start Claude Code with the [strict launch line](#permissions-and-isolation). It also keeps your own plugins out: a language-server plugin such as `rust-analyzer-lsp` would otherwise run the project's build scripts outside the auditor's runners.
 >
 > **The rules that let a flow resume also let Claude start one.** The `Skill(auditor:… *)` rules you add [once, after installing](#once-after-installing) let Claude start any of these flows by itself, in any repository you open, for example when a file it reads tells it to.
 >
@@ -67,7 +67,7 @@ Every item a run reads gets an explicit verdict. This is the format, with the ex
 [N/A]       AV-023: init_if_needed — not used in this program
 ```
 
-A finding of severity 6 or more must also pass the validation gate before it counts ([output-and-rigor.md](docs/output-and-rigor.md#the-rule-5b-validation-gate)). With `--ci`, a Quick review asks nothing and ends with one line, which says nothing about what it found:
+A finding of severity 6 or more must also pass the validation gate before it counts ([output-and-rigor.md](docs/output-and-rigor.md#the-rule-5b-validation-gate)). With `--ci`, diff-audit and quick-scan ask nothing and end with one line, which says nothing about what they found:
 
 ```text
 auditor: verdict: fail (threshold 7, analyzers run: audit-scan, lock-delta; not run: deps-artifacts)
@@ -89,11 +89,14 @@ auditor: verdict: fail (threshold 7, analyzers run: audit-scan, lock-delta; not 
 - Every in-scope item gets an explicit verdict, so a report shows what was checked, not only what failed. [Details](docs/output-and-rigor.md#every-item-gets-a-verdict)
 
 **Executable proofs, not just prose**
-- For High and Critical findings, `/auditor:poc` builds a runnable exploit (Mollusk, LiteSVM, a Surfpool fork or a fuzz target) that *asserts* the vulnerability, and `/auditor:patch` drafts a minimal fix and **proves it reverts the exploit**. Evidence is tiered (`[PoC-REPRODUCED]` … `[PoC-PROSE]`), and the prose is never dropped when a harness can't be built. [Details](docs/poc-and-patches.md)
+- For High and Critical findings, `/auditor:poc` builds a runnable exploit (Mollusk, LiteSVM, a Surfpool fork or a fuzz target) that *asserts* the vulnerability, and `/auditor:patch` drafts a minimal fix and **proves it reverts the exploit**. Evidence is tiered (`[PoC-REPRODUCED]` … `[PoC-PROSE]`), and the prose is never dropped when a harness can't be built. `--post-patch-validation` adds Trail of Bits' post-patch validation, opt-in and in isolated mode only, and its result can only lower a fix tier. [Details](docs/poc-and-patches.md)
 
 **Deep Solana coverage**
 - 13 protocol methodologies (AMM/CLMM, lending, perps, oracles, stablecoins, liquid staking, governance, bridges, multisig/custody, Token-2022, NFT marketplaces, launchpads, token registries & risk signals), framework idioms (Anchor/Native/Pinocchio), and a reusable invariant catalog, each loaded only when the code triggers it. [Details](#the-corpus)
 - Playbooks for whole classes of risk: ZK proofs and compression, transaction v1 (SIMD-0385), GitHub Actions trigger trust, and the host kernel and network surface of validators, RPC nodes, keepers and runners.
+
+**Dependency updates**
+- Checklist 11 §11.11 reviews what a dependency bump's published code actually changed, not only its version. On a changed lockfile, diff-audit runs it within a budget: it checks the new versions' publish ages and compares the published code of every changed key-handling package and at most 40 others. [Details](checklists/11-supply-chain.md)
 
 **Detection and response, after an incident**
 - `/auditor:hunt` looks for an attack with no alert to start from, and `/auditor:respond` works one lead to a verdict, the damage and a proposed response plan. Both start from transaction history, program logs and Geyser or indexer exports, and both only propose. [Details](#after-an-incident)
@@ -267,7 +270,7 @@ cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked
 
 ### Permissions and isolation
 
-The `/auditor:*` commands run their bundled steps without asking: the working-tree check, run directories, read-only git, the Rust tools, and the runners that build and test the project in the execution mode in force, native unless intake, `AUDITOR_EXEC_MODE` or strict mode says otherwise. Each checks its own arguments and writes only into the auditor's own directories; other calls ask ([docs/getting-started.md](docs/getting-started.md#6-prompts-and-isolation) gives the whole list). By default what strict mode would refuse is a note in the report, apart from the few shapes still refused in both modes, which Rules 11e and 11f list ([OUTPUT-RULES.md Rule 11f](OUTPUT-RULES.md#11f--default-and-strict-mode)).
+The `/auditor:*` commands run their bundled steps without asking: the working-tree check, run directories, read-only git, the Rust tools, and the runners that build and test the project in the execution mode in force, native unless intake, `AUDITOR_EXEC_MODE` or strict mode says otherwise. Each checks its own arguments and writes only into the auditor's own directories; other calls ask ([docs/getting-started.md](docs/getting-started.md), "Prompts and isolation", gives the whole list). By default what strict mode would refuse is a note in the report, apart from the few shapes still refused in both modes, which Rules 11e and 11f list ([OUTPUT-RULES.md Rule 11f](OUTPUT-RULES.md#11f--default-and-strict-mode)).
 
 Two settings help. The first adds [one risk](docs/permissions-and-isolation.md#what-remains-a-risk): its rules also let Claude start a flow by itself.
 
@@ -414,7 +417,7 @@ The CI template's own settings (`AUDITOR_FAIL_ON`, `AUDITOR_MAX_BUDGET_USD`, `AU
 
 ### Your project's layout
 
-auditor-skill was first built for one Solana/Anchor DeFi project and then generalized, and `discovery/file-map.md` still assumes that project's layout (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`). For Quick and Standard, pass the range or the path you want reviewed. For Full, record where your code lives at intake: the in-scope paths under `QUESTIONS.md` Q39 ("Specific files/modules") and the exclusions under Q44 go into the Layout table of `audit_<n>/intake.md` §1. The next interactive intake in the same checkout offers that table again and reuses it only on your yes; `/auditor:audit-cycle` runs intake with `--auto`, which never reuses it. Don't edit `discovery/file-map.md` in a shared or plugin install: the next update overwrites it. Everything else (checklists, known vectors, output rules) is portable as-is ([docs/getting-started.md](docs/getting-started.md#4-adapt-to-your-repo)).
+auditor-skill was first built for one Solana/Anchor DeFi project and then generalized, and `discovery/file-map.md` still assumes that project's layout (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`). For Quick and Standard, pass the range or the path you want reviewed. For Full, record where your code lives at intake: the in-scope paths under `QUESTIONS.md` Q39 ("Specific files/modules") and the exclusions under Q44 go into the Layout table of `audit_<n>/intake.md` §1. The next interactive intake in the same checkout offers that table again and reuses it only on your yes; `/auditor:audit-cycle` runs intake with `--auto`, which never reuses it. Don't edit `discovery/file-map.md` in a shared or plugin install: the next update overwrites it. Everything else (checklists, known vectors, output rules) is portable as-is ([docs/getting-started.md](docs/getting-started.md), "Adapt to your repo").
 
 ## Integrations
 
@@ -464,7 +467,7 @@ Everything that remains a risk: [docs/permissions-and-isolation.md](docs/permiss
 
 Plugin users get each change when they update the plugin, a new Trail of Bits pin included. An `install.sh` install gets it on its next run.
 
-**After every update, rebuild the Rust tools:** `cargo build --release --locked` in `tools/auditor-tools`. An older build refuses the `--contract=1` the flows pass, and they go on as if the tools were absent; an `audit-logs` built before a change to the scripts it mirrors exits 4, and the analysis falls back to the scripts until you rebuild.
+**After every update, rebuild the Rust tools:** `cargo build --release --locked` in `tools/auditor-tools`. An older build refuses the `--contract=1` the flows pass, and they go on as if the tools were absent; an `audit-logs` built before a change to the recipes it mirrors or to `confine.sh` exits 4, and the analysis falls back to the scripts until you rebuild.
 
 ### Upgrading from 7.6.0 or earlier
 

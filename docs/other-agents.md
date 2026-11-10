@@ -17,7 +17,7 @@ Then initialize the Trail of Bits submodule from that folder, as the README's [T
 ## What changes without the plugin
 
 - **No commands.** Ask in plain words. SKILL.md maps a request to its depth and mode ([Audit Modes](../SKILL.md#audit-modes)), the same way the commands do.
-- **Intake by hand.** Before a Full run, fill a copy of [`QUESTIONS.md`](../QUESTIONS.md) (47 questions): the answers set the severity calibration, the trust model and which compliance checklists apply ([getting-started.md](getting-started.md#4-adapt-to-your-repo)).
+- **Intake by hand.** Before a Full run, fill a copy of [`QUESTIONS.md`](../QUESTIONS.md) (47 questions): the answers set the severity calibration, the trust model and which compliance checklists apply ([getting-started.md](getting-started.md), "Adapt to your repo").
 - **No pre-approvals.** The commands and skills pre-approve their bundled steps in their `allowed-tools`, which Claude Code reads ([permissions-and-isolation.md](permissions-and-isolation.md#what-runs-without-asking)).
 - **Paths from the installation.** Every script, tool and template the skill names is relative to the auditor-skill folder, never to the working directory, which is usually the repository under audit ([Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)).
 
