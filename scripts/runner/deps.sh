@@ -45,20 +45,21 @@
 #                   scripts/recipes/lock-delta.sh set wrote, in one run. First the publish age: one request
 #                   for each distinct name of the set from a public registry (the npm registry's record of the
 #                   package, the crate's entry in the crates.io index at index.crates.io, PyPI's record of the
-#                   project), in the budget's order, at most 8 at a time, 1000 requests and 300 seconds; a
-#                   lookup that still fails after one retry, the rest past those bounds and a version with no
-#                   publish time are "not checked", which fails nothing. For each new version: its publish
-#                   time, its publisher (for a crate, from crates.io's record, one request a second, asked
-#                   only for the crates the budget selects) and the publishers of earlier versions, flagging
-#                   one under 14 days old, a first release under 14 days old, a publisher that published no
-#                   earlier version (a person to "GitHub Actions", trusted publishing, apart, at low
-#                   severity), a yanked version and one the registry does not list (a package it has no record
-#                   of included). AUDITOR_PUBLISH_AGE=off (the default is on) leaves this out. Then the
-#                   budget: each key handler (lock-delta.sh's key mark) whose version changed, first and
-#                   outside the budget, then at most 40 of the other npm and crates rows whose version
-#                   changed, in this order: direct dependencies, pins, install scripts, versions under 14
-#                   days, sources now on the public registry; PyPI rows and the rest are metadata only. Each
-#                   entry's new and old artifacts are fetched as fetch-artifact fetches one, its digest
+#                   project), in the budget's order, at most 8 at a time, 1,000 names (each with one retry)
+#                   and 300 seconds, no lookup running past them; a lookup that still fails after its retry,
+#                   the names past those bounds and a version with no publish time are "not checked", which
+#                   fails nothing. For each new version: its publish time, its publisher (for a crate, from
+#                   crates.io's record, one request a second, asked only for the crates the budget selects)
+#                   and the publishers of earlier versions, flagging one under 14 days old, a first release
+#                   under 14 days old, a publisher that published no earlier version (a person to "GitHub
+#                   Actions", trusted publishing, apart, at low severity), a yanked version and one the
+#                   registry does not list (a package it has no record of included). AUDITOR_PUBLISH_AGE=off
+#                   (the default is on) leaves this out. Then the budget: each key handler (lock-delta.sh's
+#                   key mark) whose version changed, first and outside the budget, then at most 40 of the
+#                   other npm and crates rows whose version changed, in this order: direct dependencies, pins,
+#                   install scripts, versions under 14 days, sources now on the public registry; PyPI rows and
+#                   the rest are metadata only. Each entry's new and old artifacts are fetched as
+#                   fetch-artifact fetches one (60 seconds a record request, 120 a download), its digest
 #                   checked before it is kept, with one retry (none for an artifact past a bound), at most 50
 #                   MB a download and 500 MB unpacked in the whole call (one past either counts as failed, and
 #                   once the 500 MB is spent no later artifact is asked for), into
@@ -1398,9 +1399,11 @@ def age_check(rows, fetcher, now, log):
                "pypi": "https://pypi.org/pypi/%s/json" % name}[eco]
         why = ""
         for attempt in (1, 2):
-            if time.time() - start > ASK_SECONDS:
+            # each attempt gets 60 seconds, or what the 300 leave; none starts with less than 5 left
+            room = int(ASK_SECONDS - (time.time() - start))
+            if room < 5:
                 return None, None, why or "the 300-second bound"
-            got, why = fetcher.get(url, eco != "crates", eco != "pypi", 60)
+            got, why = fetcher.get(url, eco != "crates", eco != "pypi", min(60, room))
             if not got and why.startswith("HTTP 404 "):
                 # the registry has no such package: a scoped npm one may be private to its organization;
                 # every version of any other is one the registry does not list
@@ -1422,7 +1425,7 @@ def age_check(rows, fetcher, now, log):
     results, records, not_checked = {}, {}, {}
     asking = names[:ASK_CAP]
     for k in names[ASK_CAP:]:
-        not_checked[k] = "the 1,000-request cap"
+        not_checked[k] = "the 1,000-name cap"
     with ThreadPoolExecutor(max_workers=IN_FLIGHT) as pool:
         answers = list(pool.map(lambda k: ask(*k), asking))
     private = set()
@@ -1663,7 +1666,7 @@ def fetch_one(fetcher, eco, name, version, records, dest):
     else:
         url = ("https://registry.npmjs.org/%s/%s" % (npm_url_path(name), version) if eco == "npm"
                else "https://crates.io/api/v1/crates/%s/%s" % (name, version))
-        got, why = fetcher.get(url, True)
+        got, why = fetcher.get(url, True, False, 60)
         if not got and why.startswith("HTTP 404 ") and eco == "npm" and name.startswith("@"):
             return None, PRIVATE, []
         if not got:

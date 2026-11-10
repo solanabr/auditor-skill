@@ -2285,8 +2285,8 @@ check "... one disclosure row per service for the whole run, each naming the set
 check "... the run directory still passes its check" sh -c "(cd '$WT' && '$ROOT/scripts/rundir.sh' check audit_1) >/dev/null"
 r0=$(rows)
 run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
-check "lock-budget with AUDITOR_PUBLISH_AGE=off: no record of a whole package, each version's record instead, nothing to PyPI or the index" \
-  sh -c "[ '$RC' = 1 ] && ! grep -q 'index.crates.io' '$T/calls' && grep -q '^>> publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: 5 of 5 rows\$' '$T/out' && ! grep -qxF 'url: https://registry.npmjs.org/lb-direct' '$T/calls' && grep -qxF 'url: https://registry.npmjs.org/lb-direct/1.1.0' '$T/calls' && ! grep -q 'pypi.org' '$T/calls' && grep -q '^>> budget: 0 key handlers to compare, outside the 40-entry budget; 2 entries to compare (direct 1, pin 1, ' '$T/out'"
+check "lock-budget with AUDITOR_PUBLISH_AGE=off: no record of a whole package, each version's record instead (60 seconds a request), nothing to PyPI or the index" \
+  sh -c "[ '$RC' = 1 ] && ! grep -q 'index.crates.io' '$T/calls' && grep -q '^== curl .* --max-time 60 .* -- https://registry.npmjs.org/lb-direct/1.1.0\$' '$T/calls' && grep -q '^== curl .* --max-time 60 .* -- https://crates.io/api/v1/crates/lb_crate/0.2.0\$' '$T/calls' && grep -q '^== curl .* --max-time 120 .* -- https://registry.npmjs.org/lb-direct/-/lb-direct-1.1.0.tgz\$' '$T/calls' && grep -q '^>> publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: 5 of 5 rows\$' '$T/out' && ! grep -qxF 'url: https://registry.npmjs.org/lb-direct' '$T/calls' && grep -qxF 'url: https://registry.npmjs.org/lb-direct/1.1.0' '$T/calls' && ! grep -q 'pypi.org' '$T/calls' && grep -q '^>> budget: 0 key handlers to compare, outside the 40-entry budget; 2 entries to compare (direct 1, pin 1, ' '$T/out'"
 check "... two rows, npmjs.org and crates.io, that say only the selected versions go out" \
   sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 2 ] && tail -n 2 '$DT' | grep -c 'budget selects' | grep -qx 2"
 LBN=102
