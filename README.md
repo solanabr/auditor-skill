@@ -64,6 +64,7 @@ What each release added: [What's new](#whats-new).
 | [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md) | Default and strict mode, what runs without asking and why that is safe, what still asks, strict mode and isolated runs, `claude -p`, the risks that remain |
 | [docs/faq.md](docs/faq.md) | Questions people ask: a professional audit, the model, how long, CI, projects outside Solana |
 | [docs/changelog.md](docs/changelog.md) | What each release added |
+| [docs/repository-layout.md](docs/repository-layout.md) | Every folder and file of this repository |
 
 ---
 
@@ -80,6 +81,36 @@ What each release added: [What's new](#whats-new).
 | AI / agent components | 19 | 39 |
 | **Always applied** (any repo, at `--scope full`) | 11-13, 16-18 | 421 |
 | **Total** | **20** | **1,465** |
+
+- **References:** `references/methodologies/` holds 13 protocol playbooks (amm-clmm, lending, perps, oracles, stablecoin, liquid-staking, governance, bridges, wallets-multisig-custody, token-2022, nft-marketplaces, launchpads, token-registry-risk). Beside them sit the framework idioms (Anchor, Native, Pinocchio, build and tooling), four vulnerability-class playbooks (zk-and-compression, transaction-v1, github-actions, kernel-attack-surface), the invariant catalog, the false-positive rules, the audit lifecycle, the detection & response track, and `references/depth-scope.md`, the selection that quick-scan and diff-audit read.
+
+Checklists 01-07 are Solana-specific. Of the others, 08-10 cover TypeScript and web code, 14 Python, 15 Go, Java, Ruby, PHP and any other language, 19 AI agents and 20 off-chain Rust, and 11-13 and 16-18 apply to any repository, so the corpus works for projects outside Solana too.
+
+<details>
+<summary>The 20 checklists, with their item counts</summary>
+
+- [`01-program-account-validation.md`](checklists/01-program-account-validation.md) (90 items): account validation, on-chain
+- [`02-program-access-control.md`](checklists/02-program-access-control.md) (55 items): access control, on-chain
+- [`03-program-arithmetic-safety.md`](checklists/03-program-arithmetic-safety.md) (63 items): arithmetic safety, on-chain
+- [`04-program-cpi-pda.md`](checklists/04-program-cpi-pda.md) (70 items): CPI and PDA safety, on-chain
+- [`05-program-state-machine.md`](checklists/05-program-state-machine.md) (74 items): state machine and lifecycle, on-chain
+- [`06-program-economic-logic.md`](checklists/06-program-economic-logic.md) (92 items): economic and logic attacks, on-chain
+- [`07-program-opsec-governance.md`](checklists/07-program-opsec-governance.md) (87 items): operational security and governance
+- [`08-typescript-safety.md`](checklists/08-typescript-safety.md) (64 items): TypeScript safety
+- [`09-backend-security.md`](checklists/09-backend-security.md) (133 items): backend security
+- [`10-frontend-security.md`](checklists/10-frontend-security.md) (84 items): frontend security
+- [`11-supply-chain.md`](checklists/11-supply-chain.md) (65 items): supply chain and dependencies
+- [`12-secrets-opsec.md`](checklists/12-secrets-opsec.md) (53 items): secrets and key management
+- [`13-deployment-infrastructure.md`](checklists/13-deployment-infrastructure.md) (102 items): deployment and infrastructure
+- [`14-python-safety.md`](checklists/14-python-safety.md) (82 items): Python safety
+- [`15-general-language-safety.md`](checklists/15-general-language-safety.md) (88 items): general language safety
+- [`16-formal-verification-testing.md`](checklists/16-formal-verification-testing.md) (73 items): formal verification and testing
+- [`17-logging-monitoring-incident-response.md`](checklists/17-logging-monitoring-incident-response.md) (68 items): logging, monitoring and incident response
+- [`18-privacy-compliance-change-management.md`](checklists/18-privacy-compliance-change-management.md) (60 items): privacy, compliance and change management
+- [`19-ai-agent-security.md`](checklists/19-ai-agent-security.md) (39 items): AI agents on Solana
+- [`20-rust-offchain-services.md`](checklists/20-rust-offchain-services.md) (23 items): off-chain Rust (Geyser, indexers, keepers)
+
+</details>
 
 ---
 
@@ -195,108 +226,23 @@ The audit is complete when every **in-scope** item has an explicit verdict; out-
 
 ---
 
-## Folder Structure
+## Folder structure
 
-```
-auditor-skill/
-├── README.md                ← YOU ARE HERE
-├── SKILL.md                 ← Orchestrator — the AI agent reads this first
-├── OUTPUT-RULES.md          ← Mandatory output format, severity scale
-├── FULL-AUDIT.md            ← Step-by-step execution plan for complete audits
-├── QUESTIONS.md             ← Pre-audit questionnaire (intake asks it in a Full run)
-├── COSTS.md                 ← Measured cost and time per depth
-├── CONTRIBUTING.md          ← Branch / PR flow, corpus-count rules, no AI-attribution policy
-├── SECURITY.md              ← Private vulnerability reporting for the skill and its tooling
-│
-├── known-vectors/           ← Individual attack vector files (for contributors)
-│   ├── INDEX.md             ← One-line index of all vectors
-│   ├── 001-private-key-leak.md
-│   ├── 002-flash-loan-price-manipulation.md
-│   ├── ...
-│   └── 100-insufficient-backup-disaster-recovery.md
-│
-├── checklists/              ← 20 micro-checklists (the core verification items)
-│   ├── 01-program-account-validation.md    (90 items)
-│   ├── 02-program-access-control.md        (55 items)
-│   ├── 03-program-arithmetic-safety.md     (63 items)
-│   ├── 04-program-cpi-pda.md              (70 items)
-│   ├── 05-program-state-machine.md         (74 items)
-│   ├── 06-program-economic-logic.md        (92 items)
-│   ├── 07-program-opsec-governance.md      (87 items)
-│   ├── 08-typescript-safety.md             (64 items)
-│   ├── 09-backend-security.md             (133 items)
-│   ├── 10-frontend-security.md             (84 items)
-│   ├── 11-supply-chain.md                  (65 items)
-│   ├── 12-secrets-opsec.md                 (53 items)
-│   ├── 13-deployment-infrastructure.md     (102 items)
-│   ├── 14-python-safety.md                 (82 items)
-│   ├── 15-general-language-safety.md       (88 items)
-│   ├── 16-formal-verification-testing.md   (73 items)
-│   ├── 17-logging-monitoring-incident-response.md (68 items)
-│   ├── 18-privacy-compliance-change-management.md (60 items)
-│   ├── 19-ai-agent-security.md (39 items) — AI agents on Solana
-│   └── 20-rust-offchain-services.md (23 items) — Off-chain Rust (geyser/indexers/keepers)
-│
-├── discovery/               ← File patterns and search commands
-│   ├── file-map.md          ← Maps checklists → target file patterns
-│   └── grep-commands.md     ← All grep/terminal commands by category
-│
-├── references/              ← Progressive-disclosure deep coverage (loaded on trigger)
-│   ├── methodologies/       ← 13 protocol playbooks (amm-clmm, lending, perps, oracles,
-│   │                          stablecoin, liquid-staking, governance, bridges,
-│   │                          wallets-multisig-custody, token-2022, nft-marketplaces, launchpads,
-│   │                          token-registry-risk)
-│   ├── framework-idioms/    ← Anchor / Native / Pinocchio validation-order footguns
-│   ├── vuln-classes/        ← zk-and-compression · transaction-v1 (SIMD-0385 migration) · github-actions (CI trigger trust) · kernel-attack-surface (host kernel & network surface)
-│   ├── invariant-catalog.md ← Reusable harness-ready invariant menus per protocol class
-│   ├── false-positives.md   ← Over-reporting triage rules
-│   ├── audit-lifecycle/     ← methodology + firm-coverage (how firms work) + threat-model-bootstrap
-│   ├── detection-response/  ← post-incident track: rules + verdict ladder, Solana log sources, containment, INCIDENTS.json schema
-│   └── orchestration/       ← boundary-map (Trail of Bits) · pre-scan · poc-harness
-│
-├── commands/                ← 17 slash-commands (/auditor:<name>)
-│   ├── audit · quick-scan · deep-review · diff-audit · spec-audit · economic-sim · audit-report
-│   ├── audit-cycle · audit-assist · re-audit            ← lifecycle flows
-│   ├── intake · threat-model · triage                   ← perimeter
-│   ├── poc · patch                                      ← executable PoC + fix patches
-│   └── hunt · respond                                   ← post-incident detection & response
-│
-├── agents/                  ← 9 specialized subagents
-│   ├── context-builder · threat-modeler · vuln-hunter · economic-analyst
-│   └── peer-reviewer · audit-reporter · poc-engineer · patch-engineer · incident-responder
-│
-├── skills/
-│   └── dnr-analyze/         ← auditor:dnr-analyze: one D&R analysis phase, run as a fork of incident-responder
-│
-├── tools/auditor-tools/     ← Rust CLIs (cargo build --release --locked)
-│   ├── audit-scan           ← deterministic pre-scan → JSON risky-surface map (~$0)
-│   ├── audit-mem            ← SQLite cross-audit memory (dedup · regression · FP-suppression)
-│   └── audit-logs           ← the D&R analysis recipes as one offline binary (cargo build --release --locked)
-│
-├── templates/               ← Output + deliverable templates
-│   ├── report-template.md   ← Internal item-by-item verdict report
-│   ├── audit-report.md      ← Client-facing findings report (no deploy guarantee)
-│   ├── re-audit.md          ← Fix-review record (RE-AUDIT.md), with each finding's PoC re-run
-│   ├── pr-report.md         ← The Quick commands' report (PR-REPORT.md · QUICK-SCAN.md · DEEP-REVIEW-<unit>.md)
-│   ├── strict-settings.json ← Settings for the strict launch line (OUTPUT-RULES Rule 11f)
-│   ├── ci/                  ← The pull-request workflow, its two schemas and jq programs (docs/ci.md)
-│   ├── context-worksheet.md · instruction-worksheet.md · intake.md · threat-model.md
-│   ├── incident-report.md · response-plan.md · hunt-ledger.md
-│   ├── poc/                 ← exploit-harness crate skeleton + shared-test-utils
-│   └── patch/               ← patch + VERIFICATION templates
-│
-├── docs/                    ← Usage guides (start at docs/README.md)
-├── scripts/                 ← preflight.sh, rundir.sh, git-ro.sh, rpc-read.sh, report-to-pdf.sh, the CI checks (check-*.sh), tob-delta-review.sh + the no-attribution commit hook
-│   ├── runner/              ← probe.sh, deps.sh, sast.sh, target.sh: toolchain probes, dependency audits, SAST, and builds and tests in the recorded execution mode
-│   ├── recipes/             ← lock-delta.sh, web3js-history.sh: the lockfile changes (and the CI budget's set of new versions) and known-bad releases in the git history, for the supply-chain checks
-│   ├── lib/                 ← confine.sh and isolation.sh, the checks and environment cleaning the entry points share
-│   ├── pdf/                 ← no-remote.lua, the pandoc filter report-to-pdf.sh renders with
-│   ├── dnr/                 ← detection & response recipes (gated RPC collector, program snapshot, corpus profile, log frames, balance deltas, jq-ro.sh)
-│   ├── threat-model/        ← collect.sh — the read-only threat-model bootstrap collector
-│   └── tests/               ← script self-tests (+ fixtures/gha/, workflows and a composite action that are never executed)
-├── AGENTS.md                ← Agent-orchestration overview
-└── vendor/trailofbits/      ← Trail of Bits execution plugins (git submodule, pinned — see Installation)
-```
+| Path | What it holds |
+|------|---------------|
+| `SKILL.md`, `OUTPUT-RULES.md`, `FULL-AUDIT.md`, `QUESTIONS.md`, `AGENTS.md` | the skill the agent reads, its output rules, the full-audit plan, the intake questionnaire and the agent overview |
+| `checklists/` | the 20 checklists |
+| `known-vectors/` | the 141 known vectors, and `INDEX.md` |
+| `references/` | methodologies, framework idioms, vulnerability classes, the invariant catalog, false-positive rules, the audit lifecycle, detection & response, orchestration, `depth-scope.md` |
+| `discovery/` | the file map and the grep commands by category |
+| `commands/`, `agents/`, `skills/` | the 17 commands, the 9 agents and the `dnr-analyze` skill |
+| `templates/` | report templates, worksheets, the PoC and patch templates, `strict-settings.json` and the CI workflow |
+| `tools/auditor-tools/` | the Rust tools `audit-scan`, `audit-mem` and `audit-logs` |
+| `scripts/` | preflight, run directories, read-only git, the runners, recipes, collectors, the CI checks and their tests |
+| `vendor/trailofbits/` | the Trail of Bits plugins, a pinned git submodule |
+| `docs/` | the usage guides |
+
+The full tree, with what each file is for: [docs/repository-layout.md](docs/repository-layout.md).
 
 ---
 
