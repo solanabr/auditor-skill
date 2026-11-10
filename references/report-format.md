@@ -15,7 +15,7 @@ Every audit output — regardless of size — MUST start with an **Executive Sum
 
 **Repository:** {org/repo}
 **Commit:** {short SHA}
-**Date:** {YYYY-MM-DD}
+**Generated:** {the line `rundir.sh stamp` printed right before this report was written}
 **Scope:** {FULL / PROGRAM / BACKEND / FRONTEND / DEVOPS}
 **Repository Risk Score:** {1-10} — {CRITICAL/HIGH/MEDIUM/LOW/MINIMAL}
 

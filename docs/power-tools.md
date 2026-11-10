@@ -325,6 +325,7 @@ A name counts as the filesystem opens it: on APFS or HFS+, which fold case and n
 "<auditor-skill root>/scripts/rundir.sh" check audit_1
 "<auditor-skill root>/scripts/rundir.sh" sub audit_1 poc/F-003
 "<auditor-skill root>/scripts/rundir.sh" store
+"<auditor-skill root>/scripts/rundir.sh" stamp
 ```
 
 Makes, checks and reuses run directories ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). A run directory is `audit_<n>` or `incident_<n>` (`<n>` of 1 to 6 digits) directly in the working directory, spelled so on disk, in lower case: a real directory, holding no symbolic link that leads out of it or to nothing (in strict mode, none at all), tracked by no repository in any letter case, whose `.gitignore` holds exactly `*`.
@@ -333,6 +334,7 @@ Makes, checks and reuses run directories ([Rule 11d](../OUTPUT-RULES.md#11d--out
 - **`check <R>`** prints `ok <R>` for a run directory that may be reused. In both modes it refuses a name the disk spells in other letters, such as `AUDIT_1` given as `audit_1`, since a `strict` file written through that name would not count. In default mode a run directory git cannot check is accepted when its `.gitignore` holds exactly `*`. Reuse one only once you have confirmed which one.
 - **`sub <R> <rel>`** makes `<R>/<rel>`, or accepts it when it exists, and prints the path: `poc/<ID>`, `patches`, `harnesses`, `bootstrap`, `corpus-<k>`, `logs` or `rpc`, where `<ID>` is `F-<1-4 digits>` or `INC-<1-6 digits>.<1-4 digits>` and `<k>` 1 to 4 digits.
 - **`store`** prints `.audit-memory/audit.db` for an in-tree store that passes the Rule 11d check, and `absent` when there is none; otherwise it refuses, and the flow uses `<R>/audit-mem.db`.
+- **`stamp`** takes no arguments and prints the line a report's Generated field holds, right before the report is written: `Generated automatically by auditor-skill <version> on <UTC time>.`, then the review statement. The statement is `AUDITOR_REVIEW_STATEMENT`, with its control characters made spaces and cut at 300 characters (a note on stderr says so), or, when that is unset or empty, `No person reviewed this report before it was written.` ([Rule 9](../OUTPUT-RULES.md#rule-9-file-naming)).
 - **Exit:** 0 done · 64 refused, with one line, `rundir: refused: <reason>`. **Network:** none. **Needs:** git and find.
 
 ### Read-only git
