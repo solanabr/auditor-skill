@@ -1087,8 +1087,7 @@ check "... git ran ls-tree and cat-file --batch, and never clone" \
 check "... and no program or hook the repository's config names ran" test -z "$(ls -A "$T/marks")"
 # A source that borrows objects (git clone --shared writes objects/info/alternates). Outside strict mode
 # confine_repo takes it with a note, which prints on stdout as target.sh's own notes do, and the clone reads
-# the borrowed objects; strict mode refuses it, as today. (The default-mode case needs Lane 1's confine_repo,
-# lane/l1-core a36bdba.)
+# the borrowed objects; strict mode refuses it, as today.
 AL=$T/alwt
 tgit clone -q --shared "$WT" "$AL" 2>/dev/null
 ( cd "$AL" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$AL/audit_1/exec-mode"
@@ -2276,7 +2275,6 @@ H='eco	lockfile	name	old	new	oldsource	source	marks'
 lb_set() { # lb_set <n> <row>...: audit_1/deps/lock-set-<n>.tsv, the header and the rows
   { printf '%s\n' "$H"; shift; for r in "$@"; do printf '%s\n' "$r"; done; } > "$WT/audit_1/deps/lock-set-$LBN.tsv"
 }
-lb_order() { sed -n 's/^url: //p' "$T/calls" | tr '\n' ' '; }
 LBN=101
 lb_set "$LBN" 'npm	package-lock.json	lb-direct	1.0.0	1.1.0	public	public	direct' \
   'npm	package-lock.json	lb-meta	-	2.0.0	-	public	-' \
