@@ -273,7 +273,7 @@ Seven agents run on Opus, and context-builder and audit-reporter on Sonnet; quic
 
 ## Output format
 
-Every run writes into a run directory, `audit_<n>/` or `incident_<n>/`, that git ignores. Quick writes `PR-REPORT.md`, `QUICK-SCAN.md` or `DEEP-REVIEW-<unit>.md`, each opening with a summary. Standard writes the internal `REPORT.md`, with a risk score and a deploy verdict. Full writes the client `REPORT.md`, with a commit-pinned scope, a code-maturity assessment and disclaimers, and no "safe to deploy" guarantee ([output-and-rigor.md](docs/output-and-rigor.md#two-report-templates)). High and Critical findings can add `poc/` and `patches/` ([poc-and-patches.md](docs/poc-and-patches.md)). A PDF needs pandoc 2.15 or later and a PDF engine:
+Every run writes into a run directory, `audit_<n>/` or `incident_<n>/`, that git ignores. Quick writes `PR-REPORT.md`, `QUICK-SCAN.md` or `DEEP-REVIEW-<unit>.md`, each opening with a summary. Standard writes the internal `REPORT.md`, with a risk score and a deploy verdict. Full writes the client `REPORT.md`, with a commit-pinned scope, a code-maturity assessment and disclaimers, and no "safe to deploy" guarantee ([output-and-rigor.md](docs/output-and-rigor.md#two-report-templates)). Every report carries a Generated line, which `rundir.sh stamp` prints right before the report is written: the version and the UTC time, then "No person reviewed this report before it was written." unless `AUDITOR_REVIEW_STATEMENT` holds the review a person did ([Configuration](#configuration)). High and Critical findings can add `poc/` and `patches/` ([poc-and-patches.md](docs/poc-and-patches.md)). A PDF needs pandoc 2.15 or later and a PDF engine:
 
 ```bash
 "<auditor-skill root>/scripts/report-to-pdf.sh" audit_1/REPORT.md   # MD is always the deliverable
@@ -290,6 +290,7 @@ auditor-skill reads no configuration file of its own. Environment variables, com
 | `AUDITOR_STRICT=1`, `--strict` or intake's "Untrusted source" | off | strict mode ([Rule 11f](OUTPUT-RULES.md#11f--default-and-strict-mode)) |
 | `AUDITOR_EXEC_MODE` | native | `native`, `isolated` or `none`: how the runners build and test ([Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety)) |
 | `AUDITOR_PUBLISH_AGE` | on | `off` stops a lockfile review's publish-age lookups ([docs/ci.md](docs/ci.md#setup)) |
+| `AUDITOR_REVIEW_STATEMENT` | empty | the statement that ends the Generated line of each report, after "Generated automatically by auditor-skill <version> on <time>." (`rundir.sh stamp`). Empty gives "No person reviewed this report before it was written."; set it only to what a person did ([rundir.sh](docs/scripts-core.md#rundirsh)) |
 | `BASH_DEFAULT_TIMEOUT_MS`, `BASH_MAX_TIMEOUT_MS` | two minutes | raised, they keep a long build inside the command's pre-approvals ([Long steps](docs/permissions-and-isolation.md#long-steps)) |
 
 The command flags are in [docs/commands.md](docs/commands.md), and the CI template's settings in [docs/ci.md](docs/ci.md#setup). For Full, intake records where your code lives instead of `discovery/file-map.md` ([getting-started.md](docs/getting-started.md), "Adapt to your repo").
