@@ -1144,7 +1144,6 @@ while IFS= read -r f; do set -- "$@" "$f"; done < "$T/corpus-files"
 # shows>: the check fails on any other finding, and on a listed one it no longer makes, whose line is then to
 # be deleted here.
 KNOWN='
-C6	docs/output-and-rigor.md	not quoted as "<auditor-skill root>/scripts/rundir.sh": <auditor-skill root>/scripts/rundir.sh new
 '
 found=$(check "$TREE" "$@"); rc=$?
 if [ "$rc" -ne 0 ]; then bad "the checker failed on $TREE (status $rc)"
