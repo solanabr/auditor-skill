@@ -343,6 +343,7 @@ Through 7.6.0, `install.sh` without a path installed into the current directory'
 
 Newest first; each entry in full, with the earlier releases: [docs/changelog.md](docs/changelog.md).
 
+- **7.7.4** — SQLite 3.54 in the Rust tools, through rusqlite 0.41, clearing RUSTSEC-2026-0459; building them now needs Rust 1.89 or newer.
 - **7.7.3** — Three depths and a CI mode: `references/depth-scope.md`, diff-audit's line and lockfile budgets, the `templates/ci/auditor-pr.yml` workflow, a named report from each Quick command, a Generated line in every report (`rundir.sh stamp`) that says no person reviewed it unless `AUDITOR_REVIEW_STATEMENT` says otherwise, and measured costs.
 - **7.7.2** — Strict mode is opt-in, builds run natively by default, and Anchor builds work in the runners. It also brings the host kernel and network attack surface: KV-141, DEP-097..102 and a playbook.
 - **7.7.0** — Bundled steps run without asking, `audit-logs` and the incident-analysis fork, post-patch validation, rules for live probes, the GitHub Actions workflow pass, a per-project layout, and checks for forensic readiness and from a comparison with Cloudflare's audit skill.

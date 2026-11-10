@@ -4,9 +4,13 @@ What each release of auditor-skill added, newest first. The README's [What's new
 
 A patch release (X.Y.Z) moves only the plugin's version, which plugin users receive when they update the plugin; a minor release (X.Y.0) moves every version reference and is tagged with a GitHub Release ([CONTRIBUTING.md §3](../CONTRIBUTING.md#3-branch-and-pr-flow)). The entries name the pull requests they come from.
 
-## 7.7 (7.7.0 to 7.7.3, November 2026)
+## 7.7 (7.7.0 to 7.7.4, November 2026)
 
 7.7.0 is the minor release that closes the 7.6.x patch series: the patches 7.6.2 to 7.6.9 (#47 to #54) merged with it on 2026-11-04, as one stack. The host-kernel coverage (#58) merged before 7.7.2 and left the version as it was, so it shipped with 7.7.2 (#70, 2026-11-09). #70's description calls that content 7.7.1, a version that was never published.
+
+### 7.7.4 (#72)
+
+- **SQLite 3.54 in the Rust tools.** `tools/auditor-tools`, where `audit-mem` keeps its store in SQLite, bundles SQLite 3.54.1 through rusqlite 0.41.0 and libsqlite3-sys 0.39.1, in place of SQLite 3.46 through rusqlite 0.32.1. That clears RUSTSEC-2026-0459: SQLite before 3.54.0 can return uninitialized page-cache memory when it opens a database with a `-wal` file beside it whose page size differs. `audit-mem` never opened such a pair, since it refuses a store in WAL mode or with a `-wal` or `-shm` file beside it before SQLite opens it. Building `audit-scan` and `audit-mem` now needs Rust 1.89 or newer, rusqlite 0.41's floor; `audit-logs` alone keeps 1.82. Rebuild the tools after the update, as after every update.
 
 ### 7.7.3 (#71)
 
