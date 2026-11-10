@@ -407,17 +407,19 @@ for want in \
   check "lock-delta set row: ${want//$TAB/ }" has "$SET2" "$want"
 done
 # set and a registry named outside the lockfile: an npm entry with no resolved URL, and one bundled inside its
-# parent, are not public; a bun.lock entry with "" takes the registry the committed bunfig.toml or .npmrc beside it
-# names, at each commit, else registry.npmjs.org
+# parent, are not public, whatever a committed .npmrc says; a bun.lock entry with "" takes the registry the committed
+# bunfig.toml or .npmrc beside it names, at each commit, else registry.npmjs.org
 LS4="$T/lockset4"
-git init -q "$LS4" && mkdir -p "$LS4/npm" "$LS4/bun-plain" "$LS4/bun-bunfig" "$LS4/bun-npmrc" "$LS4/bun-move" && (cd "$LS4" \
+git init -q "$LS4" && mkdir -p "$LS4/npm" "$LS4/npm-npmrc" "$LS4/bun-plain" "$LS4/bun-bunfig" "$LS4/bun-npmrc" "$LS4/bun-move" && (cd "$LS4" \
   && printf '{"lockfileVersion": 3, "packages": {"": {"dependencies": {"@corp/secret-tool": "1"}}}}\n' > npm/package-lock.json \
+  && printf 'registry=https://registry.npmjs.org/\n' > npm-npmrc/.npmrc && printf '{"lockfileVersion": 3, "packages": {}}\n' > npm-npmrc/package-lock.json \
   && for d in bun-plain bun-bunfig bun-npmrc; do printf '{"lockfileVersion": 1, "packages": {}}\n' > "$d/bun.lock"; done \
   && printf '[install]\nregistry = "https://npm.corp.example/"\n' > bun-move/bunfig.toml \
   && printf '{\n  "lockfileVersion": 1,\n  "packages": {\n    "a": ["left-pad@1.3.0", "", {}, "sha512-a"],\n  }\n}\n' > bun-move/bun.lock \
   && c base >/dev/null && git tag t-base \
   && printf '{"lockfileVersion": 3, "packages": {"": {"dependencies": {"@corp/secret-tool": "1"}}, "node_modules/@corp/secret-tool": {"version": "1.0.0", "integrity": "sha512-s"}, "node_modules/@corp/secret-tool/node_modules/inner": {"version": "2.0.0", "inBundle": true}}}\n' > npm/package-lock.json \
   && for d in bun-plain bun-bunfig bun-npmrc; do printf '{\n  "lockfileVersion": 1,\n  "packages": {\n    "a": ["left-pad@1.3.0", "", {}, "sha512-a"],\n    "b": ["@corp/kit@2.0.0", "", {}, "sha512-b"],\n  }\n}\n' > "$d/bun.lock"; done \
+  && printf '{"lockfileVersion": 3, "packages": {"node_modules/left-pad": {"version": "1.3.0", "integrity": "sha512-a"}}}\n' > npm-npmrc/package-lock.json \
   && printf '[install]\nregistry = { url = "https://npm.corp.example/", token = "x" }\n' > bun-bunfig/bunfig.toml \
   && printf '; the scope only\n@corp:registry=https://npm.corp.example/\n' > bun-npmrc/.npmrc \
   && git rm -q bun-move/bunfig.toml \
@@ -426,6 +428,8 @@ run "$LS4" "$LD" --run audit_1 set t-base..t-head
 SET4="$LS4/audit_1/deps/lock-set-1.tsv"
 check "lock-delta set: an npm entry with no resolved URL names no registry: not public; one bundled inside its parent is apart" \
   sh -c "[ '$RC' = 0 ] && has() { grep -qxF -- \"\$2\" \"\$1\"; } && has '$SET4' 'npm	npm/package-lock.json	@corp/secret-tool	-	1.0.0	-	unnamed	direct' && has '$SET4' 'npm	npm/package-lock.json	inner	-	2.0.0	-	bundled	-'"
+check "lock-delta set: an npm entry with no resolved URL is not public with a committed .npmrc that names the public registry either" \
+  has "$SET4" 'npm	npm-npmrc/package-lock.json	left-pad	-	1.3.0	-	unnamed	-'
 for want in \
   'npm	bun-plain/bun.lock	left-pad	-	1.3.0	-	public	-' \
   'npm	bun-plain/bun.lock	@corp/kit	-	2.0.0	-	public	-' \
@@ -438,7 +442,7 @@ done
 check "lock-delta set: a pull request that drops bunfig.toml's registry, its bun.lock unchanged, moves its packages to registry.npmjs.org, a source change" \
   sh -c "has() { grep -qxF -- \"\$2\" \"\$1\"; } && has '$SET4' 'npm	bun-move/bun.lock	left-pad	1.3.0	1.3.0	registry:npm.corp.example	public	integrity,source-change' && grep -q 'bun-move/bun.lock (bun, its registry config changed, 1 rows)' '$T/out'"
 check "lock-delta set: the summary counts the unnamed source apart from the bundled one" \
-  sh -c "grep -qxF 'sources: 4 from the public registry; 4 not public (registry 3, unnamed 1): SC-061, never fetched; 1 bundled inside another package, never fetched' '$T/out'"
+  sh -c "grep -qxF 'sources: 4 from the public registry; 5 not public (registry 3, unnamed 2): SC-061, never fetched; 1 bundled inside another package, never fetched' '$T/out'"
 LS3="$T/lockset3"
 git init -q "$LS3" && mkdir -p "$LS3/deep" "$LS3/man" "$LS3/config" && (cd "$LS3" \
   && printf '{"lockfileVersion": 3, "packages": {}}\n' > deep/package-lock.json && cp deep/package-lock.json man/package-lock.json \
