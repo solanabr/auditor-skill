@@ -28,7 +28,7 @@ grep -rn --include="*.ts" --include="*.tsx" -iE "(localStorage|sessionStorage).*
 
 **Step 3: If tokens in localStorage, check XSS protection (defense in depth)**
 ```
-# This makes hack #57, #58 more critical
+# This makes KV-057 and KV-058 (XSS) more critical
 grep -rn --include="*.tsx" "dangerouslySetInnerHTML" apps/web/ | wc -l
 ```
 - ✅ PASS: Zero dangerouslySetInnerHTML and strict CSP (XSS unlikely → localStorage risk acceptable)

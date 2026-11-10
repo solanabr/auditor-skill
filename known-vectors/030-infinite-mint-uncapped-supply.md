@@ -53,7 +53,3 @@ grep -rn --include="*.rs" "emit!" programs/*/src/instructions/ | grep -iE "mint\
 - ✅: PDA mint authority, proportional formula, supply cap or self-limiting, events
 - ⚠️: Correct formula but missing events or supply cap
 - ❌: Arbitrary mint amounts possible or weak authority check
-
----
-
-## Backend / API Hacks (31-55)
