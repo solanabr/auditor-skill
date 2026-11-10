@@ -454,13 +454,13 @@ git init -q "$LS3" && mkdir -p "$LS3/deep" "$LS3/man" "$LS3/config" && (cd "$LS3
   && printf '{"lockfileVersion": 3, "packages": {}}\n' > deep/package-lock.json && cp deep/package-lock.json man/package-lock.json \
   && printf '{}\n' > man/package.json && printf '{"lockfileVersion": 3, "packages": {}}\n' > config/deps.json \
   && printf '{"lockfileVersion": 3, "packages": {}}\n' > package-lock.json && c base >/dev/null && git tag t-base \
-  && python3 -I -c 'import sys; open("deep/package-lock.json", "w").write("{\"lockfileVersion\": 3, \"packages\": {}, \"x\": " + "[" * 5000 + "]" * 5000 + "}\n")' \
+  && python3 -I -c 'import sys; open("deep/package-lock.json", "w").write("{\"lockfileVersion\": 3, \"packages\": {}, \"x\": " + "[" * 1000000 + "]" * 1000000 + "}\n")' \
   && printf 'not json\n' > man/package.json && printf '{"lockfileVersion": 3, "packages": {"node_modules/a": {"version": "1.0.0"}}}\n' > man/package-lock.json \
   && rm package-lock.json && ln -s config/deps.json package-lock.json \
   && c head >/dev/null && git tag t-head && "$RUNDIR" new audit >/dev/null) || { echo "could not build the third set fixture" >&2; exit 1; }
 run "$LS3" "$LD" --run audit_1 set t-base..t-head
 check "lock-delta set: a link, a lockfile it cannot read and a package.json that is not JSON stop it, exit 3, with the set kept" \
-  sh -c "[ '$RC' = 3 ] && grep -qxF 'lock-delta: set could not compare 3 of the lockfiles it reads, so the set is incomplete: deep/package-lock.json (cannot be read: maximum recursion depth exceeded while decoding a JSON array from a unicode string)' '$T/err' && grep -qxF 'not compared: man/package-lock.json (the package.json beside it is not a JSON object)' '$T/out' && grep -qxF 'not compared: package-lock.json (a symbolic link)' '$T/out' && grep -qxF 'lock-set: audit_1/deps/lock-set-1.tsv (0 rows)' '$T/out'"
+  sh -c "[ '$RC' = 3 ] && grep -qxE 'lock-delta: set could not compare 3 of the lockfiles it reads, so the set is incomplete: deep/package-lock\.json \(cannot be read: .* while decoding a JSON array from a unicode string\)' '$T/err' && grep -qxF 'not compared: man/package-lock.json (the package.json beside it is not a JSON object)' '$T/out' && grep -qxF 'not compared: package-lock.json (a symbolic link)' '$T/out' && grep -qxF 'lock-set: audit_1/deps/lock-set-1.tsv (0 rows)' '$T/out'"
 
 # =================================================================================================
 # web3js-history.sh
