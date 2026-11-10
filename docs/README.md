@@ -20,6 +20,8 @@ What each release added: [changelog.md](changelog.md).
 
 ## Pick a depth
 
+auditor-skill has three depths and a CI mode. Pick by what you want checked: what changed, one module, or the release.
+
 | Depth | When | Run | Reads | Writes | [Cost](../COSTS.md#cost-and-time-by-depth) |
 |-------|------|-----|-------|--------|------|
 | **Quick** | a branch or pull request, a first look at a repository, one function | `/auditor:diff-audit` · `/auditor:quick-scan` (whole repository) · `/auditor:deep-review <file> <fn>` | the changed code + one hop, read against the sections and vectors `references/depth-scope.md` selects · SAST, dependency advisories, and the sections and vectors `references/depth-scope.md` selects · one function | `PR-REPORT.md` · `QUICK-SCAN.md` · `DEEP-REVIEW-<unit>.md` | $2–8 · 4–23 min |
