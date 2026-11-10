@@ -14,20 +14,20 @@ An open-source AI security audit skill for Solana programs and the code around t
 
 auditor-skill is a Claude Code plugin, and a folder of skill files that any LLM agent can follow. It reads your code file by file, checks 1,465 items across 20 security domains, tests against 141 real-world attack vectors, and produces a structured report with a severity from 1 to 10 for every finding. A confirmed High or Critical finding can get a runnable exploit, and a fix proven to stop it.
 
-It covers the on-chain programs (Anchor, native and Pinocchio) and the rest of the stack: TypeScript and Rust services, web frontends, Python, Go, Java, Ruby and PHP code, CI workflows, deployment and infrastructure, and AI agent components. It is not a SaaS product. You install it for your agent, outside any repository you audit, or send its files to an LLM API.
+It covers the on-chain programs (Anchor, native and Pinocchio) and the rest of the stack: TypeScript and Rust services, web frontends, Python, Go, Java, Ruby and PHP code, CI workflows, infrastructure and AI agent components. It is not a SaaS product: you install it for your agent, outside any repository you audit, or send its files to an LLM API.
 
 **What's inside:** 20 checklists · 1,465 verification items · 141 known attack vectors · executable PoCs + fix patches.
 
 ## Read this first: what auditor-skill cannot do on its own
 
 > [!WARNING]
-> **It is a first pass, not a professional audit.** An AI auditor cannot do everything a human can: social engineering assessment, business-logic review that needs domain expertise, legal compliance opinions. Run it first, and before a mainnet launch pair it with a human audit of the business logic, the economic model and legal compliance. Like a firm's, its client report gives no "safe to deploy" guarantee.
+> **It is a first pass, not a professional audit.** An AI auditor cannot do everything a human can: social engineering assessment, business-logic review that needs domain expertise, legal compliance opinions. Before a mainnet launch, pair it with a human audit. Like a firm's, its client report gives no "safe to deploy" guarantee.
 >
-> **By default it builds and tests the project on your machine.** In native mode, the default, the project's builds and tests run without a prompt for each run, and building and testing a project runs its own code: build scripts, proc-macros and tests. For code you don't trust, use strict mode, which is opt-in: start Claude Code with the [strict launch line](#permissions-and-isolation). It also keeps your own plugins out: a language-server plugin such as `rust-analyzer-lsp` would otherwise run the project's build scripts outside the auditor's runners.
+> **By default it builds and tests the project on your machine**, which runs the project's own build scripts, proc-macros and tests. For code you don't trust, use strict mode with the [strict launch line](#permissions-and-isolation), which also keeps your own plugins out, such as a language server that would run those build scripts too.
 >
-> **The rules that let a flow resume also let Claude start one.** The `Skill(auditor:… *)` rules you add [once, after installing](#once-after-installing) let Claude start any of these flows by itself, in any repository you open, for example when a file it reads tells it to.
+> **The resume rules let Claude start a flow by itself**, in any repository you open ([Once, after installing](#once-after-installing)).
 >
-> **The incident commands only propose.** `/auditor:hunt` and `/auditor:respond` never sign, send, pause or freeze anything. If funds may be moving right now, page your on-call, run the pause or freeze runbook and open a SEAL 911 ticket first.
+> **The incident commands only propose.** They never sign, send, pause or freeze anything. If funds may be moving, page your on-call, run the pause or freeze runbook and open a SEAL 911 ticket first.
 >
 > What remains a risk in each mode: [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#what-remains-a-risk).
 
@@ -40,23 +40,13 @@ Install the plugin in Claude Code:
 /plugin install auditor
 ```
 
-Then, in the repository you want to review, check what your branch changed:
+Then, in the repository you want to review, check what your branch changed against `main` (commit your work and rebase on `main` first):
 
 ```
 /auditor:diff-audit
 ```
 
-With no argument it reviews the commits between the tip of `main` and HEAD, so commit your work and rebase on `main` first. It writes `audit_<n>/PR-REPORT.md`, in a run directory that git ignores.
-
-Next:
-
-- Add the [resume rules](#once-after-installing) to your user settings once, so a flow that stops for your answer goes on without a prompt.
-- Choose the depth that answers your question: [Pick a depth](#pick-a-depth).
-- Build the optional Rust tools: [Tool execution](#tool-execution-trail-of-bits--optional-rust-tools).
-
-### What a verdict looks like
-
-Every item a run reads gets an explicit verdict. This is the format, with the example `OUTPUT-RULES.md` Rule 4 gives:
+It writes `audit_<n>/PR-REPORT.md`, in a run directory that git ignores. Every item a run reads gets a verdict, in the format `OUTPUT-RULES.md` Rule 4 sets (this is its example):
 
 ```text
 [PASS]      AV-001: Account ownership validated via Account<'info, T> typed accounts
@@ -64,64 +54,35 @@ Every item a run reads gets an explicit verdict. This is the format, with the ex
               File: programs/<program>/src/instructions/deposit.rs:42
               Impact: Attacker can substitute token account, draining vault
               Fix: Add `token::authority = fund` to account constraint
-[N/A]       AV-023: init_if_needed — not used in this program
 ```
 
-A finding of severity 6 or more must also pass the validation gate before it counts ([output-and-rigor.md](docs/output-and-rigor.md#the-rule-5b-validation-gate)). With `--ci`, diff-audit and quick-scan ask nothing and end with one line, which says nothing about what they found:
-
-```text
-auditor: verdict: fail (threshold 7, analyzers run: audit-scan, lock-delta; not run: deps-artifacts)
-```
+Next, add the [resume rules](#once-after-installing) once, and [pick a depth](#pick-a-depth).
 
 **On this page:** [Features](#what-it-does-v77) · [Corpus](#the-corpus) · [Installation](#installation) · [Usage](#usage) · [Output](#output-format) · [Configuration](#configuration) · [Integrations](#integrations) · [Security model](#security-model-and-limitations) · [Upgrading](#upgrading) · [What's new](#whats-new) · [Docs](#documentation) · [Layout](#folder-structure) · [Contributing](#contributing) · [Credits](#inspirations-and-acknowledgments) · [License](#license)
 
 ## What It Does (v7.7)
 
-**Three depths and a CI mode**
-- **Quick** reviews what a branch changed, gives a whole repository a first look, or goes deep on one function, and writes a report for each. **Standard** gives every in-scope item of one module a verdict, with a risk score and a deploy verdict. **Full** runs a whole audit-firm engagement, ends in a client report, and reviews the fixes after it. **CI** runs the bundled analyzers on every pull request and a Quick review on those from your own branches, and on a public repository publishes pass or fail only. [Pick a depth](#pick-a-depth) · [Details](docs/audit-flows.md)
-
-**A full audit-firm lifecycle, two ways**
-- `/auditor:audit-cycle` runs the whole engagement autonomously (intake → context → threat model → tool-assisted pass → domain-partitioned review → triage → independent peer review → synthesis) and hands back a client report. `/auditor:audit-assist` runs the same pipeline **interactively**, pausing at checkpoints for the calls only you can make. [Details](docs/audit-flows.md#the-lifecycle-shared-spine)
-- `/auditor:threat-model --bootstrap` starts the threat model from what already went wrong: removed or quietly added account guards, reverts and fix commits, a fork's distance from its parent, prior audit reports, post-mortems and incident records. [Details](docs/commands.md#auditorthreat-model)
-
-**Rigor gates against AI over-reporting**
-- Every finding of severity 6 or more must survive a validation gate (reachability, math and state bounds, and at 7 or more an attacker model), or it is downgraded. Severity is Impact × Likelihood with principled downgrades, and a Notes & Nitpicks tier keeps the findings table honest. [Details](docs/output-and-rigor.md)
-- Every in-scope item gets an explicit verdict, so a report shows what was checked, not only what failed. [Details](docs/output-and-rigor.md#every-item-gets-a-verdict)
-
-**Executable proofs, not just prose**
-- For High and Critical findings, `/auditor:poc` builds a runnable exploit (Mollusk, LiteSVM, a Surfpool fork or a fuzz target) that *asserts* the vulnerability, and `/auditor:patch` drafts a minimal fix and **proves it reverts the exploit**. Evidence is tiered (`[PoC-REPRODUCED]` … `[PoC-PROSE]`), and the prose is never dropped when a harness can't be built. `--post-patch-validation` adds Trail of Bits' post-patch validation, opt-in and in isolated mode only, and its result can only lower a fix tier. [Details](docs/poc-and-patches.md)
-
-**Deep Solana coverage**
-- 13 protocol methodologies (AMM/CLMM, lending, perps, oracles, stablecoins, liquid staking, governance, bridges, multisig/custody, Token-2022, NFT marketplaces, launchpads, token registries & risk signals), framework idioms (Anchor/Native/Pinocchio), and a reusable invariant catalog, each loaded only when the code triggers it. [Details](#the-corpus)
-- Playbooks for whole classes of risk: ZK proofs and compression, transaction v1 (SIMD-0385), GitHub Actions trigger trust, and the host kernel and network surface of validators, RPC nodes, keepers and runners.
-
-**Dependency updates**
-- Checklist 11 §11.11 reviews what a dependency bump's published code actually changed, not only its version. On a changed lockfile, diff-audit runs it within a budget: it checks the new versions' publish ages and compares the published code of every changed key-handling package and at most 40 others. [Details](checklists/11-supply-chain.md)
-
-**Detection and response, after an incident**
-- `/auditor:hunt` looks for an attack with no alert to start from, and `/auditor:respond` works one lead to a verdict, the damage and a proposed response plan. Both start from transaction history, program logs and Geyser or indexer exports, and both only propose. [Details](#after-an-incident)
-
-**Rust tools for cost and memory**
-- An optional Rust pre-scanner (`audit-scan`) maps the risky surface (instructions, account constraints, PDAs, arithmetic, panics, CPIs) deterministically, with no model calls, and that map replaces part of the reading ([COSTS.md](COSTS.md#keeping-the-cost-down)). A cross-audit memory store (`audit-mem`) gives exact dedup, regression detection, and false-positive suppression across runs. A third Rust tool, `audit-logs`, runs the incident analysis recipes as one offline binary. [Details](docs/power-tools.md)
-
-**17 commands, 9 specialized agents**
-- Scoping, threat modeling, deep review, economic simulation, differential and pull-request audits, spec compliance, triage and fix review are each a command, beside the post-incident track. The automated audit flow chains eight agents; a ninth, incident-responder, drives the post-incident track. [Every command](#every-command) · [The agents](docs/agents.md)
-
-**Real tooling, vendored**
-- Trail of Bits execution plugins (SAST, fuzzing, coverage, mutation) ship as a git submodule; the native corpus works fully without them. [Details](#tool-execution-trail-of-bits--optional-rust-tools)
-
-**Operating safety, in two modes**
-- By default what strict mode would refuse is a note in the report, apart from the few shapes still refused in both modes, which Rules 11e and 11f list. Strict mode, for code you don't trust, refuses it and builds only in isolated mode. In both modes git only reads, the bundled tools write only into the auditor's own directories, and audit output never reaches git or a public CI log ([OUTPUT-RULES.md Rule 11](OUTPUT-RULES.md#rule-11-operating-safety)). [Details](#security-model-and-limitations)
+- **Three depths and a CI mode:** Quick for a change, Standard for a module, Full for a release, and CI for every pull request ([Pick a depth](#pick-a-depth)).
+- **A full audit-firm lifecycle, two ways:** `/auditor:audit-cycle` runs intake → context → threat model → tool-assisted pass → domain-partitioned review → triage → independent peer review → synthesis unattended, and `/auditor:audit-assist` pauses at checkpoints for your calls ([audit-flows.md](docs/audit-flows.md#full)).
+- **History-seeded threat models:** `/auditor:threat-model --bootstrap` starts from removed account guards, reverts, a fork's parent, prior audits and incidents ([commands.md](docs/commands.md#auditorthreat-model)).
+- **Rigor gates against AI over-reporting:** a finding of severity 6 or more must survive a validation gate or be downgraded, and every in-scope item gets an explicit verdict ([output-and-rigor.md](docs/output-and-rigor.md)).
+- **Executable proofs, not just prose:** `/auditor:poc` builds a runnable exploit that asserts the flaw, and `/auditor:patch` drafts a minimal fix and proves it reverts the exploit, with opt-in post-patch validation ([poc-and-patches.md](docs/poc-and-patches.md)).
+- **Deep Solana coverage:** 13 protocol methodologies (AMM/CLMM, lending, perps, oracles, stablecoins, liquid staking, governance, bridges, multisig/custody, Token-2022, NFT marketplaces, launchpads, token registries & risk signals), framework idioms (Anchor/Native/Pinocchio) and an invariant catalog, loaded only when the code triggers them ([The corpus](#the-corpus)).
+- **Whole classes of risk:** playbooks for ZK proofs and compression, transaction v1, GitHub Actions trigger trust, and the host kernel and network surface of validators, RPC nodes and keepers.
+- **Dependency updates:** checklist 11 §11.11 reviews what a bump's published code changed, and diff-audit runs it on a changed lockfile within a budget ([checklist 11](checklists/11-supply-chain.md)).
+- **Detection and response, after an incident:** `/auditor:hunt` and `/auditor:respond` work from transaction history and only propose ([After an incident](#after-an-incident)).
+- **Rust tools:** `audit-scan` maps the risky surface with no model calls, `audit-mem` remembers findings across audits, and `audit-logs` runs the incident recipes offline ([power-tools.md](docs/power-tools.md)).
+- **17 commands, 9 specialized agents:** [every command](#every-command), and [the agents](docs/agents.md).
+- **Real tooling, vendored:** Trail of Bits execution plugins (SAST, fuzzing, coverage, mutation) ship as a git submodule; the native corpus works fully without them ([Tool execution](#tool-execution-trail-of-bits--optional-rust-tools)).
+- **Operating safety, in two modes:** by default what strict mode would refuse is a note in the report; strict mode, for code you don't trust, refuses it and builds only in isolated mode ([Security model](#security-model-and-limitations)).
 
 What each release added: [What's new](#whats-new).
 
 ## The corpus
 
-The corpus is Markdown that the agent reads on demand:
-
-- **Checklists:** 20 files, 1,465 verification items in all. Each item is a check an auditor can mark PASS, FAIL or N/A from the code.
-- **Known vectors:** 141 attack procedures, each with numbered verification steps and an overall verdict, indexed by phase, language and trigger in [`known-vectors/INDEX.md`](known-vectors/INDEX.md).
-- **References:** `references/methodologies/` holds 13 protocol playbooks (amm-clmm, lending, perps, oracles, stablecoin, liquid-staking, governance, bridges, wallets-multisig-custody, token-2022, nft-marketplaces, launchpads, token-registry-risk). Beside them sit the framework idioms (Anchor, Native, Pinocchio, build and tooling), four vulnerability-class playbooks (zk-and-compression, transaction-v1, github-actions, kernel-attack-surface), the invariant catalog, the false-positive rules, the audit lifecycle, the detection & response track, and `references/depth-scope.md`, the selection that quick-scan and diff-audit read.
+- **Checklists:** 20 files, 1,465 verification items, each a check an auditor can mark PASS, FAIL or N/A from the code.
+- **Known vectors:** 141 attack procedures with numbered verification steps, indexed in [`known-vectors/INDEX.md`](known-vectors/INDEX.md).
+- **References:** `references/methodologies/` holds 13 protocol playbooks (amm-clmm, lending, perps, oracles, stablecoin, liquid-staking, governance, bridges, wallets-multisig-custody, token-2022, nft-marketplaces, launchpads, token-registry-risk). Beside them sit the framework idioms, four vulnerability-class playbooks, the invariant catalog, the false-positive rules, the audit lifecycle, the detection & response track, and `references/depth-scope.md`, the selection quick-scan and diff-audit read.
 
 ### Supported languages & frameworks
 
@@ -137,44 +98,37 @@ The corpus is Markdown that the agent reads on demand:
 | **Always applied** (any repo, at `--scope full`) | 11-13, 16-18 | 421 |
 | **Total** | **20** | **1,465** |
 
-Checklists 01-07 are Solana-specific. Of the others, 08-10 cover TypeScript and web code, 14 Python, 15 Go, Java, Ruby, PHP and any other language, 19 AI agents and 20 off-chain Rust, and 11-13 and 16-18 apply to any repository, so the corpus works for projects outside Solana too.
+Checklists 01-07 are Solana-specific, so the others make the corpus work for projects outside Solana too.
 
 <details>
 <summary>The 20 checklists, with their item counts</summary>
 
-- [`01-program-account-validation.md`](checklists/01-program-account-validation.md) (90 items): account validation, on-chain
-- [`02-program-access-control.md`](checklists/02-program-access-control.md) (55 items): access control, on-chain
-- [`03-program-arithmetic-safety.md`](checklists/03-program-arithmetic-safety.md) (63 items): arithmetic safety, on-chain
-- [`04-program-cpi-pda.md`](checklists/04-program-cpi-pda.md) (70 items): CPI and PDA safety, on-chain
-- [`05-program-state-machine.md`](checklists/05-program-state-machine.md) (74 items): state machine and lifecycle, on-chain
-- [`06-program-economic-logic.md`](checklists/06-program-economic-logic.md) (92 items): economic and logic attacks, on-chain
-- [`07-program-opsec-governance.md`](checklists/07-program-opsec-governance.md) (87 items): operational security and governance
-- [`08-typescript-safety.md`](checklists/08-typescript-safety.md) (64 items): TypeScript safety
-- [`09-backend-security.md`](checklists/09-backend-security.md) (133 items): backend security
-- [`10-frontend-security.md`](checklists/10-frontend-security.md) (84 items): frontend security
-- [`11-supply-chain.md`](checklists/11-supply-chain.md) (65 items): supply chain and dependencies
-- [`12-secrets-opsec.md`](checklists/12-secrets-opsec.md) (53 items): secrets and key management
-- [`13-deployment-infrastructure.md`](checklists/13-deployment-infrastructure.md) (102 items): deployment and infrastructure
-- [`14-python-safety.md`](checklists/14-python-safety.md) (82 items): Python safety
-- [`15-general-language-safety.md`](checklists/15-general-language-safety.md) (88 items): general language safety
-- [`16-formal-verification-testing.md`](checklists/16-formal-verification-testing.md) (73 items): formal verification and testing
-- [`17-logging-monitoring-incident-response.md`](checklists/17-logging-monitoring-incident-response.md) (68 items): logging, monitoring and incident response
-- [`18-privacy-compliance-change-management.md`](checklists/18-privacy-compliance-change-management.md) (60 items): privacy, compliance and change management
-- [`19-ai-agent-security.md`](checklists/19-ai-agent-security.md) (39 items): AI agents on Solana
-- [`20-rust-offchain-services.md`](checklists/20-rust-offchain-services.md) (23 items): off-chain Rust (Geyser, indexers, keepers)
+- `01-program-account-validation.md` (90 items)
+- `02-program-access-control.md` (55 items)
+- `03-program-arithmetic-safety.md` (63 items)
+- `04-program-cpi-pda.md` (70 items)
+- `05-program-state-machine.md` (74 items)
+- `06-program-economic-logic.md` (92 items)
+- `07-program-opsec-governance.md` (87 items)
+- `08-typescript-safety.md` (64 items)
+- `09-backend-security.md` (133 items)
+- `10-frontend-security.md` (84 items)
+- `11-supply-chain.md` (65 items)
+- `12-secrets-opsec.md` (53 items)
+- `13-deployment-infrastructure.md` (102 items)
+- `14-python-safety.md` (82 items)
+- `15-general-language-safety.md` (88 items)
+- `16-formal-verification-testing.md` (73 items)
+- `17-logging-monitoring-incident-response.md` (68 items)
+- `18-privacy-compliance-change-management.md` (60 items)
+- `19-ai-agent-security.md` (39 items)
+- `20-rust-offchain-services.md` (23 items)
 
 </details>
 
 ### Scope-gated loading
 
-auditor-skill does not bulk-read its whole corpus. It discovers the repo, declares an audit scope ([OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 0), and loads only the in-scope checklists and vectors on demand:
-
-- root docs + `OUTPUT-RULES.md` (always),
-- only the `checklists/*.md` the detected languages require (e.g. `14-python-safety.md` only if `.py` is present),
-- a `known-vectors/*.md` file only when its phase + language trigger reaches it,
-- `discovery/*.md` and `templates/*.md` lazily, at the phase that uses them.
-
-The audit is complete when every **in-scope** item has an explicit verdict; out-of-scope items render `[N/A — out of scope]` from the gate. quick-scan and diff-audit, in CI too, read a smaller declared selection: the one `references/depth-scope.md` makes, written first to `audit_<n>/scope.md`.
+auditor-skill does not bulk-read its corpus. It declares a scope ([OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 0) and loads root docs and `OUTPUT-RULES.md` always, only the `checklists/*.md` the detected languages require, a `known-vectors/*.md` file when its phase and language trigger reach it, and `discovery/*.md` and `templates/*.md` lazily, at the phase that uses them. An audit is complete when every in-scope item has a verdict; out-of-scope items render `[N/A — out of scope]` ([output-and-rigor.md](docs/output-and-rigor.md#scope-gated-loading)).
 
 ## Installation
 
