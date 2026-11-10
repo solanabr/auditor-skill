@@ -2393,6 +2393,8 @@ def record(name, data, integrity=None):
            "dist": {"tarball": url, "integrity": integrity or "sha512-" + base64.b64encode(hashlib.sha512(data).digest()).decode()}}
     put("https://registry.npmjs.org/%s/1.0.0" % name, json.dumps(rec))
 record("lb-big", b"\0" * 50000001)
+record("lb-bigold", b"\0" * 50000001)
+open(os.path.join(fix, "https___registry.npmjs.org_lb-bigold_-_lb-bigold-1.0.0.tgz.nolength"), "w").close()
 info = tarfile.TarInfo("package/x")
 info.size = 501000000
 c = zlib.compressobj(9, zlib.DEFLATED, 31)
@@ -2462,15 +2464,17 @@ check "lock-budget: a lookup that fails twice, and a version with no publish tim
   sh -c "[ '$RC' = 0 ] && grep -q '^>> publish age: 2 names asked in [0-9]* s; not checked: 2 of 2 rows (HTTP 500 from https://registry.npmjs.org/lb-flaky, no publish time);' '$T/out' && [ \$(grep -c '^url: https://registry.npmjs.org/lb-flaky\$' '$T/calls') = 2 ]"
 LBN=111
 lb_set "$LBN" 'npm	package-lock.json	lb-big	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-huge	-	1.0.0	-	public	direct' \
-  'npm	package-lock.json	lb-baddigest	-	1.0.0	-	public	direct'
+  'npm	package-lock.json	lb-baddigest	-	1.0.0	-	public	direct' 'npm	package-lock.json	lb-bigold	-	1.0.0	-	public	direct'
 run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 n=$(sed -n 's/.*; output audit_1\/deps\/lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/err")
 LBR=$WT/audit_1/deps/lock-budget-$n.txt
 check "lock-budget: a download over 50 MB, more than the call's 500 MB unpacked and a digest that does not match each fail, exit 3" \
-  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 3 of 3 selected artifacts could not be fetched; output ' '$T/err' && grep -qxF '  not fetched: npm lb-big 1.0.0: the artifact at https://registry.npmjs.org/lb-big/-/lb-big-1.0.0.tgz is larger than 50 MB' '$LBR' && grep -qxF '  not fetched: npm lb-huge 1.0.0: the artifacts of this call would unpack to more than 500 MB' '$LBR' && grep -q '^  not fetched: npm lb-baddigest 1.0.0: the digest does not match: ' '$LBR'"
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 4 of 4 selected artifacts could not be fetched; output ' '$T/err' && grep -qxF '  not fetched: npm lb-big 1.0.0: the artifact at https://registry.npmjs.org/lb-big/-/lb-big-1.0.0.tgz is larger than 50 MB' '$LBR' && grep -qxF '  not fetched: npm lb-huge 1.0.0: the artifacts of this call would unpack to more than 500 MB' '$LBR' && grep -q '^  not fetched: npm lb-baddigest 1.0.0: the digest does not match: ' '$LBR'"
 check "... a size failure is not retried, a digest that does not match is" \
   sh -c "[ \$(grep -c '^url: https://registry.npmjs.org/lb-big/-/lb-big-1.0.0.tgz\$' '$T/calls') = 1 ] && [ \$(grep -c '^url: https://registry.npmjs.org/lb-huge/-/lb-huge-1.0.0.tgz\$' '$T/calls') = 1 ] && [ \$(grep -c '^url: https://registry.npmjs.org/lb-baddigest/-/lb-baddigest-1.0.0.tgz\$' '$T/calls') = 2 ]"
-check "... none of the three is kept or unpacked" sh -c "[ -d '$WT/audit_1/deps/lock-budget-$n/3' ] && [ -z \"\$(find '$WT/audit_1/deps/lock-budget-$n' -mindepth 2 -print)\" ]"
+check "... a download over 50 MB fails either way: curl refuses it (exit 63), or, whole from a server that gives no length to a curl before 8.4.0, it is measured" \
+  sh -c "grep -qxF 'GET https://registry.npmjs.org/lb-big/-/lb-big-1.0.0.tgz -> curl exit 63' '$WT/audit_1/deps/lock-budget-$n/requests.txt' && grep -qxF 'GET https://registry.npmjs.org/lb-bigold/-/lb-bigold-1.0.0.tgz -> 200' '$WT/audit_1/deps/lock-budget-$n/requests.txt' && grep -qxF '  not fetched: npm lb-bigold 1.0.0: the artifact at https://registry.npmjs.org/lb-bigold/-/lb-bigold-1.0.0.tgz is larger than 50 MB' '$LBR'"
+check "... none of the four is kept or unpacked" sh -c "[ -d '$WT/audit_1/deps/lock-budget-$n/4' ] && [ -z \"\$(find '$WT/audit_1/deps/lock-budget-$n' -mindepth 2 -print)\" ]"
 LBN=112
 lb_set "$LBN" 'npm	package-lock.json	lb-unsafe	-	1.0.0	-	public	direct'
 run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv

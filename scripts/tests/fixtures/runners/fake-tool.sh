@@ -48,7 +48,15 @@ case "$name" in
     say "url: $url"
     [ -n "${FAKE_CURL_RC:-}" ] && { echo "curl: (7) Failed to connect" >&2; exit "$FAKE_CURL_RC"; }
     key=$(printf '%s' "$url" | tr '/:%@' '____')
+    max=$(arg_after --max-filesize "$@") || max=""
     if [ -f "$T/fix/$key" ]; then
+      # as curl's manual has it, a file larger than --max-filesize is refused with exit 63, its length given or
+      # (since curl 8.4.0) not; a .nolength file beside the fixture stands for a server that gives no length and
+      # a curl before 8.4.0, which downloads it whole
+      if [ -n "$max" ] && [ ! -f "$T/fix/$key.nolength" ] && [ "$(wc -c < "$T/fix/$key" | tr -d ' ')" -gt "$max" ]; then
+        echo "curl: (63) Maximum file size exceeded" >&2
+        exit 63
+      fi
       cp "$T/fix/$key" "$out"
       code=200
       [ -f "$T/fix/$key.status" ] && code=$(cat "$T/fix/$key.status")
