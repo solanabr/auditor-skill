@@ -132,53 +132,34 @@ auditor-skill does not bulk-read its corpus. It declares a scope ([OUTPUT-RULES.
 
 ## Installation
 
-Install auditor-skill **outside any repository you audit**: the plugin (Option 1), or a user-level skill such as `install.sh ~/.claude/skills/auditor-skill`. A copy inside the audited repository resolves its scripts, tools and corpus from a tree that repository controls, and that repository's own `.claude/`, `.mcp.json` and `CLAUDE.md` are target-controlled too ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). If an earlier install put a copy inside a repository, see [Upgrading from 7.6.0 or earlier](#upgrading-from-760-or-earlier).
+Install auditor-skill **outside any repository you audit**: a copy inside it runs from a tree that repository controls ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). All four routes in detail: [docs/getting-started.md](docs/getting-started.md), "Install".
 
-### Option 1: Claude Code plugin marketplace (recommended)
+**The plugin (recommended).** In Claude Code:
 
 ```
 /plugin marketplace add solanabr/auditor-skill
 /plugin install auditor
 ```
 
-This registers the marketplace and installs the `auditor` plugin: all 17 `/auditor:*` commands and 9 agents. Claude Code clones the plugin together with its submodules, so this also fetches the vendored Trail of Bits tooling at the pinned commit ([Tool execution](#tool-execution-trail-of-bits--optional-rust-tools)); there is no manual step.
+It installs the 17 `/auditor:*` commands and 9 agents, and fetches the Trail of Bits submodule at the pinned commit.
 
-### Option 2: Install script
+**The other routes:**
 
-`install.sh` installs the skill and inits the tooling:
+- **The install script**, read first, installs a user-level skill at `~/.claude/skills/auditor-skill` by default:
 
-```bash
-# read it first (it's a security tool, after all):
-git clone https://github.com/solanabr/auditor-skill.git
-./auditor-skill/install.sh ~/.claude/skills/auditor-skill    # user-level (also the default), outside any audited repository
+  ```bash
+  git clone https://github.com/solanabr/auditor-skill.git
+  ./auditor-skill/install.sh ~/.claude/skills/auditor-skill
+  # or: curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install.sh | bash -s -- ~/.claude/skills/auditor-skill
+  ```
 
-# one-liner (convenience), same target:
-curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install.sh | bash -s -- ~/.claude/skills/auditor-skill
-```
-
-- **Where it installs.** With no argument it installs to `~/.claude/skills/auditor-skill`, a user-level skill, wherever you run it from. To install elsewhere, pass a path outside the repositories you audit. It warns on stderr when the install directory is inside a git work tree.
-- **Re-running it** installs a fresh clone at the same path and moves the earlier install, without running git in it, to `$XDG_STATE_HOME/auditor-skill/backup-<timestamp>`, or `~/.local/state/auditor-skill/backup-<timestamp>` when `XDG_STATE_HOME` is unset or not an absolute path. The run prints the backup's path.
-- **The backup directory** must lie outside every skills directory, so that Claude Code does not load the old copy as a second skill. The run refuses a backup directory inside the install's parent directory, or one under a directory named `.claude`, `skills`, `commands` or `agents` in any letter case, on its path as given or with links resolved.
-- **Old backups stay.** Each upgrade keeps a full copy, including anything built inside it such as the Rust tools' build output, and nothing removes old backups: delete them when you no longer need them.
-- **Links.** A symbolic link at the install path or at the backup directory is refused, never followed.
-
-### Option 3: Clone manually
-
-```bash
-git clone https://github.com/solanabr/auditor-skill.git ~/.claude/skills/auditor-skill
-```
-
-Claude Code auto-discovers user-level skills under `~/.claude/skills/`: invoke it by asking your agent to "audit this repo using the auditor-skill". For the `/auditor:*` slash commands, use Option 1. Claude Code 2.1.157 and later also loads this clone as the `auditor` plugin, commands included, unless managed settings block plugins saved there, with `strictPluginOnlyCustomization` or a `strictKnownMarketplaces` list without `skills-dir`, or an `auditor` plugin installed from a marketplace takes precedence.
-
-This is also Option 2's default path, so a later `install.sh` run without a path upgrades this clone: it installs a fresh clone and moves this one to Option 2's backup directory, without running git in it. A manual clone needs the Trail of Bits submodule step [below](#tool-execution-trail-of-bits--optional-rust-tools). For agents other than Claude Code, see [Other agents](#other-agents).
-
-### Option 4: Feed files to the API directly
-
-If you're building a service, send `SKILL.md` + `OUTPUT-RULES.md` + `FULL-AUDIT.md` as system context and the target repo files as user content to any LLM API.
+  Run again, it moves the earlier install, without running git in it, to `$XDG_STATE_HOME/auditor-skill/backup-<timestamp>`, or `~/.local/state/auditor-skill/` when that variable is unset or not absolute, and prints the path. Each backup is a full copy, build output included, and stays until you delete it. The backup directory must lie outside every skills directory: the run refuses one inside the install's parent, or under a directory named `.claude`, `skills`, `commands` or `agents` in any letter case, as given or with links resolved, and refuses a symbolic link at the install path or the backup directory.
+- **A clone** at `~/.claude/skills/auditor-skill` is a user-level skill; Claude Code 2.1.157 and later also loads it as the plugin, unless managed settings block that. It needs the submodule step [below](#tool-execution-trail-of-bits--optional-rust-tools).
+- **Another agent, or an LLM API:** [Other agents](#other-agents).
 
 ### Once, after installing
 
-In Manual mode Claude Code asks each time a flow goes on after your reply, since a plugin cannot ship permission rules. Add these rules once to `permissions.allow` in your user settings, `~/.claude/settings.json`, beside the rules already there:
+1. Add these rules, which name no path, to `permissions.allow` in `~/.claude/settings.json`, so a flow resumes after your reply without a prompt in Manual mode:
 
 ```json
 {
@@ -196,45 +177,29 @@ In Manual mode Claude Code asks each time a flow goes on after your reply, since
 }
 ```
 
-With Option 2 or Option 3, add `"Skill(auditor-skill)"` and `"Skill(auditor-skill *)"` too: there the root skill is your personal skill `auditor-skill`.
-
-These rules name no path. They also let Claude start any of these flows by itself, in any repository you open, with no prompt in Manual mode and no classifier check in auto mode, for example when a file it reads tells it to. `/auditor:audit-cycle` started that way builds the project on your machine. To rule that out, set `AUDITOR_EXEC_MODE=isolated` (or `none`) in that file's `env`, or keep the rules in a file you pass with `claude --settings` when you audit ([docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#turns-and-resuming)).
+2. With the install script or a clone, add `"Skill(auditor-skill)"` and `"Skill(auditor-skill *)"` too.
+3. Know what they allow: Claude can start these flows by itself, in any repository, and `/auditor:audit-cycle` started that way builds the project. To rule that out, set `AUDITOR_EXEC_MODE=isolated` (or `none`) in that file's `env`, or pass the rules with `claude --settings` when you audit ([Turns and resuming](docs/permissions-and-isolation.md#turns-and-resuming)).
+4. Build the Rust tools, [below](#tool-execution-trail-of-bits--optional-rust-tools).
 
 ### Tool execution (Trail of Bits) + optional Rust tools
 
-auditor-skill vendors **Trail of Bits** ([trailofbits/skills](https://github.com/trailofbits/skills), CC-BY-SA 4.0) as a git submodule (`vendor/trailofbits`) for real tool execution — SAST, fuzzing, coverage, mutation. Options 1 and 2 both fetch it. For Option 3, or any other clone, run this from the auditor-skill directory (not your project root):
-
-```bash
-git submodule update --init --depth 1 -- vendor/trailofbits
-```
+auditor-skill vendors **Trail of Bits** ([trailofbits/skills](https://github.com/trailofbits/skills), CC-BY-SA 4.0) as a git submodule (`vendor/trailofbits`) for real tool execution — SAST, fuzzing, coverage, mutation. The plugin and the install script fetch it; for a clone, run `git submodule update --init --depth 1 -- vendor/trailofbits` in the auditor-skill folder.
 
 **Pinned at** [`711af09`](https://github.com/trailofbits/skills/tree/711af095215ad4ecde5b90cd1d0124b3f1c4ca9e) — trailofbits/skills `main` of 2026-11-02. Upstream publishes no tags or releases, so the pin is a commit, and it moves only after a reviewed bump ([CONTRIBUTING.md §5](CONTRIBUTING.md#5-tooling-changes)); CI fails if this line and the submodule disagree, and plugin installs receive a new pin with the next release. To read the pin of any checkout without initializing the submodule: `git ls-tree HEAD vendor/trailofbits`.
 
-The native corpus works fully **without** it: it falls back to grep-based checks and notes where deeper tooling would run. With the submodule initialized, the auditor delegates to the vendored tools per [`references/orchestration/boundary-map.md`](references/orchestration/boundary-map.md). What each plugin is used for, and its native fallback: [docs/power-tools.md](docs/power-tools.md#trail-of-bits-plugins).
-
-For the optional token-efficiency tools (`audit-scan` pre-scanner + `audit-mem` memory, with `audit-logs` for the incident track), build the Rust CLIs; `<auditor-skill root>` is where you installed auditor-skill:
+Without the submodule the corpus falls back to grep-based checks and notes where deeper tooling would run ([power-tools.md](docs/power-tools.md#trail-of-bits-plugins)). The optional Rust tools, `audit-scan`, `audit-mem` and `audit-logs`, build in the installation (`<auditor-skill root>`), and need a rebuild after every update, since the flows pass a contract marker that an older build refuses ([getting-started.md](docs/getting-started.md), "Build the Rust tools"):
 
 ```bash
 cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked
 ```
 
-- **Build them again after every update**, with `cargo build --release --locked` in the same directory. The flows call them with a contract marker (`--contract=1`) that an older build refuses, and until then they go on as if the tools were absent.
-- **They run from the installation.** The auditor runs them, the scripts and the Trail of Bits plugins by absolute path from the installation, never by a path relative to the project it audits ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)).
-- **A copy inside the repository under audit** (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6.0) builds inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory. Build there only in [Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside (the plugin, or Option 2 with the path `~/.claude/skills/auditor-skill`) and build that one, as [Upgrading from 7.6.0 or earlier](#upgrading-from-760-or-earlier) says.
-
 ### Permissions and isolation
 
-The `/auditor:*` commands run their bundled steps without asking: the working-tree check, run directories, read-only git, the Rust tools, and the runners that build and test the project in the execution mode in force, native unless intake, `AUDITOR_EXEC_MODE` or strict mode says otherwise. Each checks its own arguments and writes only into the auditor's own directories; other calls ask ([docs/getting-started.md](docs/getting-started.md), "Prompts and isolation", gives the whole list). By default what strict mode would refuse is a note in the report, apart from the few shapes still refused in both modes, which Rules 11e and 11f list ([OUTPUT-RULES.md Rule 11f](OUTPUT-RULES.md#11f--default-and-strict-mode)).
+The commands run their bundled steps without asking, each checking its own arguments and writing only into the auditor's own directories; other calls ask. By default what strict mode would refuse is a note in the report, apart from the few shapes Rules 11e and 11f list. For code you don't trust, start Claude Code with the strict launch line, which loads none of your own settings or plugins, refuses what default mode only notes, and builds only in isolated mode ([docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#default-and-strict-mode)):
 
-Two settings help. The first adds [one risk](docs/permissions-and-isolation.md#what-remains-a-risk): its rules also let Claude start a flow by itself.
-
-- **The resume rules.** Add the `Skill(auditor:… *)` rules from [Once, after installing](#once-after-installing) to your user settings, `~/.claude/settings.json`, so a flow resumes after your reply without a prompt.
-- **The strict launch line, for code you don't trust.** Start Claude Code with `claude --setting-sources "" --strict-mcp-config --plugin-dir "<auditor-skill root>" --settings "<auditor-skill root>/templates/strict-settings.json"`, where `<auditor-skill root>` is the folder auditor-skill is installed in ([docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#default-and-strict-mode) says where that is).
-  - It loads none of your own settings or plugins: a language-server plugin you enabled, such as `rust-analyzer-lsp`, would otherwise run the project's build scripts on your machine, outside the runners.
-  - Strict mode refuses what default mode only notes, and builds only in isolated mode: under the Claude Code sandbox the template turns on, or in a container or a VM.
-  - Under the launch line the repository's own `.claude/` config and `.mcp.json` servers do not load. Strict mode still refuses a tree that ships them, because preflight cannot see how Claude Code was started: for such a repository, audit a copy with every `.claude/` and `.mcp.json` deleted.
-
-In native mode, the default, the project's builds and tests run on your machine without a prompt for each run.
+```bash
+claude --setting-sources "" --strict-mcp-config --plugin-dir "<auditor-skill root>" --settings "<auditor-skill root>/templates/strict-settings.json"
+```
 
 ## Usage
 
