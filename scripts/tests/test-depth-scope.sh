@@ -119,11 +119,17 @@ say(pairs == want_pairs and len(pairs) == 6, "§3's duplicate pairs are the inde
 s5 = section(table, "5. CI")
 repo = sorted({int(x) for cell in re.findall(r"^\| ([0-9, ]+) \|", s5, re.M) for x in cell.split(", ")})
 say(len(repo) == 10, f"§5 names 10 repository-level rows ({repo})")
-# the on-chain-only bound §4 states: the on-chain and gated rows of §2, and §4's rows for manifests, workflows and keys
-onchain = {(f, re.match(r"§(\d+\.\d+)", sec).group(1)) for part, dom, f, sec, start, n, gate in rows
-           if part == "§4" or dom in ("on-chain", "on-chain, gated") or re.match(r"§(11\.1|11\.8|12\.1|12\.5|13\.9) ", sec)}
-oc = re.search(r"a change to on-chain code alone selects at most (\d+)", table)
-say(bool(oc) and int(oc.group(1)) == len(onchain), f"§4's on-chain-only bound is the {len(onchain)} sections such a change can select" + ("" if oc else " (no sentence)"))
+# the on-chain bounds §4 states: the on-chain and gated rows of §2; with them a key file's rows (§12.1, §12.5), since
+# a source file can hold a key marker; and with them a manifest's or lockfile's (§11.1, §11.8, §11.11) and a
+# workflow's (§13.9, §13.13) as well
+def sections(extra):
+    return {(f, re.match(r"§(\d+\.\d+)", sec).group(1)) for part, dom, f, sec, start, n, gate in rows
+            if dom in ("on-chain", "on-chain, gated") or re.match(r"§(%s) " % extra, sec)}
+alone, keyed, every = sections("none"), sections(r"12\.1|12\.5"), sections(r"11\.1|11\.8|11\.11|12\.1|12\.5|13\.9|13\.13")
+oc = re.search(r"A change to on-chain program source selects at most (\d+) \((\d+) when a changed file is also a key file\), and (\d+) when it also changes a manifest or lockfile, a workflow and a key file", table)
+said = tuple(int(x) for x in oc.groups()) if oc else None
+want = (len(alone), len(keyed), len(every))
+say(said == want, "§4's on-chain bounds are the %d, %d and %d sections such changes can select" % want + ("" if oc else " (no sentence)") + ("" if not oc or said == want else " (it says %d, %d and %d)" % said))
 for n in repo:
     say(n in idx and idx[n][1].startswith("always ("), f"§5's repository-level row {n:03d} is an always row of the index")
 PY

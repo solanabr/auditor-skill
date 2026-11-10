@@ -133,7 +133,7 @@ The CI-only rows:
 | `checklists/11-supply-chain.md` | §11.11 Dependency-Update Review (Delta) | 112 | 48 |
 | `checklists/13-deployment-infrastructure.md` | §13.13 GitHub Actions Trigger Trust | 180 | 11 |
 
-A section is selected once, whatever number of files select it. The most a change can select is 62 sections, about 104 KB, and only when it touches every kind of file; a change to on-chain code alone selects at most 46.
+A section is selected once, whatever number of files select it. The most a change can select is 62 sections, about 104 KB, and only when it touches every kind of file. A change to on-chain program source selects at most 39 (41 when a changed file is also a key file), and 46 when it also changes a manifest or lockfile, a workflow and a key file.
 
 ## 5. CI: vector rows
 
