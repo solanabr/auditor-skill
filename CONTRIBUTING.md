@@ -2,7 +2,7 @@
 
 auditor-skill is a markdown security-audit corpus plus a small amount of tooling. Contributions are
 welcome — new known vectors, checklist items, protocol methodologies, fixes to wording, and tooling
-improvements. This document is the short version of "how a change gets in".
+improvements.
 
 ---
 
@@ -36,8 +36,8 @@ bash scripts/check-corpus.sh                 # should print "ok" lines and exit 
 ```
 
 Optional: `git submodule update --init --depth 1 -- vendor/trailofbits` for the vendored Trail of Bits
-tooling and `cd tools/auditor-tools && cargo build --release` for the Rust CLIs. Neither is needed for
-corpus PRs.
+tooling and `cd tools/auditor-tools && cargo build --release --locked` for the Rust CLIs (Rust 1.89 or
+newer). Neither is needed for corpus PRs.
 
 The checks run with the stock tools of macOS (`/bin/bash` 3.2, BSD sed, grep and awk) as well as with bash 5
 and GNU tools on Linux. Beyond git they need python3 and jq, plus cargo and rustup for the PoC runner's
@@ -49,6 +49,7 @@ local cargo cache or crates.io) and is skipped, loudly, without it. This is what
 bash scripts/check-corpus.sh
 bash scripts/check-frontmatter.sh
 bash scripts/check-pipefail.sh
+bash scripts/check-entrypoints.sh
 for t in scripts/tests/*.sh; do bash "$t" || echo "FAILED: $t"; done
 bash scripts/check-hygiene.sh
 bash scripts/check-attribution.sh origin/main..HEAD
@@ -134,10 +135,12 @@ release author owns this step; nothing is built, and the only hosts contacted ar
 
 1. Create `known-vectors/NNN-short-name.md` with the next free number. Never renumber existing vectors —
    ranges like `KV-001..NNN` are quoted across the corpus and third-party reports reference the ids.
-2. Follow the existing format exactly (see any recent file, e.g. `131-…` or `134-…`):
+2. Follow the existing format exactly (see any recent file, e.g. `139-…` or `141-…`):
    YAML frontmatter (`id`, `title`, `severity`, `category`) → `### NNN — Title` → `**Severity: N** | **Real: …**`
    → description → cross-ref block → `#### Verification Procedure` with numbered steps, each with a grep /
    check and ✅ PASS / ❌ FAIL lines → `**Overall verdict:**` with ✅ / ⚠️ / ❌ / N/A.
+   A procedure has 3 to 12 steps, and `category` is one of `crypto`, `backend`, `frontend`, `devops`,
+   `ai-agent` and `dos`, the categories `known-vectors/INDEX.md` counts.
 3. Add a row to `known-vectors/INDEX.md` in the right section with a **Load when (markers)** cell
    (default to `always (<phase>)` unless the vector is provably feature-specific), and update the totals at
    the bottom of the index (`Total vector files`, `Distinct concepts`, the per-version tally).
@@ -152,8 +155,8 @@ release author owns this step; nothing is built, and the only hosts contacted ar
 
 1. Append to the relevant `checklists/NN-*.md` using the file's id prefix and the **next sequential number**
    (ids are never reused, even if an item is removed). New sections get the next `NN.x` heading.
-2. Update the per-checklist counts in `SKILL.md` (Checklists Reference table) and `README.md` (Supported
-   Languages table and the folder-structure listing), the totals everywhere the item total is quoted
+2. Update the per-checklist counts in `SKILL.md` (Checklists Reference table) and `README.md` (the Supported
+   languages table and the checklist list under The corpus), the totals everywhere the item total is quoted
    (`SKILL.md`, `README.md`, `COSTS.md`, `docs/README.md`, `templates/audit-report.md`,
    `templates/report-template.md`, `.claude-plugin/plugin.json`), and the `...through XX-NNN` line for that
    checklist in `templates/report-template.md`.
@@ -182,7 +185,9 @@ release author owns this step; nothing is built, and the only hosts contacted ar
 
 `tools/auditor-tools` (Rust) and `scripts/` have their own conventions: keep `cargo build --release`
 warning-free, add or extend a fixture under the tool's test directory for any parser change, and document
-new flags in `docs/power-tools.md`. Workflow files pin third-party actions to a full commit SHA with the
+a script's new flags on its page (`docs/scripts-core.md`, `docs/scripts-audit.md`, `docs/scripts-runners.md`
+or `docs/scripts-incident.md`; the Bundled scripts section of `docs/power-tools.md` says which) and a Rust
+tool's in `docs/power-tools.md`. Workflow files pin third-party actions to a full commit SHA with the
 version in a trailing comment.
 
 ### Shell scripts
