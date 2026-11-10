@@ -65,7 +65,10 @@
 #                   past either counts as failed), into <R>/deps/lock-budget-<n>/<k>/new and old, and compared: the files added, changed and
 #                   removed, the added lines matched against SC-059's and SC-060's patterns, binary files and
 #                   entries left out of the unpacked files, counts first. A row from a source that is not
-#                   public is never sent or fetched. The report goes to <R>/deps/lock-budget-<n>.txt, the
+#                   public is never sent or fetched, and a scoped npm package the public registry does not
+#                   list (a 404) is taken as private: never fetched, reported, and no failure; a registry set
+#                   outside the repository is not seen, as the output says. The report goes to
+#                   <R>/deps/lock-budget-<n>.txt, the
 #                   publish ages to lock-budget-<n>/ages.tsv and each request to lock-budget-<n>/requests.txt.
 #                   Exit 1 when anything is flagged; 3 when an artifact the budget selects still fails after
 #                   its retry, once the rest are compared, the last line giving the count. The whole call
@@ -1175,6 +1178,8 @@ BUDGET, ASK_CAP, ASK_SECONDS, CALL_SECONDS, CRATES_GAP, QUARANTINE = 40, 1000, 3
 IN_FLIGHT = 8
 # At most this much a download of the budget, and this much unpacked in one call.
 ARTIFACT_MAX, CALL_UNPACKED = 50 * 1000 * 1000, 500 * 1000 * 1000
+# What a scoped npm package the public registry does not list is taken for: never fetched, never a failure.
+PRIVATE = "the public registry does not list this scoped package; it may be private"
 # The publisher the npm registry names for a release made by trusted publishing from GitHub Actions.
 CI_PUBLISHER = "GitHub Actions"
 
@@ -1384,8 +1389,9 @@ def age_check(rows, fetcher, now, log):
                 return None, None, why or "the 300-second bound"
             got, why = fetcher.get(url, eco != "crates", eco != "pypi", 60)
             if not got and why.startswith("HTTP 404 "):
-                # the registry has no such package: every version of it is one the registry does not list
-                return {}, {}, ""
+                # the registry has no such package: a scoped npm one may be private to its organization;
+                # every version of any other is one the registry does not list
+                return ({}, {}, PRIVATE) if eco == "npm" and name.startswith("@") else ({}, {}, "")
             if got:
                 try:
                     hist, recs = history("crates-index" if eco == "crates" else eco, name, got, wanted.get((eco, name), set()))
@@ -1406,7 +1412,11 @@ def age_check(rows, fetcher, now, log):
         not_checked[k] = "the 1,000-request cap"
     with ThreadPoolExecutor(max_workers=IN_FLIGHT) as pool:
         answers = list(pool.map(lambda k: ask(*k), asking))
+    private = set()
     for k, (hist, recs, why) in zip(asking, answers):
+        if why == PRIVATE:
+            private.add(k)
+            continue
         if why:
             not_checked[k] = why
             continue
@@ -1419,6 +1429,9 @@ def age_check(rows, fetcher, now, log):
         if not r["public"]:
             continue
         k = (r["eco"], r["name"])
+        if k in private:
+            out[r["i"]] = {"private": True}
+            continue
         if k in not_checked:
             out[r["i"]] = {"why": not_checked[k]}
             continue
@@ -1588,6 +1601,8 @@ def fetch_one(fetcher, eco, name, version, records, dest):
         url = ("https://registry.npmjs.org/%s/%s" % (npm_url_path(name), version) if eco == "npm"
                else "https://crates.io/api/v1/crates/%s/%s" % (name, version))
         got, why = fetcher.get(url, True)
+        if not got and why.startswith("HTTP 404 ") and eco == "npm" and name.startswith("@"):
+            return None, PRIVATE, []
         if not got:
             return False, why, []
         shutil.move(got, recfile)
@@ -1647,6 +1662,9 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
     ages, records, asked, took, not_checked = {}, {}, 0, 0.0, {}
     if age == "on":
         ages, records, asked, took, not_checked = age_check(rows, fetcher, now, log)
+    private = [r for r in rows if ages.get(r["i"], {}).get("private")]
+    for r in private:
+        r["public"], r["private"] = False, True
     for r in rows:
         if "young" in ages.get(r["i"], {}).get("flags", []):
             r["marks"].add("young")
@@ -1677,10 +1695,18 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
                    len(flagged["yanked"]), len(flagged["unlisted"])))
         if crate_asked:
             line += "; crate publishers, the selected crates only: %d asked, %d not checked" % (crate_asked, crate_unchecked)
+        if private:
+            line += "; scoped packages the public registry does not list, maybe private, never fetched: %d" % len(private)
     else:
         line = "publish age: off (AUDITOR_PUBLISH_AGE=off): not checked: %d of %d rows" % (len(public), len(public))
     out.append(line)
     summary.append(line)
+    if any(r["eco"] == "npm" for r in rows):
+        line = "note: a registry set outside the repository (the environment, user or global npm or bun config) is not seen"
+        out.append(line)
+        summary.append(line)
+    for r in private[:50]:
+        out.append("  %s: %s %s %s (%s)" % (PRIVATE, r["eco"], r["name"], r["new"], r["lockfile"]))
     with open(os.path.join(outdir, "ages.tsv"), "w", encoding="utf-8", errors="backslashreplace") as f:
         f.write("eco\tname\tversion\tpublished\tage_days\tpublisher\tearlier_publishers\tflags\n")
         for r in public:
@@ -1705,11 +1731,11 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
             % (len(keys), BUDGET, len(pool[:BUDGET]), ", ".join("%s %d" % (m, by.get(m, 0)) for m, _ in CATEGORY), BUDGET, len(over),
                len(candidates) - len(keys) - len(pool),
                sum(1 for r in rows if r["eco"] == "pypi" and r["public"] and r["old"] != r["new"]), sum(1 for r in rows if r["old"] == r["new"]),
-               sum(1 for r in rows if r["source"] != "public"), sum(1 for r in rows if r["source"] == "public" and not r["public"])))
+               sum(1 for r in rows if r["source"] != "public"), sum(1 for r in rows if r["source"] == "public" and not r["public"] and not r.get("private"))))
     out.append(line)
     summary.append(line)
     fetched = failed = 0
-    failures, results = [], []
+    failures, results, privates = [], [], []
     for k, r in enumerate(chosen, 1):
         sides = [("new", r["new"])] + ([("old", r["old"])] if r["old"] != "-" and r["oldsource"] == "public" else [])
         got = {}
@@ -1717,6 +1743,8 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
         for side, version in sides:
             dest = os.path.join(outdir, str(k), side)
             ok, said, left = fetch_one(fetcher, r["eco"], r["name"], version, records, dest)
+            if ok is None:
+                break
             if not ok and fetcher.deadline - time.time() > 10:
                 time.sleep(2)
                 if os.path.exists(dest):
@@ -1728,6 +1756,10 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
             else:
                 failed += 1
                 failures.append("%s %s %s: %s" % (r["eco"], r["name"], version, said))
+        if ok is None:
+            privates.append(r)
+            results.append((k, r, None))
+            continue
         if "new" in got and ("old" in got or len(sides) == 1):
             s = sweep(got["old"][0] if "old" in got else None, got["new"][0], got["new"][1],
                       "package" if r["eco"] == "npm" else "%s-%s" % (r["name"], r["new"]))
@@ -1735,10 +1767,14 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
             s = None
         results.append((k, r, s))
     line = "artifacts: %d entries, %d artifacts fetched, %d failed after one retry" % (len(chosen), fetched, failed)
+    if privates:
+        line += "; %d scoped packages the public registry does not list, maybe private, never fetched" % len(privates)
     out.append(line)
     summary.append(line)
     for f in failures:
         out.append("  not fetched: %s" % f)
+    for r in privates:
+        out.append("  not fetched: %s %s %s: %s" % (r["eco"], r["name"], r["new"], PRIVATE))
     tot59 = sum(1 for _, _, s in results if s for h in s["hits"] if h[0] == "SC-059")
     tot60 = sum(1 for _, _, s in results if s for h in s["hits"] if h[0] == "SC-060")
     totbin = sum(len(s["binary"]) for _, _, s in results if s)

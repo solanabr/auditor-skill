@@ -2323,6 +2323,25 @@ lb_set "$LBN" 'crates	Cargo.lock	lb_nt	-	1.0.0	-	public	-'
 run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 check "lock-budget: a crate whose index entry has no pubtime is not checked, and a crate the budget does not select is never asked for its publisher" \
   sh -c "[ '$RC' = 0 ] && grep -q '^>> publish age: 1 names asked in [0-9]* s; not checked: 1 of 1 rows (no publish time);' '$T/out' && grep -qxF 'url: https://index.crates.io/lb/_n/lb_nt' '$T/calls' && ! grep -q 'crates.io/api' '$T/calls'"
+# a scoped npm package the public registry does not list may be private to its organization: never fetched, and
+# no failure; an unscoped one stays a failure when selected
+LBN=117
+lb_set "$LBN" 'npm	package-lock.json	@lbpriv/tool	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "lock-budget: a scoped package the public registry does not list is maybe private: never fetched, no failure" \
+  sh -c "[ '$RC' = 0 ] && grep -q '; scoped packages the public registry does not list, maybe private, never fetched: 1\$' '$T/out' && grep -qxF 'url: https://registry.npmjs.org/@lbpriv%2Ftool' '$T/calls' && [ \$(grep -c '^url: ' '$T/calls') = 1 ] && grep -qxF '  the public registry does not list this scoped package; it may be private: npm @lbpriv/tool 1.0.0 (package-lock.json)' '$WT/audit_1/deps/lock-budget-$n.txt'"
+check "... counted apart, not as a version outside its registry grammar" sh -c "grep -q '; a version outside its registry grammar, never sent: 0\$' '$T/out'"
+check "... and the output says once that a registry set outside the repository is not seen" \
+  sh -c "[ \$(grep -c '^>> note: a registry set outside the repository (the environment, user or global npm or bun config) is not seen\$' '$T/out') = 1 ]"
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget with AUDITOR_PUBLISH_AGE=off: a scoped package whose version record is 404 is maybe private, no failure" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '>> artifacts: 1 entries, 0 artifacts fetched, 0 failed after one retry; 1 scoped packages the public registry does not list, maybe private, never fetched' '$T/out' && [ \$(grep -c '^url: ' '$T/calls') = 1 ]"
+LBN=118
+lb_set "$LBN" 'npm	package-lock.json	lb-nowhere	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" AUDITOR_PUBLISH_AGE=off -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget: an unscoped package the registry does not list stays a failure when selected" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: 1 of 1 selected artifacts could not be fetched after one retry' '$T/err'"
 LBN=104
 lb_set "$LBN"
 r0=$(rows)
