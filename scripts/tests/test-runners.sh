@@ -2250,6 +2250,26 @@ put("https://crates.io/api/v1/crates/lb_crate", json.dumps({"versions": list(cra
 put("https://index.crates.io/lb/_c/lb_crate", "".join(json.dumps({"name": "lb_crate", "vers": v, "deps": [], "cksum": c["checksum"],
     "features": {}, "yanked": False, "pubtime": c["created_at"].replace("+00:00", "Z")}) + "\n" for v, c in sorted(crates.items())))
 put("https://index.crates.io/lb/_n/lb_nt", json.dumps({"name": "lb_nt", "vers": "1.0.0", "deps": [], "cksum": "0" * 64, "features": {}, "yanked": False}) + "\n")
+def crate(name, pubs, pubtime=True):
+    # crates.io's record of each version (a release made by trusted publishing, "CI", has trustpub_data and no
+    # published_by), its index line and its .crate
+    vers = {}
+    for v, who, days, yanked in pubs:
+        data = tgz("%s-%s" % (name, v), {"Cargo.toml": b"[package]\n"})
+        put("https://static.crates.io/crates/%s/%s-%s.crate" % (name, name, v), data)
+        rec = {"num": v, "crate": name, "created_at": iso(days).replace("Z", "+00:00"), "checksum": hashlib.sha256(data).hexdigest(), "yanked": yanked}
+        if who == "CI":
+            rec["published_by"], rec["trustpub_data"] = None, {"provider": "github", "repository": "owner/" + name}
+        else:
+            rec["published_by"] = {"login": who}
+        vers[v] = rec
+    put("https://crates.io/api/v1/crates/" + name, json.dumps({"versions": list(vers.values())}))
+    put("https://index.crates.io/%s/%s/%s" % (name[:2], name[2:4], name), "".join(json.dumps(dict({"name": name, "vers": v, "deps": [],
+        "cksum": c["checksum"], "features": {}, "yanked": c["yanked"]}, **({"pubtime": c["created_at"].replace("+00:00", "Z")} if pubtime else {}))) + "\n"
+        for v, c in sorted(vers.items())))
+crate("lb_tp_to_person", (("0.1.0", "CI", 300, False), ("0.2.0", "mallory", 100, False)))
+crate("lb_person_to_tp", (("0.1.0", "alice", 300, False), ("0.2.0", "CI", 100, False)))
+crate("lb_nty", (("0.9.0", "ferris", 300, False), ("1.0.0", "mallory", 100, True)), pubtime=False)
 put("https://pypi.org/pypi/lb-py/json", json.dumps({"releases": {"1.0": [{"upload_time_iso_8601": iso(2)}]}}))
 PY
 H='eco	lockfile	name	old	new	oldsource	source	marks'
@@ -2323,6 +2343,21 @@ lb_set "$LBN" 'crates	Cargo.lock	lb_nt	-	1.0.0	-	public	-'
 run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
 check "lock-budget: a crate whose index entry has no pubtime is not checked, and a crate the budget does not select is never asked for its publisher" \
   sh -c "[ '$RC' = 0 ] && grep -q '^>> publish age: 1 names asked in [0-9]* s; not checked: 1 of 1 rows (no publish time);' '$T/out' && grep -qxF 'url: https://index.crates.io/lb/_n/lb_nt' '$T/calls' && ! grep -q 'crates.io/api' '$T/calls'"
+# crates.io's trusted publishing, both ways: a person to it is the change to CI publishing npm's GitHub Actions is;
+# from it to a person, a publisher change
+LBN=122
+lb_set "$LBN" 'crates	Cargo.lock	lb_tp_to_person	0.1.0	0.2.0	public	public	direct' 'crates	Cargo.lock	lb_person_to_tp	0.1.0	0.2.0	public	public	direct'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+n=$(sed -n 's/^>> lock-budget: .*lock-budget-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "lock-budget: a crate from a person to trusted publishing is a change to CI publishing, at low severity; from it to a person, a publisher change" \
+  sh -c "[ '$RC' = 1 ] && grep -q '; publisher changes: 1; from a person to CI publishing: 1; .*; crate publishers, the selected crates only: 2 asked, 0 not checked\$' '$T/out' && grep -qxF '  publisher changed from a person to CI publishing (trusted publishing; low severity): crates lb_person_to_tp 0.2.0 (Cargo.lock): trusted publishing (earlier: alice)' '$WT/audit_1/deps/lock-budget-$n.txt' && grep -qxF '  published by an account that published no earlier version: crates lb_tp_to_person 0.2.0 (Cargo.lock): mallory (earlier: trusted publishing)' '$WT/audit_1/deps/lock-budget-$n.txt'"
+# a selected crate whose index line has no pubtime: not checked for its age, yet its yanked flag is kept and its
+# publisher checked
+LBN=123
+lb_set "$LBN" 'crates	Cargo.lock	lb_nty	-	1.0.0	-	public	direct'
+run "$DEPS" "$WT" -- lock-budget --run audit_1 audit_1/deps/lock-set-$LBN.tsv
+check "lock-budget: a selected crate with no pubtime keeps its yanked flag and has its publisher checked" \
+  sh -c "[ '$RC' = 1 ] && grep -q '^>> publish age: 1 names asked in [0-9]* s; not checked: 1 of 1 rows (no publish time); under 14 days: 0; first releases: 0; publisher changes: 1; from a person to CI publishing: 0; yanked: 1; not listed by the registry: 0; crate publishers, the selected crates only: 1 asked, 0 not checked\$' '$T/out'"
 # a scoped npm package the public registry does not list may be private to its organization: never fetched, and
 # no failure; an unscoped one stays a failure when selected
 LBN=117

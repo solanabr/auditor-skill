@@ -48,15 +48,17 @@
 #                   project), in the budget's order, at most 8 at a time, 1,000 names (each with one retry)
 #                   and 300 seconds, no lookup running past them; a lookup that still fails after its retry,
 #                   the names past those bounds and a version with no publish time are "not checked", which
-#                   fails nothing. For each new version: its publish time, its publisher (for a crate, from
-#                   crates.io's record, one request a second, asked only for the crates the budget selects)
-#                   and the publishers of earlier versions, flagging one under 14 days old, a first release
-#                   under 14 days old, a publisher that published no earlier version (a person to "GitHub
-#                   Actions", trusted publishing, apart, at low severity), a yanked version and one the
-#                   registry does not list (a package it has no record of included). AUDITOR_PUBLISH_AGE=off
-#                   (the default is on) leaves this out. Then the budget: each key handler (lock-delta.sh's
-#                   key mark) whose version changed, first and outside the budget, then at most 40 of the
-#                   other npm and crates rows whose version changed, in this order: direct dependencies, pins,
+#                   fails nothing (such a version is still flagged when it is yanked, and a crate the budget
+#                   selects still has its publisher checked). For each new version: its publish time, its
+#                   publisher (for a crate, from crates.io's record, one request a second, asked only for the
+#                   crates the budget selects) and the publishers of earlier versions, flagging one under 14
+#                   days old, a first release under 14 days old, a publisher that published no earlier version
+#                   (a person to trusted publishing, npm's "GitHub Actions" or a crate version crates.io
+#                   records with trustpub_data, apart, at low severity), a yanked version and one the registry
+#                   does not list (a package it has no record of included). AUDITOR_PUBLISH_AGE=off (the
+#                   default is on) leaves this out. Then the budget: each key handler (lock-delta.sh's key
+#                   mark) whose version changed, first and outside the budget, then at most 40 of the other
+#                   npm and crates rows whose version changed, in this order: direct dependencies, pins,
 #                   install scripts, versions under 14 days, sources now on the public registry; PyPI rows and
 #                   the rest are metadata only. Each entry's new and old artifacts are fetched as
 #                   fetch-artifact fetches one (60 seconds a record request, 120 a download), its digest
@@ -1196,6 +1198,10 @@ ARTIFACT_MAX, CALL_UNPACKED = 50 * 1000 * 1000, 500 * 1000 * 1000
 PRIVATE = "the public registry does not list this scoped package; it may be private"
 # The publisher the npm registry names for a release made by trusted publishing from GitHub Actions.
 CI_PUBLISHER = "GitHub Actions"
+# The publisher this file names for a crate version made by trusted publishing: crates.io gives such a version
+# a trustpub_data object ("filled if the version was published via trusted publishing", EncodableVersion in
+# crates_io_api_types), read before published_by, which such a version may lack.
+CRATES_CI = "trusted publishing"
 
 
 def clean(text):
@@ -1335,7 +1341,8 @@ def history(eco, name, path, wanted):
             if not isinstance(rec, dict) or not isinstance(rec.get("num"), str):
                 continue
             by = rec.get("published_by") if isinstance(rec.get("published_by"), dict) else {}
-            hist[rec["num"]] = (when(rec.get("created_at")), str(by.get("login") or "") or None, bool(rec.get("yanked")))
+            who = CRATES_CI if rec.get("trustpub_data") else str(by.get("login") or "") or None
+            hist[rec["num"]] = (when(rec.get("created_at")), who, bool(rec.get("yanked")))
             if rec["num"] in wanted:
                 records[rec["num"]] = {"version": {"num": rec["num"], "crate": rec.get("crate") or name, "checksum": rec.get("checksum")}}
     elif eco == "crates-index":
@@ -1449,7 +1456,7 @@ def age_check(rows, fetcher, now, log):
             out[r["i"]] = {"private": True}
             continue
         if k in not_checked:
-            out[r["i"]] = {"why": not_checked[k]}
+            out[r["i"]] = {"why": not_checked[k], "unchecked": True}
             continue
         hist = results.get(k, {})
         if r["new"] not in hist:
@@ -1457,7 +1464,7 @@ def age_check(rows, fetcher, now, log):
             continue
         published, publisher, yanked = hist[r["new"]]
         if published is None:
-            out[r["i"]] = {"why": "no publish time"}
+            out[r["i"]] = {"why": "no publish time", "unchecked": True, "flags": ["yanked"] if yanked else []}
             continue
         flags = []
         earlier = sorted({p for v, (t, p, y) in hist.items() if p and t is not None and published is not None and t < published})
@@ -1507,8 +1514,9 @@ def crate_publishers(chosen, ages, fetcher):
     unchecked = 0
     for r in chosen:
         a = ages.get(r["i"])
-        if r["eco"] != "crates" or a is None or "flags" not in a:
+        if r["eco"] != "crates" or a is None:
             continue
+        a.setdefault("flags", [])
         hist = hists.get(r["name"])
         mine = hist.get(r["new"]) if hist else None
         if not mine:
@@ -1519,7 +1527,8 @@ def crate_publishers(chosen, ages, fetcher):
         earlier = sorted({p for v, (s, p, y) in hist.items() if p and s is not None and published is not None and s < published})
         a["publisher"], a["earlier"] = publisher, earlier
         if publisher and earlier and publisher not in earlier:
-            a["flags"].append("publisher-change")
+            # as for npm: a person to trusted publishing is reported plainly, at low severity
+            a["flags"].append("ci-publishing" if publisher == CRATES_CI else "publisher-change")
     return len(names), unchecked
 
 
@@ -1756,11 +1765,11 @@ def budget(setfile, setname, scratch, outdir, outname, report, age, deadline, ma
     if age == "on":
         crate_asked, crate_unchecked = crate_publishers(chosen, ages, fetcher)
     flagged = {f: [r for r in rows if f in ages.get(r["i"], {}).get("flags", [])] for f in ("young", "first-release", "publisher-change", "ci-publishing", "yanked", "unlisted")}
-    unchecked = sum(1 for r in rows if r["public"] and "why" in ages.get(r["i"], {}) and "flags" not in ages.get(r["i"], {}))
+    unchecked = sum(1 for r in rows if r["public"] and ages.get(r["i"], {}).get("unchecked"))
     public = [r for r in rows if r["public"]]
     if age == "on":
         line = ("publish age: %d names asked in %d s; not checked: %d of %d rows%s; under %d days: %d; first releases: %d; publisher changes: %d; from a person to CI publishing: %d; yanked: %d; not listed by the registry: %d"
-                % (asked, took, unchecked, len(public), (" (" + ", ".join(sorted({a["why"] for a in ages.values() if "why" in a and "flags" not in a})[:5]) + ")") if unchecked else "",
+                % (asked, took, unchecked, len(public), (" (" + ", ".join(sorted({a["why"] for a in ages.values() if a.get("unchecked")})[:5]) + ")") if unchecked else "",
                    QUARANTINE, len(flagged["young"]), len(flagged["first-release"]), len(flagged["publisher-change"]), len(flagged["ci-publishing"]),
                    len(flagged["yanked"]), len(flagged["unlisted"])))
         if crate_asked:
