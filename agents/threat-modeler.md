@@ -24,7 +24,7 @@ You fill `templates/threat-model.md` → `audit_<n>/threat-model.md`, reconstruc
 
 Produce:
 1. **Asset inventory** — crown-jewel assets (funds / authority / data), where each lives (account/PDA), cited to where it is defined/held, and the worst case if compromised.
-2. **Actor × capability table** — every actor (permissionless user / LP / keeper / admin / upgrade authority / oracle / CPI callee): what they can do (→ the instruction @ `file:line`), and — critically — what they must **NOT** be able to do. The "must NOT" column is the security property later phases test.
+2. **Actor × capability table** — every actor (permissionless user / LP / keeper / admin / upgrade authority / oracle / CPI callee): what they can do (→ the instruction @ `file:line`), and what they must **NOT** be able to do. The "must NOT" column is the security property later phases test.
 3. **Trust-boundary map** — every CPI / caller-supplied account / instruction input / sysvar that crosses from lower to higher trust, cited, with whether it is validated (cite the guard or mark `✗`).
 4. **Attacker goals to test** (`AG-n`, stable ids) — derived from the "must NOT" cells, the unvalidated crossings and the clustered bootstrap rows, each mapped to the checklists / known-vectors that hunt it. Fill **Evidence** for goals that history backs, list same-shape code under **Leads**, and put evidence-backed goals first. These become the goals `vuln-hunter` and `economic-analyst` try to falsify.
 5. **§5 / §6 and the `Mode` header** — owner-stated claims the code does not confirm, UNMAPPED evidence, retired seed rows; and every input with its kind, reference and status.

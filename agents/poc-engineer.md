@@ -162,4 +162,4 @@ When the bundled Trail of Bits plugins are present (`test -d "${CLAUDE_PLUGIN_RO
 - **`[PoC-FUZZ-REPRODUCED]`** — a Trident / cargo-fuzz target produced the crashing / invariant-breaking input; save the corpus entry.
 - **`[PoC-ATTEMPTED]`** — on **any** blocker (no toolchain, the recorded execution mode cannot run it, cannot minimize into a standalone crate, fork state unavailable, a harness error the repair pass did not clear), downgrade to `[PoC-ATTEMPTED]` + the finding's structured prose PoC, name the exact blocker (`run.sh`'s line verbatim, with "PoC re-run needed" for every exit 3), and record what a maintainer must install/provide to promote it.
 
-**Never fabricate a passing test.** An honest `[PoC-ATTEMPTED]` + prose beats a faked green `[PoC-REPRODUCED]`. Downgrading the evidence tier never changes the finding's severity. Return the tier + crate path to the orchestrator.
+**Never fabricate a passing test.** A `[PoC-ATTEMPTED]` with its prose beats a faked green `[PoC-REPRODUCED]`. Downgrading the evidence tier never changes the finding's severity. Return the tier + crate path to the orchestrator.
