@@ -1556,8 +1556,8 @@ done
 for f in commands/*.md SKILL.md; do
   if grep -qiF -- 'That invocation asks unless the user-level rules in' "$f"; then ok "$f: the resume text names the rules that stop its prompt"
   else bad "P $f: the resume text does not name the user-level rules that stop its prompt"; fi
-  if grep -qiF -- 'which step 0 no longer refuses while git does not track it' "$f"; then ok "$f: the saved rule's file no longer stops the resumed invocation"
-  else bad "P $f: the resume text does not say that step 0 no longer refuses the saved rule's untracked file"; fi
+  if grep -qiF -- 'which step 0 does not refuse while git does not track it' "$f"; then ok "$f: the saved rule's file does not stop the resumed invocation"
+  else bad "P $f: the resume text does not say that step 0 accepts the saved rule's untracked file"; fi
   for gone in 'tell the human to answer "Yes", not "don'"'"'t ask again"' 'a file step 0 refuses, from that resumed invocation on'; do
     if grep -qiF -- "$gone" "$f"; then bad "P $f says: $gone"; else ok "gone from $f: $gone"; fi
   done
