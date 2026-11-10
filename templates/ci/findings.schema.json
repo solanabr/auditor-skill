@@ -52,7 +52,7 @@
       }
     },
     "analyzers": {
-      "description": "Each analyzer this run called for, once: not-run when any of its calls did not run, ran otherwise. audit-scan when the bundled tools are built (for diff-audit, when a .rs file changed); for diff-audit lock-delta and deps-artifacts when a Cargo.lock, package-lock.json, npm-shrinkwrap.json, yarn.lock or bun.lock changed (deps-artifacts is the lock-budget call: it ran on an empty budget too, and did not run when deps.sh could not start or a selected artifact still failed after one retry), web3js-history when the command ran it; for quick-scan semgrep (or the static-analysis or grep-scanners fallback it took), cargo-audit for a Cargo.lock, npm-audit for a package.json beside a package-lock.json or npm-shrinkwrap.json.",
+      "description": "Each analyzer this run called for, once: not-run when any of its calls did not run, ran otherwise. audit-scan when the bundled tools are built (for diff-audit, when a .rs file changed); for diff-audit lock-delta and deps-artifacts when a Cargo.lock, package-lock.json, npm-shrinkwrap.json, yarn.lock or bun.lock changed (deps-artifacts is the lock-budget call: it ran on an empty budget too, and did not run when deps.sh could not start, a selected artifact still failed after one retry or passed a size bound, or an entry was not compared within the call's time), web3js-history when the command ran it; for quick-scan semgrep (or the static-analysis or grep-scanners fallback it took), cargo-audit for a Cargo.lock, npm-audit for a package.json beside a package-lock.json or npm-shrinkwrap.json.",
       "type": "array",
       "items": { "$ref": "#/$defs/analyzer" }
     },

@@ -474,7 +474,7 @@ jq '.findings += [{"id":"F-4","severity":7,"title":"A dependency resolves from a
 jq '.structured_output.verdict = "fail"' "$T/lock-result.json" > "$T/v.json"
 same "fail: a dependency from a git source, never fetched, graded 7 as SC-061" "auditor: verdict: fail (threshold 7, $RAN3)" \
   "$(REQ=$LOCKREQ verdict "$T/v.json" "$T/f.json")"
-jq '.analyzers |= map(if .name == "deps-artifacts" then {"name":"deps-artifacts","status":"not-run","reason":"deps: blocker: 1 of 3 selected artifacts could not be fetched after one retry; output audit_3/deps/lock-budget-1.txt"} else . end) | .verdict = "fail"' \
+jq '.analyzers |= map(if .name == "deps-artifacts" then {"name":"deps-artifacts","status":"not-run","reason":"deps: blocker: 1 of 3 selected artifacts could not be fetched; output audit_3/deps/lock-budget-1.txt"} else . end) | .verdict = "fail"' \
   "$T/lock-findings.json" > "$T/f.json"
 jq '.structured_output.analyzers_run = ["audit-scan", "lock-delta"] | .structured_output.analyzers_not_run = ["deps-artifacts"] | .structured_output.verdict = "fail"' \
   "$T/lock-result.json" > "$T/v.json"
