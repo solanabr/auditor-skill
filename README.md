@@ -12,11 +12,11 @@
 
 An open-source AI security audit skill for Solana programs and the code around them.
 
-auditor-skill is a Claude Code plugin, and a folder of skill files that any LLM agent can follow. It reads your code file by file, checks 1,473 items across 20 security domains, tests against 143 real-world attack vectors, and produces a structured report with a severity from 1 to 10 for every finding. A confirmed High or Critical finding can get a runnable exploit, and a fix proven to stop it.
+auditor-skill is a Claude Code plugin, and a folder of skill files that any LLM agent can follow. It reads your code file by file, checks 1,479 items across 20 security domains, tests against 144 real-world attack vectors, and produces a structured report with a severity from 1 to 10 for every finding. A confirmed High or Critical finding can get a runnable exploit, and a fix proven to stop it.
 
 It covers the on-chain programs (Anchor, native and Pinocchio) and the rest of the stack: TypeScript and Rust services, web frontends, Python, Go, Java, Ruby and PHP code, CI workflows, infrastructure and AI agent components. It is not a SaaS product: you install it for your agent, outside any repository you audit, or send its files to an LLM API.
 
-**What's inside:** 20 checklists · 1,473 verification items · 143 known attack vectors · executable PoCs + fix patches.
+**What's inside:** 20 checklists · 1,479 verification items · 144 known attack vectors · executable PoCs + fix patches.
 
 ## Read this first: what auditor-skill cannot do on its own
 
@@ -80,7 +80,7 @@ What each release added: [What's new](#whats-new).
 
 ## The corpus
 
-- **Checklists:** 20 files, 1,473 verification items, each a check an auditor can mark PASS, FAIL or N/A from the code.
+- **Checklists:** 20 files, 1,479 verification items, each a check an auditor can mark PASS, FAIL or N/A from the code.
 - **Known vectors:** 141 attack procedures with numbered verification steps, indexed in [`known-vectors/INDEX.md`](known-vectors/INDEX.md).
 - **References:** `references/methodologies/` holds 13 protocol playbooks (amm-clmm, lending, perps, oracles, stablecoin, liquid-staking, governance, bridges, wallets-multisig-custody, token-2022, nft-marketplaces, launchpads, token-registry-risk). Beside them sit the framework idioms, four vulnerability-class playbooks, the invariant catalog, the false-positive rules, the audit lifecycle, the detection & response track, and `references/depth-scope.md`, the selection quick-scan and diff-audit read.
 
@@ -95,8 +95,8 @@ What each release added: [What's new](#whats-new).
 | Python | 14 | 82 |
 | Go / Java / Ruby / PHP | 15 | 88 |
 | AI / agent components | 19 | 39 |
-| **Always applied** (any repo, at `--scope full`) | 11-13, 16-18 | 422 |
-| **Total** | **20** | **1,473** |
+| **Always applied** (any repo, at `--scope full`) | 11-13, 16-18 | 428 |
+| **Total** | **20** | **1,479** |
 
 Checklists 01-07 are Solana-specific, so the others make the corpus work for projects outside Solana too.
 
@@ -114,7 +114,7 @@ Checklists 01-07 are Solana-specific, so the others make the corpus work for pro
 - `09-backend-security.md` (133 items)
 - `10-frontend-security.md` (84 items)
 - `11-supply-chain.md` (65 items)
-- `12-secrets-opsec.md` (53 items)
+- `12-secrets-opsec.md` (59 items)
 - `13-deployment-infrastructure.md` (102 items)
 - `14-python-safety.md` (82 items)
 - `15-general-language-safety.md` (88 items)

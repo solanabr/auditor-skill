@@ -4,7 +4,7 @@ Questions people ask about auditor-skill. Back to the [docs index](README.md) or
 
 ## Does this replace a professional audit?
 
-It checks 1,473 items and 143 known vectors, but an AI auditor cannot do everything a human can (social engineering assessment, business logic review requiring domain expertise, legal compliance opinions). Use it as a first pass, and before a mainnet launch pair it with a human audit of the business logic, the economic model and legal compliance ([SKILL.md](../SKILL.md#when-not-to-use), When NOT to Use).
+It checks 1,479 items and 144 known vectors, but an AI auditor cannot do everything a human can (social engineering assessment, business logic review requiring domain expertise, legal compliance opinions). Use it as a first pass, and before a mainnet launch pair it with a human audit of the business logic, the economic model and legal compliance ([SKILL.md](../SKILL.md#when-not-to-use), When NOT to Use).
 
 ## Which AI model should I use?
 

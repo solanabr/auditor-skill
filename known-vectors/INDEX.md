@@ -243,6 +243,12 @@ Every row carries a **Load when (markers)** cell: the grep/prescan markers that 
 | 142 | [Variable Rent After SIMD-0437 / SIMD-0392 — Hardcoded Minimums, Excess-Lamport Sweeps and Rent-Priced Deterrents](142-variable-rent-hardcoded-minimum-excess-sweep.md) | 6 | `init` · `create_account` · `realloc` · `close` · `minimum_balance` · `Rent::default` · `LAMPORTS_PER_BYTE` · rent literals (`890_880` / `1_461_600` / `2_039_280`) · `lamports() -` sweep / excess / dust · `getMinimumBalanceForRentExemption` |
 | 143 | [Address-Translation Changes (SIMD-0460) — Cross-Region Access, Out-of-Length Reads and Stack-Layout Assumptions in Native, Zero-Copy and Unsafe Code](143-address-translation-cross-region-stack-layout.md) | 7 | `unsafe` · `from_raw_parts` · `.as_ptr()` / `.add(` · `sol_memcpy` / `copy_nonoverlapping` · `pinocchio` · `no_std` · `#[zero_copy]` · `bytemuck` · `asm!` · C / assembly program · vendored `unsafe` dependency |
 
+### Secret Residue Outside the Repository (144)
+
+| # | Vector | Severity | Load when (markers) |
+|---|--------|----------|---------------------|
+| 144 | [Secret Residue Outside the Repository — Temp Directories, CI Workspaces, Shell History and Sync Folders](144-secret-residue-temp-dirs-history-sync.md) | 8 | always (devops) |
+
 ---
 
 ## Known Duplicates & Consolidation Map
@@ -261,11 +267,11 @@ double-count them as independent coverage. Severities are aligned to the higher 
 | 039 | 083 | Rate limiting (bypass / missing) | 7 |
 | 047 | 099 | WebSocket security | 7 |
 
-**Distinct concepts:** 137 (143 files − 6 duplicate pairs).
+**Distinct concepts:** 138 (144 files − 6 duplicate pairs).
 
 ---
 
-**Total vector files:** 143 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1 + 6 in v6.0 + 3 in v6.1 + 2 in v6.2 + 3 in v7.2 + 2 in v7.3 + 1 in v7.4 + 1 in v7.5 + 2 in v7.6 + 3 in v7.7)
-**Distinct concepts:** 137 (after consolidating 6 duplicate pairs)
+**Total vector files:** 144 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1 + 6 in v6.0 + 3 in v6.1 + 2 in v6.2 + 3 in v7.2 + 2 in v7.3 + 1 in v7.4 + 1 in v7.5 + 2 in v7.6 + 4 in v7.7)
+**Distinct concepts:** 138 (after consolidating 6 duplicate pairs)
 **Categories:** 6 (crypto, backend, frontend, devops, ai-agent, dos)
 **Severity range:** 3-10
