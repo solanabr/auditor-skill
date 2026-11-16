@@ -97,7 +97,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 141 |
+| Total known vectors | 143 |
 | PASS | {N} |
 | FAIL | {N} |
 | PARTIAL | {N} |
@@ -108,7 +108,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | # | Checklist | Items | Pass | Fail | Partial | N/A | Pass Rate |
 |---|-----------|-------|------|------|---------|-----|-----------|
-| 01 | Account Validation | 90 | | | | | % |
+| 01 | Account Validation | 93 | | | | | % |
 | ... | ... | ... | ... | ... | ... | ... | ... |
 | **Total** | | **{N}** | | | | | **{%}** |
 ```

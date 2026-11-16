@@ -101,13 +101,13 @@
 
 | # | Checklist | Items | Pass | Fail | Partial | N/A | Pass Rate |
 |---|---|---|---|---|---|---|---|
-| 01 | Account Validation | 90 | | | | | % |
+| 01 | Account Validation | 93 | | | | | % |
 | 02 | Access Control | 55 | | | | | % |
 | 03 | Arithmetic Safety | 63 | | | | | % |
 | 04 | CPI & PDA | 70 | | | | | % |
 | 05 | State Machine | 74 | | | | | % |
-| 06 | Economic & Logic | 92 | | | | | % |
-| 07 | OpSec & Governance | 87 | | | | | % |
+| 06 | Economic & Logic | 94 | | | | | % |
+| 07 | OpSec & Governance | 89 | | | | | % |
 | 08 | TypeScript Safety | 64 | | | | | % |
 | 09 | Backend Security | 133 | | | | | % |
 | 10 | Frontend Security | 84 | | | | | % |
@@ -116,12 +116,12 @@
 | 13 | Deployment & Infra | 102 | | | | | % |
 | 14 | Python Safety | 82 | | | | | % |
 | 15 | General Language | 88 | | | | | % |
-| 16 | Formal Verification & Testing | 73 | | | | | % |
+| 16 | Formal Verification & Testing | 74 | | | | | % |
 | 17 | Logging, Monitoring & IR | 68 | | | | | % |
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
 | 19 | AI Agent Security | 39 | | | | | % |
 | 20 | Rust Off-Chain Services | 23 | | | | | % |
-| | **Total** | **1465** | | | | | **%** |
+| | **Total** | **1473** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -204,7 +204,7 @@
               Impact: {what can go wrong}
               Fix: {what to change}
 [N/A]       AV-004: {why not applicable}
-...through AV-090
+...through AV-093
 ```
 
 ### Checklist 02 — Access Control
@@ -239,14 +239,14 @@
 
 ```
 [PASS]      ECON-001: {reason}
-...through ECON-092
+...through ECON-094
 ```
 
 ### Checklist 07 — OpSec & Governance
 
 ```
 [PASS]      OPS-001: {reason}
-...through OPS-087
+...through OPS-089
 ```
 
 ### Checklist 08 — TypeScript Safety
@@ -309,7 +309,7 @@
 
 ```
 [PASS]      FV-001: {reason}
-...through FV-073
+...through FV-074
 ```
 
 ### Checklist 17 — Logging, Monitoring & Incident Response
@@ -340,7 +340,7 @@
 ...through RS-023
 ```
 
-### Known Vectors Results (KV-001..KV-141)
+### Known Vectors Results (KV-001..KV-143)
 
 ```
 [PASS]      KV-001: {reason}
@@ -348,7 +348,7 @@
               File: {path:line}
               Impact: {what can go wrong}
               Fix: {what to change}
-...through KV-141
+...through KV-143
 ```
 
 ---
@@ -370,7 +370,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 141 |
+| Total known vectors | 143 |
 | PASS | <!-- N --> |
 | FAIL | <!-- N --> |
 | PARTIAL | <!-- N --> |
