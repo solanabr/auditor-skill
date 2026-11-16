@@ -148,7 +148,7 @@ The commands run their bundled steps without asking: the working-tree check, run
 
 ## Scopes at a glance
 
-`--scope` on `/auditor:audit`, `/auditor:audit-cycle` and `/auditor:audit-assist` picks the part of the repository a run reviews: `full` (the default: the checklists and vectors the repository matches, up to all 20 + 143 vectors), `program`, `backend` or `frontend`. [SKILL.md](../SKILL.md#scope-gated-loading--load-what-the-repo-needs) defines each one. The Quick commands take no scope: they read the selection of `references/depth-scope.md` ([What Quick reads](audit-flows.md#what-quick-reads)).
+`--scope` on `/auditor:audit`, `/auditor:audit-cycle` and `/auditor:audit-assist` picks the part of the repository a run reviews: `full` (the default: the checklists and vectors the repository matches, up to all 20 + 144 vectors), `program`, `backend` or `frontend`. [SKILL.md](../SKILL.md#scope-gated-loading--load-what-the-repo-needs) defines each one. The Quick commands take no scope: they read the selection of `references/depth-scope.md` ([What Quick reads](audit-flows.md#what-quick-reads)).
 
 Scope is enforced by *scope-gated loading*: out-of-scope checklists are never read, and out-of-scope items render `[N/A — out of scope]` from the gate. See [output-and-rigor.md](output-and-rigor.md#scope-gated-loading).
 
