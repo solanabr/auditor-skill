@@ -12,11 +12,11 @@
 
 An open-source AI security audit skill for Solana programs and the code around them.
 
-auditor-skill is a Claude Code plugin, and a folder of skill files that any LLM agent can follow. It reads your code file by file, checks 1,465 items across 20 security domains, tests against 141 real-world attack vectors, and produces a structured report with a severity from 1 to 10 for every finding. A confirmed High or Critical finding can get a runnable exploit, and a fix proven to stop it.
+auditor-skill is a Claude Code plugin, and a folder of skill files that any LLM agent can follow. It reads your code file by file, checks 1,473 items across 20 security domains, tests against 143 real-world attack vectors, and produces a structured report with a severity from 1 to 10 for every finding. A confirmed High or Critical finding can get a runnable exploit, and a fix proven to stop it.
 
 It covers the on-chain programs (Anchor, native and Pinocchio) and the rest of the stack: TypeScript and Rust services, web frontends, Python, Go, Java, Ruby and PHP code, CI workflows, infrastructure and AI agent components. It is not a SaaS product: you install it for your agent, outside any repository you audit, or send its files to an LLM API.
 
-**What's inside:** 20 checklists · 1,465 verification items · 141 known attack vectors · executable PoCs + fix patches.
+**What's inside:** 20 checklists · 1,473 verification items · 143 known attack vectors · executable PoCs + fix patches.
 
 ## Read this first: what auditor-skill cannot do on its own
 
@@ -80,7 +80,7 @@ What each release added: [What's new](#whats-new).
 
 ## The corpus
 
-- **Checklists:** 20 files, 1,465 verification items, each a check an auditor can mark PASS, FAIL or N/A from the code.
+- **Checklists:** 20 files, 1,473 verification items, each a check an auditor can mark PASS, FAIL or N/A from the code.
 - **Known vectors:** 141 attack procedures with numbered verification steps, indexed in [`known-vectors/INDEX.md`](known-vectors/INDEX.md).
 - **References:** `references/methodologies/` holds 13 protocol playbooks (amm-clmm, lending, perps, oracles, stablecoin, liquid-staking, governance, bridges, wallets-multisig-custody, token-2022, nft-marketplaces, launchpads, token-registry-risk). Beside them sit the framework idioms, four vulnerability-class playbooks, the invariant catalog, the false-positive rules, the audit lifecycle, the detection & response track, and `references/depth-scope.md`, the selection quick-scan and diff-audit read.
 
@@ -88,28 +88,28 @@ What each release added: [What's new](#whats-new).
 
 | Language | Checklists | Items |
 |----------|-----------|-------|
-| Rust (Solana/Anchor) | 01-07 | 531 |
+| Rust (Solana/Anchor) | 01-07 | 538 |
 | Rust (off-chain services) | 20 | 23 |
 | TypeScript / Node.js | 08-09 | 197 |
 | React / Next.js | 08, 10 | 148 |
 | Python | 14 | 82 |
 | Go / Java / Ruby / PHP | 15 | 88 |
 | AI / agent components | 19 | 39 |
-| **Always applied** (any repo, at `--scope full`) | 11-13, 16-18 | 421 |
-| **Total** | **20** | **1,465** |
+| **Always applied** (any repo, at `--scope full`) | 11-13, 16-18 | 422 |
+| **Total** | **20** | **1,473** |
 
 Checklists 01-07 are Solana-specific, so the others make the corpus work for projects outside Solana too.
 
 <details>
 <summary>The 20 checklists, with their item counts</summary>
 
-- `01-program-account-validation.md` (90 items)
+- `01-program-account-validation.md` (93 items)
 - `02-program-access-control.md` (55 items)
 - `03-program-arithmetic-safety.md` (63 items)
 - `04-program-cpi-pda.md` (70 items)
 - `05-program-state-machine.md` (74 items)
-- `06-program-economic-logic.md` (92 items)
-- `07-program-opsec-governance.md` (87 items)
+- `06-program-economic-logic.md` (94 items)
+- `07-program-opsec-governance.md` (89 items)
 - `08-typescript-safety.md` (64 items)
 - `09-backend-security.md` (133 items)
 - `10-frontend-security.md` (84 items)
@@ -118,7 +118,7 @@ Checklists 01-07 are Solana-specific, so the others make the corpus work for pro
 - `13-deployment-infrastructure.md` (102 items)
 - `14-python-safety.md` (82 items)
 - `15-general-language-safety.md` (88 items)
-- `16-formal-verification-testing.md` (73 items)
+- `16-formal-verification-testing.md` (74 items)
 - `17-logging-monitoring-incident-response.md` (68 items)
 - `18-privacy-compliance-change-management.md` (60 items)
 - `19-ai-agent-security.md` (39 items)
