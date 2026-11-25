@@ -12,7 +12,7 @@
 #
 # The actions. Each runs a fixed command line in the copy, at --dir or at its top:
 #   anchor-build  anchor build --ignore-keys --no-idl [--tools-version <v>] [-p <program>] -- --skip-tools-install
-#                 --offline. --ignore-keys only where anchor build --help lists it (Anchor 1.0 and later); --no-idl
+#                 --offline. --ignore-keys only where anchor build --help lists it (1.0.2 does, 0.31.1 doesn't); --no-idl
 #                 where this anchor builds its IDL with cargo test (anchor build --help lists --no-idl and anchor
 #                 idl build --help --out-ts: Anchor 0.30 and later). <v> is anchor build's own --tools-version
 #                 where it has one (Anchor 1.2 and later), else it goes after --
@@ -1135,7 +1135,7 @@ iso_value() {
   printf '%s' "$v"
 }
 # anchor_options: what this anchor takes, from its own help (anchor, not the copy's code): AB, anchor build
-# with --ignore-keys where it has one (Anchor 1.0 and later; 0.31 has none), ANCHOR_NOIDL=1 when anchor build
+# with --ignore-keys where its help lists it (1.0.2 does, 0.31.1 doesn't), ANCHOR_NOIDL=1 when anchor build
 # has --no-idl and anchor idl build has --out-ts (Anchor 0.30 and later, whose IDL build runs cargo test),
 # ANCHOR_TV=1 when anchor build has its own --tools-version (Anchor 1.2 and later).
 anchor_options() {
